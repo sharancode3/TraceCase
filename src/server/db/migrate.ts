@@ -4,7 +4,17 @@ import postgres from 'postgres';
 
 async function runMigrations() {
   const connectionString = process.env.DATABASE_URL || 'postgres://tc_user:tc_pass@localhost:5432/tracecase';
-  console.log('[TraceCase Database] Attempting migration check against:', connectionString.replace(/:[^:@]+@/, ':****@'));
+
+  // Parse safe target endpoint for logging without leaking credentials
+  let safeTarget = 'PostgreSQL endpoint';
+  try {
+    const parsed = new URL(connectionString);
+    safeTarget = `${parsed.hostname}:${parsed.port || '5432'}${parsed.pathname}`;
+  } catch {
+    safeTarget = 'configured database target';
+  }
+
+  console.log(`[TraceCase Database] Checking database connectivity against ${safeTarget}...`);
 
   let sql: postgres.Sql | null = null;
   try {
@@ -17,9 +27,11 @@ async function runMigrations() {
     await migrate(db, { migrationsFolder: './drizzle/migrations' });
     console.log('[TraceCase Database] Migrations applied successfully.');
   } catch (error) {
-    console.warn('[TraceCase Database] Migration check notice: Local PostgreSQL is currently offline or unreachable.');
-    console.warn('Details:', error instanceof Error ? error.message : error);
-    console.log('[TraceCase Database] Statically validated schema and migration files remain authoritative.');
+    console.error(`[TraceCase Database] FATAL: Database migration failed against ${safeTarget}.`);
+    // Safe error reporting without printing credentials or raw connection URLs
+    const safeMessage = error instanceof Error ? error.name : 'Unknown database error';
+    console.error(`Reason: ${safeMessage}`);
+    throw new Error(`[TraceCase Database] Migration execution aborted: ${safeMessage}`);
   } finally {
     if (sql) {
       await sql.end({ timeout: 2 });
@@ -28,8 +40,7 @@ async function runMigrations() {
 }
 
 if (require.main === module) {
-  runMigrations().catch((err) => {
-    console.error('Fatal migration error:', err);
+  runMigrations().catch(() => {
     process.exit(1);
   });
 }

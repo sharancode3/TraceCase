@@ -1,4 +1,4 @@
-name: Foundation CI
+name: CI Pipeline
 
 on:
   push:
@@ -7,9 +7,32 @@ on:
     branches: [main, develop]
 
 jobs:
-  foundation-check:
-    name: Typecheck, Lint, Test & Build
+  operational-hardening-check:
+    name: Typecheck, Lint, Test, Migrate & Build
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: tc_user
+          POSTGRES_PASSWORD: tc_pass
+          POSTGRES_DB: tracecase
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgres://tc_user:tc_pass@localhost:5432/tracecase
+      AUTH_ISSUER_URL: https://auth.tracecase.test
+      AUTH_AUDIENCE: tracecase-api
+      DEV_PREVIEW_MODE: false
+      AI_BUDGET_LIMIT_USD: "10.00"
 
     steps:
       - name: Checkout repository
@@ -20,14 +43,17 @@ jobs:
         with:
           version: 9.15.9
 
-      - name: Setup Node.js
+      - name: Setup Node.js 22 LTS
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'pnpm'
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium with system dependencies
+        run: pnpm exec playwright install --with-deps chromium
 
       - name: TypeScript type checking
         run: pnpm typecheck
@@ -35,8 +61,14 @@ jobs:
       - name: Code linting
         run: pnpm lint
 
-      - name: Run unit & contract tests
+      - name: Apply database schema migrations
+        run: pnpm db:migrate
+
+      - name: Run unit, domain, and contract tests
         run: pnpm test
+
+      - name: Run real database integration check
+        run: pnpm test:integration
 
       - name: Build web application
         run: pnpm build:web

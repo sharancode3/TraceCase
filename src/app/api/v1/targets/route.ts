@@ -1,35 +1,49 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { CreateTargetCommandSchema } from '@/contracts/targets';
+import { CreateTargetCommandSchema, projectSafeTargetProfile } from '@/contracts/targets';
 import { requireAuthenticatedPrincipal, AuthenticationError, AuthorizationError } from '@/server/auth';
 import { createSafeError } from '@/contracts/errors';
 import { SYNTHETIC_TARGETS } from '@/dev/fixtures';
 import { isDevPreviewEnabled } from '@/server/config/env';
+import { targetsRepository } from '@/server/db/repositories/targets.repository';
 
 export async function GET(req: NextRequest) {
-  // If preview is active and request is read-only preview, return sanitized synthetic catalog
+  // If preview is active, return sanitized synthetic catalog (F-03: zero secrets leaked)
   if (isDevPreviewEnabled()) {
+    const safeTargets = SYNTHETIC_TARGETS.map((t) => projectSafeTargetProfile(t as unknown as Record<string, unknown>));
     return NextResponse.json({
-      data: SYNTHETIC_TARGETS,
-      total: SYNTHETIC_TARGETS.length,
+      data: safeTargets,
+      total: safeTargets.length,
       mode: 'preview_synthetic',
     });
   }
 
   try {
-    await requireAuthenticatedPrincipal(req);
-    // In live mode with database connected, query targets table
-    return NextResponse.json({ data: [], total: 0, mode: 'live_database' });
+    const principal = await requireAuthenticatedPrincipal(req);
+
+    const targets = await targetsRepository.listTargets(principal.id);
+    const safeTargets = targets.map((t) => projectSafeTargetProfile(t as unknown as Record<string, unknown>));
+
+    return NextResponse.json({
+      data: safeTargets,
+      total: safeTargets.length,
+      mode: 'live',
+    });
   } catch (error) {
-    if (error instanceof AuthenticationError || error instanceof AuthorizationError) {
+    if (error instanceof AuthenticationError) {
       return NextResponse.json(error.envelope, { status: 401 });
     }
-    return NextResponse.json(createSafeError('INTERNAL_ERROR', 'SERVER_ERROR', 'Unexpected error'), { status: 500 });
+    if (error instanceof AuthorizationError) {
+      return NextResponse.json(error.envelope, { status: 403 });
+    }
+    return NextResponse.json(
+      createSafeError('SERVICE_NOT_CONFIGURED', 'DATABASE_UNAVAILABLE', error instanceof Error ? error.message : 'Database unavailable'),
+      { status: 503 }
+    );
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const principal = await requireAuthenticatedPrincipal(req);
     const body = await req.json();
     const parsed = CreateTargetCommandSchema.safeParse(body);
 
@@ -40,20 +54,56 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // In Stage 0, persistence to database is stubbed behind interface
-    const newTarget = {
-      id: crypto.randomUUID(),
+    if (isDevPreviewEnabled()) {
+      const now = new Date().toISOString();
+      const simulatedTarget = projectSafeTargetProfile({
+        id: crypto.randomUUID(),
+        name: parsed.data.name,
+        baseUrl: parsed.data.baseUrl,
+        allowedOrigins: parsed.data.allowedOrigins,
+        isSandboxVerified: false, // Server controls sandbox classification, never client command
+        environment: parsed.data.environment,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      return NextResponse.json(
+        {
+          data: simulatedTarget,
+          created: true,
+          mode: 'preview_synthetic',
+          message: 'Target created in development simulation mode. Database write deferred to Stage 1.',
+        },
+        { status: 201 }
+      );
+    }
+
+    // Live mode: requires authenticated principal and real persistence
+    const principal = await requireAuthenticatedPrincipal(req);
+
+    const created = await targetsRepository.createTarget({
+      ownerId: principal.id,
       name: parsed.data.name,
       baseUrl: parsed.data.baseUrl,
       allowedOrigins: parsed.data.allowedOrigins,
-      isSandbox: false, // Server controls sandbox classification, never client command
+      isSandbox: parsed.data.isSandboxRequested,
+      isSandboxVerified: false, // Server authoritative verification
+      testAccountRef: parsed.data.testAccountRef,
+      fixtureResetEndpoint: parsed.data.fixtureResetEndpoint,
       environment: parsed.data.environment,
       createdBy: principal.id,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    });
 
-    return NextResponse.json({ data: newTarget, created: true }, { status: 201 });
+    const safeTarget = projectSafeTargetProfile(created as unknown as Record<string, unknown>);
+
+    return NextResponse.json(
+      {
+        data: safeTarget,
+        created: true,
+        mode: 'live',
+      },
+      { status: 201 }
+    );
   } catch (error) {
     if (error instanceof AuthenticationError) {
       return NextResponse.json(error.envelope, { status: 401 });
@@ -62,8 +112,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(error.envelope, { status: 403 });
     }
     return NextResponse.json(
-      createSafeError('INTERNAL_ERROR', 'SERVER_ERROR', error instanceof Error ? error.message : 'Unknown error'),
-      { status: 500 }
+      createSafeError('SERVICE_NOT_CONFIGURED', 'DATABASE_UNAVAILABLE', error instanceof Error ? error.message : 'Database write unavailable'),
+      { status: 503 }
     );
   }
 }

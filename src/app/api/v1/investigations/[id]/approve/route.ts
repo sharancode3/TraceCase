@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ApprovePlanCommandSchema } from '@/contracts/planning';
-import { requireAuthenticatedPrincipal, AuthenticationError, AuthorizationError } from '@/server/auth';
+import { requireAuthenticatedPrincipal } from '@/server/auth';
 import { createSafeError } from '@/contracts/errors';
 import { isDevPreviewEnabled } from '@/server/config/env';
-import { SYNTHETIC_PLAN_V1 } from '@/dev/fixtures';
-import { verifyApprovalCompatibility } from '@/server/policy/approval-guard';
+import { investigationWorkflowService } from '@/server/workflow/investigation-workflow.service';
+import {
+  handleWorkflowError,
+  extractIdempotencyKey,
+  executeWithIdempotency,
+} from '@/server/workflow/workflow-http';
 
 export async function POST(
   req: NextRequest,
@@ -13,8 +17,8 @@ export async function POST(
   const { id } = await params;
 
   try {
-    const body = await req.json();
-    const parsed = ApprovePlanCommandSchema.safeParse(body);
+    const rawBody = await req.json();
+    const parsed = ApprovePlanCommandSchema.safeParse(rawBody);
 
     if (!parsed.success) {
       return NextResponse.json(
@@ -52,45 +56,35 @@ export async function POST(
 
     // Live mode: requires authenticated principal
     const principal = await requireAuthenticatedPrincipal(req);
+    const idempotencyKey = extractIdempotencyKey(req, rawBody as Record<string, unknown>);
 
-    // Verify cryptographic plan compatibility
-    const compatibility = verifyApprovalCompatibility(SYNTHETIC_PLAN_V1, {
-      id: crypto.randomUUID(),
-      investigationId: id,
-      planVersion: parsed.data.planVersion,
-      planHash: parsed.data.approvedPlanHash,
-      approvedBy: principal.id,
-      operatorNotes: parsed.data.operatorNotes || null,
-      approvedAt: new Date().toISOString(),
-    });
+    return await executeWithIdempotency({
+      principalId: principal.id,
+      idempotencyKey,
+      resourceId: id,
+      commandName: 'APPROVE_PLAN',
+      payload: parsed.data,
+      handler: async () => {
+        const result = await investigationWorkflowService.approvePlan({
+          investigationId: id,
+          ownerId: principal.id,
+          planVersion: parsed.data.planVersion,
+          approvedPlanHash: parsed.data.approvedPlanHash,
+          operatorNotes: parsed.data.operatorNotes,
+          expectedWorkflowRevision: parsed.data.expectedWorkflowRevision,
+        });
 
-    if (!compatibility.isCompatible) {
-      return NextResponse.json(
-        createSafeError('CONFLICT_STALE_VERSION', 'PLAN_HASH_MISMATCH', compatibility.reason || 'Hash mismatch'),
-        { status: 409 }
-      );
-    }
-
-    return NextResponse.json({
-      data: {
-        investigationId: id,
-        planVersion: parsed.data.planVersion,
-        planHash: parsed.data.approvedPlanHash,
-        approvedBy: principal.id,
-        approvedAt: new Date().toISOString(),
+        return {
+          status: 200,
+          body: {
+            data: result.approvalRecord,
+            status: 'APPROVED',
+            workflowRevision: result.workflowRevision,
+          },
+        };
       },
-      status: 'APPROVED',
     });
   } catch (error) {
-    if (error instanceof AuthenticationError) {
-      return NextResponse.json(error.envelope, { status: 401 });
-    }
-    if (error instanceof AuthorizationError) {
-      return NextResponse.json(error.envelope, { status: 403 });
-    }
-    return NextResponse.json(
-      createSafeError('INTERNAL_ERROR', 'SERVER_ERROR', error instanceof Error ? error.message : 'Unknown error'),
-      { status: 500 }
-    );
+    return handleWorkflowError(error);
   }
 }

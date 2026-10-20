@@ -27,11 +27,11 @@ const ServerEnvSchema = z.object({
   WORKER_HEARTBEAT_SEC: z.coerce.number().default(10),
 
   // Development Preview Mode Flag
-  // Strictly false in production unless explicit opt-in
+  // Strictly false in production; fatal error if attempted in production
   DEV_PREVIEW_MODE: z.preprocess((val) => {
     if (typeof val === 'string') return val.toLowerCase() === 'true';
     return Boolean(val);
-  }, z.boolean()).default(true),
+  }, z.boolean()).default(false),
 
   // Safety & Guardrail Settings
   POLICY_ENFORCE_SANDBOX: z.preprocess((val) => {
@@ -40,6 +40,12 @@ const ServerEnvSchema = z.object({
   }, z.boolean()).default(true),
 
   TARGET_RESET_SECRET: z.string().default('tc-fixture-secret-2026'),
+
+  // External Identity Provider (OIDC / JWT)
+  AUTH_ISSUER: z.string().url().optional(),
+  AUTH_AUDIENCE: z.string().optional(),
+  AUTH_JWKS_URI: z.string().url().optional(),
+  AUTH_CLOCK_TOLERANCE_SEC: z.coerce.number().default(10),
 });
 
 export type ServerEnv = z.infer<typeof ServerEnvSchema>;
@@ -55,20 +61,35 @@ export function getServerEnv(): ServerEnv {
     throw new Error(`[TraceCase] Invalid server environment configuration: ${errorDetails}`);
   }
 
-  // Safety check: Preview mode cannot silently run in production
+  // Safety check: Preview mode strictly forbidden in production (F-04)
   if (result.data.NODE_ENV === 'production' && result.data.DEV_PREVIEW_MODE) {
-    console.warn('[TraceCase Security] WARNING: DEV_PREVIEW_MODE is active in production environment!');
+    throw new Error('[TraceCase Security] FATAL: DEV_PREVIEW_MODE is strictly forbidden in production environments.');
   }
 
   cachedEnv = result.data;
   return cachedEnv;
 }
 
+/**
+ * Checks whether development preview mode is enabled.
+ * Fails closed in production or if environment parsing fails.
+ */
 export function isDevPreviewEnabled(): boolean {
+  if (process.env.NODE_ENV === 'production') {
+    return false;
+  }
   try {
     const env = getServerEnv();
     return env.DEV_PREVIEW_MODE;
   } catch {
-    return process.env.NODE_ENV !== 'production';
+    // Fail closed: never default to preview if config is corrupted or missing
+    return false;
   }
+}
+
+/**
+ * Test helper to reset cached configuration between test runs.
+ */
+export function _resetCachedEnvForTesting(): void {
+  cachedEnv = null;
 }

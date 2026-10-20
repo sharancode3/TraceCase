@@ -8,6 +8,48 @@
       "when": 1792495360442,
       "tag": "0000_overconfident_trish_tilby",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792515062525,
+      "tag": "0001_puzzling_meltdown",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792516612748,
+      "tag": "0002_fair_bloodaxe",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792518595694,
+      "tag": "0003_chunky_colonel_america",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792521370365,
+      "tag": "0004_parched_bucky",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792523604824,
+      "tag": "0005_late_lizard",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792525392844,
+      "tag": "0006_lumpy_iron_patriot",
+      "breakpoints": true
     }
   ]
 }

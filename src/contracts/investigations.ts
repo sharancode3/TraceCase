@@ -21,6 +21,18 @@ export const AttemptSummarySchema = z.object({
 });
 export type AttemptSummary = z.infer<typeof AttemptSummarySchema>;
 
+export const InvestigationReviewStatusSchema = z.enum([
+  'NONE',
+  'CLARIFICATION_PENDING',
+  'PROPOSAL_READY',
+  'APPROVED',
+  'REJECTED',
+  'REVOKED',
+  'CANCELLED',
+  'BLOCKED',
+]);
+export type InvestigationReviewStatus = z.infer<typeof InvestigationReviewStatusSchema>;
+
 export const InvestigationSnapshotSchema = z.object({
   id: z.string().uuid(),
   reportId: z.string().uuid(),
@@ -32,6 +44,9 @@ export const InvestigationSnapshotSchema = z.object({
   lifecycleStatus: InvestigationLifecycleStatusSchema,
   reproductionVerdict: ReproductionVerdictSchema,
   evidenceReadiness: EvidenceReadinessStatusSchema,
+  workflowRevision: z.number().int().positive().default(1).optional(),
+  reviewStatus: InvestigationReviewStatusSchema.default('NONE').optional(),
+  eventWatermark: z.number().int().nonnegative().default(0).optional(),
   activeAttemptNumber: z.number().int().min(1).max(2).nullable(),
   attempt1: AttemptSummarySchema.nullable(),
   attempt2: AttemptSummarySchema.nullable(),
@@ -40,6 +55,8 @@ export const InvestigationSnapshotSchema = z.object({
   isApproved: z.boolean(),
   approvedBy: z.string().nullable(),
   approvedAt: z.string().datetime().nullable(),
+  rejectionReason: z.string().nullable().optional(),
+  cancellationReason: z.string().nullable().optional(),
   tokenCostUsd: z.number().nonnegative(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),

@@ -1,42 +1,104 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { CreateReportCommandSchema } from '@/contracts/reports';
+import {
+  CreateReportCommandSchema,
+  DraftReportIntakeSchema,
+  CreateReportCommand,
+  DraftReportIntake,
+} from '@/contracts/reports';
 import { requireAuthenticatedPrincipal, AuthenticationError, AuthorizationError } from '@/server/auth';
 import { createSafeError } from '@/contracts/errors';
+import { isDevPreviewEnabled } from '@/server/config/env';
+import { reportsRepository } from '@/server/db/repositories/reports.repository';
 
 export async function POST(req: NextRequest) {
   try {
-    const principal = await requireAuthenticatedPrincipal(req);
     const body = await req.json();
-    const parsed = CreateReportCommandSchema.safeParse(body);
 
-    if (!parsed.success) {
+    // Support either full CreateReportCommand or DraftReportIntake
+    const fullParsed = CreateReportCommandSchema.safeParse(body);
+    let payload: CreateReportCommand | DraftReportIntake;
+
+    if (fullParsed.success) {
+      payload = fullParsed.data;
+    } else {
+      const draftParsed = DraftReportIntakeSchema.safeParse(body);
+      if (draftParsed.success) {
+        payload = draftParsed.data;
+      } else {
+        return NextResponse.json(
+          createSafeError(
+            'VALIDATION_FAILED',
+            'INVALID_REPORT_PAYLOAD',
+            'Payload validation failed',
+            fullParsed.error.format()
+          ),
+          { status: 400 }
+        );
+      }
+    }
+
+    const bugDescription = 'bugDescription' in payload ? payload.bugDescription : payload.rawDescription;
+    const rawDescription = 'rawDescription' in payload ? payload.rawDescription : undefined;
+
+    // In preview mode, return explicitly simulated report creation
+    if (isDevPreviewEnabled()) {
+      const now = new Date().toISOString();
+      const simulatedReport = {
+        id: crypto.randomUUID(),
+        investigationId: crypto.randomUUID(),
+        targetId: payload.targetId,
+        title: payload.title,
+        bugDescription,
+        expectedBehavior: payload.expectedBehavior || null,
+        observedBehavior: payload.observedBehavior || null,
+        suspectedSteps: payload.suspectedSteps || null,
+        browserEnvironment: payload.browserEnvironment || null,
+        buildVersion: payload.buildVersion || null,
+        createdBy: 'operator-preview-persona',
+        createdAt: now,
+        updatedAt: now,
+        isSimulatedPreview: true,
+      };
+
       return NextResponse.json(
-        createSafeError('VALIDATION_FAILED', 'INVALID_REPORT_PAYLOAD', 'Payload validation failed', parsed.error.format()),
-        { status: 400 }
+        {
+          data: simulatedReport,
+          created: true,
+          mode: 'preview_synthetic',
+          message: 'Report created in development simulation mode. Database write deferred to Stage 1.',
+        },
+        { status: 201 }
       );
     }
 
-    const reportId = crypto.randomUUID();
-    const investigationId = crypto.randomUUID();
-    const now = new Date().toISOString();
+    // Live mode: requires authenticated principal
+    const principal = await requireAuthenticatedPrincipal(req);
 
-    const createdReport = {
-      id: reportId,
-      investigationId,
-      targetId: parsed.data.targetId,
-      title: parsed.data.title,
-      bugDescription: parsed.data.bugDescription,
-      expectedBehavior: parsed.data.expectedBehavior,
-      observedBehavior: parsed.data.observedBehavior,
-      suspectedSteps: parsed.data.suspectedSteps || null,
-      browserEnvironment: parsed.data.browserEnvironment || null,
-      buildVersion: parsed.data.buildVersion || null,
+    const { report, investigation } = await reportsRepository.createReportWithInvestigation({
+      ownerId: principal.id,
+      targetId: payload.targetId,
+      title: payload.title,
+      bugDescription,
+      rawDescription,
+      expectedBehavior: payload.expectedBehavior || null,
+      observedBehavior: payload.observedBehavior || null,
+      suspectedSteps: payload.suspectedSteps || null,
+      browserEnvironment: payload.browserEnvironment || null,
+      buildVersion: payload.buildVersion || null,
       createdBy: principal.id,
-      createdAt: now,
-      updatedAt: now,
-    };
+    });
 
-    return NextResponse.json({ data: createdReport, created: true }, { status: 201 });
+    return NextResponse.json(
+      {
+        data: {
+          ...report,
+          investigationId: investigation.id,
+        },
+        created: true,
+        mode: 'live',
+      },
+      { status: 201 }
+    );
   } catch (error) {
     if (error instanceof AuthenticationError) {
       return NextResponse.json(error.envelope, { status: 401 });
@@ -45,8 +107,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(error.envelope, { status: 403 });
     }
     return NextResponse.json(
-      createSafeError('INTERNAL_ERROR', 'SERVER_ERROR', error instanceof Error ? error.message : 'Unknown error'),
-      { status: 500 }
+      createSafeError('SERVICE_NOT_CONFIGURED', 'DATABASE_UNAVAILABLE', error instanceof Error ? error.message : 'Database write unavailable'),
+      { status: 503 }
     );
   }
 }

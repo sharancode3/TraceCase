@@ -6,15 +6,71 @@
 
 ## Document Control and System Metadata
 
-- **System Identifier:** TraceCase Foundation Core
-- **Repository Version:** 1.0.0-stage0
-- **Implementation Milestone:** Stage 0 — Shared Application Foundation
-- **Operating Mode:** Development Preview Active (Synthetic Fixtures)
-- **Primary AI Model Target:** OpenAI GPT-6 Luna (Exclusive Structured Output Adapter; Integration Deferred to Stage 3)
-- **Execution Engine Target:** Playwright Chromium Headless via Chrome DevTools Protocol (Worker Scaffold Implemented)
-- **Persistence Layer:** PostgreSQL 15 with Drizzle ORM (Schema and Migrations Implemented)
-- **Object Storage Target:** Dual-Bucket S3 Architecture (MinIO / AWS S3; Interface Implemented)
+- **System Identifier:** TraceCase Core Platform
+- **Repository Version:** 1.0.0-p1-handoff
+- **Implementation Milestone:** Person 1 Backend & Verification Integration Handoff
+- **Operating Mode:** Local Integration & Verification Baseline
+- **Primary AI Model Target:** OpenAI GPT-6 Luna (Exclusive Structured Output Adapter; Role Prompts by Person 2)
+- **Execution Engine:** Playwright Chromium Headless via Chrome DevTools Protocol
+- **Persistence & Queue Layer:** PostgreSQL 15 with Drizzle ORM and `pg-boss` (ACID Transactional Outbox; Zero Redis Dependency)
+- **Object Storage Target:** Dual-Bucket S3 Architecture (MinIO / AWS S3; Implemented in Contracts)
 - **Repository Remote:** `https://github.com/sharancode3/TraceCase.git`
+
+---
+
+## Contributor Navigation & Codebase Ownership
+
+TraceCase is divided across three distinct ownership boundaries:
+
+| Contributor | Focus Area | Primary Directories Owned | Entry Document |
+|---|---|---|---|
+| **Person 1** (Lead / Execution) | Trusted backend APIs, PostgreSQL persistence, `pg-boss` queue, Playwright Chromium execution, two-attempt deterministic verifier, operational hardening, and deployment containerization | `src/server/`, `src/contracts/`, `worker/`, `drizzle/`, `tests/person-1/`, `scripts/`, Dockerfiles | [`implementation-stages/person-1/README.md`](implementation-stages/person-1/README.md) |
+| **Person 2** (AI / Evaluation) | OpenAI GPT-6 Luna prompts and adapters, controlled demo targets (`TraceCase-Demo-Tasks`), baseline reset/readback endpoints, and independent benchmark evaluation | `src/server/ai/` (prompts/adapters), controlled demo target applications, benchmark suites | [`implementation-stages/person-2/README.md`](implementation-stages/person-2/README.md) |
+| **Person 3** (Frontend / Evidence) | Next.js UI features/pages, shared evidence sanitizer (`src/server/evidence/evidence-storage.service.ts`), dual-tier S3 artifact storage, and synchronized evidence player | `src/app/` (UI routes), `src/features/`, `src/components/`, evidence storage/sanitization services | [`implementation-stages/person-3/README.md`](implementation-stages/person-3/README.md) |
+
+### Implementation Plans Index
+- [Shared Coordination Guide & Gate Definitions](implementation-stages/README.md)
+- [Person 1 Implementation Plan](implementation-stages/person-1/person-1-implementation-plan.md) (Phases P1-01 through P1-09)
+- [Person 2 Implementation Plan](implementation-stages/person-2/person-2-implementation-plan.md) (Phases P2-01 through P2-08)
+- [Person 3 Implementation Plan](implementation-stages/person-3/person-3-implementation-plan.md) (Phases P3-01 through P3-08)
+
+---
+
+## Repository Map
+
+```text
+TraceCase/
+├── src/
+│   ├── app/                   # Next.js 15 App Router web pages and API route handlers
+│   │   ├── api/               # Trusted API endpoints (/ready, /v1/investigations, /reports, etc.)
+│   │   └── investigations/    # Web pages for intake, approval, review, and live playback
+│   ├── contracts/             # Pure TypeScript / Zod schemas (shared across web, server, worker)
+│   ├── features/              # UI components, layout, and preview galleries
+│   └── server/                # Trusted server modules
+│       ├── ai/                # AI proposal schemas and atomic budget metering
+│       ├── auth/              # Cryptographic JWT authentication & tenant isolation
+│       ├── browser/           # Playwright Chromium automation & action dispatch
+│       ├── config/            # Strict environment variable parsing
+│       ├── db/                # PostgreSQL schema, Drizzle ORM repositories, and migrations
+│       ├── evidence/          # Capture registrar, evidence pipeline, and metadata packaging
+│       ├── policy/            # Plan fingerprinting, sandbox guards, approval verification
+│       ├── queue/             # Transactional outbox relay & execution lease management
+│       ├── services/          # Service container and ports
+│       └── verification/      # Two-attempt controller, baseline comparator, pair assessor
+├── worker/                    # Standalone persistent background worker daemon (pg-boss consumer)
+├── drizzle/                   # Drizzle ORM SQL migration files (0000 through 0006)
+├── docs/                      # Architectural specifications (PRD, TRD, SAD, etc.)
+├── implementation-stages/     # Multi-contributor implementation plans and review handoffs
+│   ├── person-1/              # Person 1 plans, reviews, handoffs, and campaign index
+│   ├── person-2/              # Person 2 plans and handoffs
+│   └── person-3/              # Person 3 plans and handoffs
+├── tests/                     # Unit, contract, and integration test suites
+│   └── person-1/              # Person 1 phase verification suites (Phases 1 through 9)
+├── scripts/                   # Operational and diagnostic scripts
+├── Dockerfile.web             # Multi-stage production container for Next.js web application
+├── Dockerfile.worker          # Multi-stage production container for Playwright worker daemon
+└── docker-compose.yml         # Local containerized orchestration (PostgreSQL, Web, Worker)
+```
 
 ---
 
@@ -22,7 +78,7 @@
 
 Software engineering teams lose considerable velocity investigating vague, incomplete, and non-reproducible bug reports. Traditional bug reporting relies on ambiguous human write-ups, volatile application logs, and ad-hoc screenshots that frequently leak credentials or user PII.
 
-**TraceCase** is designed to transform unstructured bug reports into deterministic, two-run confirmed bug reproduction packages. The intended end-to-end operational flow is:
+**TraceCase** transforms unstructured bug reports into deterministic, two-run confirmed bug reproduction packages. The end-to-end operational flow is:
 
 ```text
 Authorized Target Registration
@@ -31,7 +87,7 @@ Authorized Target Registration
   -> Versioned Experiment Plan (Luna Role 2)
   -> Mandatory Human Operator Authorization Gate (TC-INV-003, TC-INV-004)
   -> First Browser Execution Run (Isolated Chromium Context)
-  -> Deterministic Verifier Assertion Check (Code, Not LLM)
+  -> Deterministic Verifier Assertion Check (Pure Code, Not LLM)
   -> Target Baseline Restoration Hook (POST /api/test/reset-fixture)
   -> Second Browser Execution Run (Fresh Context)
   -> Verification Matching & In-Stream Secret Scrubbing (TC-INV-009)
@@ -41,52 +97,46 @@ Authorized Target Registration
 
 ---
 
-## Current Status: Stage 0 Foundation Reality
+## Current Status: Person 1 Integration Handoff
 
-To maintain strict engineering transparency, this repository currently reflects **Stage 0: The Complete Shared Foundation**. It provides a working, typed, and navigable foundation for subsequent implementation stages.
+Person 1 backend infrastructure, browser execution, deterministic verification, and deployment preparations are implemented and verified locally across 45 test files and 242 passing tests.
 
-### 1. What Stage 0 Implements
-- **Working Web Application Shell:** Next.js 15.1 App Router application with responsive navigation, breadcrumbs, and layout components.
-- **Reference-Aligned Design System:** Lavender surfaces (`#EDF0FF`), cobalt actions (`#4767DB`), deep navy text (`#161E38`), rounded cards (`rounded-card`), and circular icon buttons. Strictly zero emojis. All color pairings mathematically achieve WCAG AA/AAA contrast ratios.
-- **Canonical Executable Contracts:** Strict Zod schemas and inferred TypeScript types in `src/contracts/` covering status, targets, reports, plans, events, evidence, and safe error envelopes. Server-owned authority fields are strictly protected against client tampering.
-- **Tri-Dimensional State Decoupling (`TC-INV-007`):** Execution Lifecycle State, Reproduction Verdict, and Evidence Readiness are maintained as independent dimensions in code and UI presentation.
-- **Domain Security Helpers:** Tested pure implementations of deterministic plan fingerprinting (`SHA-256`), approval compatibility verification (`verifyApprovalCompatibility`), and progress event deduplication.
-- **Database Schema and Migrations:** 6 relational tables declared via Drizzle ORM in `src/server/db/schema.ts` and initial SQL migration generated in `drizzle/migrations/`.
-- **Authentication and Ownership Boundary:** Trusted port in `src/server/auth/` that fails closed on unauthenticated live mutations and prevents preview personas from accessing protected live operations.
-- **Separately Executable Background Worker Process:** Standalone Node.js daemon in `worker/index.ts` that builds independently via `tsup`, logs single concurrency lease (`TC-INV-011`), handles `SIGTERM`/`SIGINT` graceful shutdown, and serves an internal `/health` probe on port 3001.
-- **Automated Test Suite & CI:** Vitest contract, domain, and security boundary tests passing with 100% success; GitHub Actions CI workflow in `.github/workflows/ci.yml`.
+### 1. What Person 1 Has Implemented & Verified
+- **Separately Executable Architecture:** Standalone Next.js 15 web application and persistent Node.js worker daemon (`worker/index.ts`) building independently with private health probe (`127.0.0.1:3001`).
+- **PostgreSQL & Queue Engine:** Drizzle ORM schema across 7 migrations (`0000` through `0006`). Asynchronous job execution orchestrated via `pg-boss` on PostgreSQL with Transactional Outbox pattern (`outbox_messages` table) and singleton monotonic lease fencing (`global_execution_leases` table). No Redis container required.
+- **Identity & Authorization:** Cryptographic JWT authentication with asymmetric RSA keys, strict tenant isolation (cross-tenant requests return 404), and explicit actor authorization checks.
+- **Deterministic Approval & Policy:** Canonical SHA-256 plan fingerprinting, explicit human approval gate (`POST /approve`), rejection, revocation, and fail-closed pre-action expiration checks.
+- **Bounded Browser Execution:** Headless Playwright Chromium execution with anti-ambiguity locators, action receipts, SSRF guards blocking private cloud metadata (`169.254.169.254`), on-disk WebM video recording, console error capture, and network trace capture.
+- **Deterministic Two-Attempt Verification:** Pure assertion evaluation (equality, containment, regex with nested quantifier ReDoS protection), independent baseline readback and canonical state hashing, outbound target reset coordination, 4-point attempt validity, and 16-scenario pair decision matrix.
+- **Operational Hardening:** Worker heartbeats, outbox crash recovery, 1-hour lease quarantine on `MUTATION_UNCERTAIN`, pre-flight baseline mismatch halt (`PREFLIGHT_BASELINE_FAILED`), and truthful `/api/ready` subsystem probing.
+- **Deployment Candidates:** Multi-stage production `Dockerfile.web`, `Dockerfile.worker`, local `docker-compose.yml`, and GitHub Actions CI workflow in `.github/workflows/ci.yml`.
 
-### 2. What is Preview-Only in Stage 0
-- **17 Canonical Workflow States:** Navigable development previews of all 17 canonical states defined by the specifications, accessible via the main dashboard and `/preview/gallery`.
-- **Simulated Workflow Steps:** Report intake validation, clarification cards, plan review, and operator approval are interactive simulations in local memory.
-- **Simulated Progress Reducer:** `/investigations/:id/live` allows contributors to step through the two-run confirmation lifecycle using a deterministic event reducer.
-- **Synthetic Evidence Manifests:** Media placeholders and logs indicate that evidence is simulated. No real video recording or live network packets are presented as genuine.
-
-### 3. What is Interface-Only (Deferred to Later Stages)
-- **Live GPT-6 Luna Client:** Typed interface `AiPlannerPort` in `src/server/services/ports.ts` throws `ServiceUnavailableError`. Real OpenAI API calls will be wired in Stage 3.
-- **Live Playwright Chromium Execution:** Browser tool wrapper contracts exist; headless browser automation on live targets will be implemented in Stage 2.
-- **Live Target Reset Execution:** Reset hook contracts exist; outbound HTTP requests to target endpoints will activate in Stage 5.
-- **pg-boss Queue Dispatching:** Worker queue consumption will be integrated in Stage 4.
-- **Dual-Bucket S3 Persistence:** S3 client configuration and lifecycle rules are defined; live multipart uploads will activate in Stage 6.
+### 2. Contributor Dependencies & Release Gate Baseline
+- **Gate G0 (Common Contracts):** PASSED. Unified types and safe projection boundaries verified.
+- **Gate G1 (Persistence & Identity):** PASSED. Real JWT auth and PostgreSQL repositories verified.
+- **Gate G2 (Deterministic Slice):** PASSED WITH DOUBLES. Two-attempt controller and Playwright browser media verified.
+- **Gate G3 (Agentic User Journey):** BLOCKED pending Person 2 (Luna AI role prompts, live OpenAI API key, and controlled demo target).
+- **Gate G4 (Hardened Operations):** PARTIALLY PASSED LOCAL. Daemon liveness, outbox recovery, lease fencing, and ReDoS safety verified locally.
+- **Gate G5 (Deployed Evaluation):** NOT RUN. Deployment candidate configurations prepared; live external deployment not yet executed.
+- **TC4 Content Redaction:** BLOCKED on Person 3's shared sanitizer (`src/server/evidence/evidence-storage.service.ts`). Tenant isolation is verified; content-level redaction awaits Person 3 to avoid competing redactors.
+- **Gate H-12 (Release Handoff):** QUALIFIED HANDOFF DELIVERED. Machine-readable campaign index and comprehensive handoff specifications delivered.
 
 ---
 
-## Canonical Hackathon Target Scenarios
-
-TraceCase is designed to benchmark against four canonical problem statement scenarios. In Stage 0, these exist as fully documented test specifications and synthetic preview fixtures:
+## Canonical Problem Statement Scenarios
 
 | Scenario | Objective | Target Fixture Mode | Verification Assertion | Expected Final Verdict | Evidence Readiness |
 |---|---|---|---|---|---|
 | **TC1** | Deterministic Two-Run Confirmation | `TraceCase-Demo-Tasks`<br/>(Array Index Offset Bug Active) | Filter Active -> Delete item -> Assert wrong item deleted across two consecutive runs with baseline reset. | `CONFIRMED_REPRODUCED` | `PUBLIC_SAFE_READY`<br/>(Synced Video, Logs, Traces) |
 | **TC2** | Non-Reproducible Defect (Clean Baseline) | `TraceCase-Demo-Tasks`<br/>(Fixed Application Build) | Execute identical steps -> Assert correct item deleted -> Bug not observed across two runs; baseline preserved. | `NOT_REPRODUCED` | `PUBLIC_SAFE_READY`<br/>(Clean Baseline Verified) |
 | **TC3** | Sandbox Guardrail Enforcement | Variant A: Sandbox Target<br/>Variant B: Production Target | Variant A: Tier 4 action authorized by operator -> Executed.<br/>Variant B: Tier 4 action blocked pre-execution by Policy Engine (`TC-INV-008`). | A: Per Application<br/>B: `INCONCLUSIVE` (Blocked) | A: `PUBLIC_SAFE_READY`<br/>B: `PENDING_GENERATION` |
-| **TC4** | PII & Secret In-Stream Redaction | `TraceCase-Demo-Tasks`<br/>(Debug Auth Leak Active) | Injected synthetic JWTs (`synthetic-jwt-token-xyz`), Bearer tokens, and API keys scrubbed in worker memory before public export. | `CONFIRMED_REPRODUCED` | `PUBLIC_SAFE_READY`<br/>(0 Plaintext Secrets in S3) |
+| **TC4** | PII & Secret In-Stream Redaction | `TraceCase-Demo-Tasks`<br/>(Debug Auth Leak Active) | Injected synthetic JWTs (`synthetic-jwt-token-xyz`), Bearer tokens, and API keys scrubbed before public export. | `CONFIRMED_REPRODUCED` | `PUBLIC_SAFE_READY`<br/>(0 Plaintext Secrets in S3) |
 
 ---
 
 ## Specification and Architecture Documentation
 
-All 11 formal specification documents and 4 companion foundation manuals are maintained in the [`docs/`](docs/) directory:
+All formal specification documents are maintained in the [`docs/`](docs/) directory:
 
 ### Foundation Governance & Setup Documents
 - [`docs/foundation-decisions.md`](docs/foundation-decisions.md): Complete reconciliation of version conflicts, naming, and architectural decisions.
@@ -109,12 +159,12 @@ All 11 formal specification documents and 4 companion foundation manuals are mai
 
 ---
 
-## Local Development and Installation
+## Local Development and Verification Runbook
 
 ### 1. Prerequisites
 - Node.js `v20.x` or `v24.x` (LTS recommended)
 - `pnpm` version `9.x` (`npm install -g pnpm@9`)
-- Docker Engine `24.0+` (Optional for Stage 0 preview mode)
+- Docker Engine `24.0+` (for containerized PostgreSQL and multi-service deployment)
 
 ### 2. Setup Commands
 ```bash
@@ -129,60 +179,43 @@ pnpm install --frozen-lockfile
 cp .env.example .env.local
 ```
 
-### 3. Running the Web Application
+### 3. Running Quality & Verification Checks
 ```bash
-pnpm dev
-```
-Open [http://localhost:3000](http://localhost:3000) to inspect the application shell, investigations dashboard, and preview gallery.
-
-### 4. Running the Background Worker Process
-In a separate terminal:
-```bash
-# Run worker in development mode
-pnpm dev:worker
-
-# Or build and run standalone distribution
-pnpm build:worker
-pnpm start:worker
-```
-The worker will log its identity, verify its single-concurrency lease (`TC-INV-011`), and enter idle standby mode awaiting Stage 4 queue activation. Internal health checks are accessible at `http://localhost:3001/health`.
-
-### 5. Running Quality and Verification Checks
-```bash
-# TypeScript strict type checking
+# 1. Strict TypeScript typechecking across web and server source
 pnpm typecheck
 
-# Code style and linting
+# 2. Code style and ESLint validation (zero warnings)
 pnpm lint
 
-# Vitest contract, domain, and security tests
+# 3. Complete automated test suite (45 test files, 242 tests)
 pnpm test
 
-# Full production build (Web and Worker)
+# 4. Controller contract acceptance tests specifically (13 tests)
+pnpm vitest run tests/person-1/phase-9/official-acceptance.test.ts
+
+# 5. Real Playwright Chromium acceptance integration suite (4 tests)
+pnpm vitest run tests/person-1/phase-9/real-acceptance.integration.test.ts
+
+# 6. Production web and worker compilation
 pnpm build
+
+# 7. Single-run worker daemon verification
+cmd /c "set WORKER_RUN_ONCE=true&& set USE_IN_MEMORY_QUEUE=true&& node dist/worker/index.mjs"
 ```
 
----
+### 4. Running the Multi-Container Deployment Candidate
+```bash
+# Build and start PostgreSQL, Next.js Web, and Playwright Worker daemon
+docker compose up --build
 
-## Roadmap to Live Reproduction
+# In a separate terminal, probe subsystem readiness:
+curl -i http://localhost:3000/api/health
+curl -i http://localhost:3000/api/ready
+curl -i http://localhost:3001/health
+```
 
-Subsequent implementation stages will build upon this foundation:
-
-- **Stage 1:** Core Infrastructure, Database Persistence & Orchestration State Machine.
-- **Stage 2:** Browser Worker Daemon, Playwright Tool Wrappers & Policy Enforcement.
-- **Stage 3:** GPT-6 Luna AI Adapter, Structured Prompts & Zod Schema Validation.
-- **Stage 4:** Queue Integration (`pg-boss`) & Controller State Orchestration.
-- **Stage 5:** Target Reference Application (`TraceCase-Demo-Tasks`) & Reset Fixtures.
-- **Stage 6:** Dual-Bucket S3 Storage Pipeline & Synced Evidence Triad Player.
-- **Stage 7:** Official Benchmark Campaign (TC1–TC4) & Redaction Recall Audit.
-- **Stage 8:** Production Container Fleet Deployment & Final Demonstration Sign-Off.
-
-## Person-wise Implementation Plans
-
-Use the [shared implementation guide](implementation-stages/README.md) for ownership, dependencies, handoffs, and acceptance gates. Each contributor has a separate staged plan:
-
-- [Person 1 — Core platform, browser execution, and verification](implementation-stages/person-1/person-1-implementation-plan.md)
-- [Person 2 — AI roles, controlled target, and evaluation](implementation-stages/person-2/person-2-implementation-plan.md)
-- [Person 3 — Product interface and evidence delivery](implementation-stages/person-3/person-3-implementation-plan.md)
-
-These person-wise plans describe parallel delivery. Their stage numbers are local to each person and should not be matched numerically to the earlier subsystem roadmap.
+### 5. Applying Database Migrations
+```bash
+# Apply migrations to live PostgreSQL database
+pnpm db:migrate
+```

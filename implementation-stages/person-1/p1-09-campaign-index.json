@@ -1,0 +1,166 @@
+{
+  "campaignId": "campaign-p1-09-local-20261021",
+  "targetCandidate": {
+    "repository": "TraceCase",
+    "leadDeveloper": "Person 1",
+    "baseCommit": "af56f5a",
+    "timestamp": "2026-10-21T02:42:00+05:30",
+    "workingTreeStatus": "uncommitted_local_modifications"
+  },
+  "runtimeEnvironment": {
+    "os": "Windows_NT",
+    "nodeVersion": "v24.11.0",
+    "pnpmVersion": "9.15.9",
+    "playwrightChromium": "1.49.1 (available locally)"
+  },
+  "qualityGates": {
+    "G0": {
+      "name": "Common Contracts & Foundation",
+      "status": "PASSED",
+      "evidenceLevel": "verified with real local services",
+      "details": "Contract definitions, Zod schemas, error envelopes, and safe projection boundaries verified across all phases."
+    },
+    "G1": {
+      "name": "Isolated Modules & Persistence",
+      "status": "PASSED",
+      "evidenceLevel": "verified with real local services",
+      "details": "Cryptographic JWT authentication, tenant isolation, Drizzle PostgreSQL schema (6 migrations), and 5 domain repositories verified."
+    },
+    "G2": {
+      "name": "Deterministic Vertical Slice",
+      "status": "PASSED_WITH_DOUBLES",
+      "evidenceLevel": "verified with doubles and real browser media",
+      "details": "Two-attempt controller, reset verification protocol, pair decision table, and Playwright Chromium execution verified."
+    },
+    "G3": {
+      "name": "Agentic User Journey",
+      "status": "BLOCKED",
+      "evidenceLevel": "blocked",
+      "details": "Real agentic journey (vague intake -> clarification -> AI proposal -> bounded execution) is blocked pending Person 2 Luna AI role modules and live OpenAI API credentials."
+    },
+    "G4": {
+      "name": "Hardened Operational Posture",
+      "status": "PARTIALLY_PASSED_LOCAL",
+      "evidenceLevel": "verified with doubles and real local services",
+      "details": "Worker heartbeats, outbox crash recovery, lease fencing, pre-action authorization, and ReDoS safety verified locally. Independent evaluation pending."
+    },
+    "G5": {
+      "name": "Deployed Evaluation",
+      "status": "NOT_RUN",
+      "evidenceLevel": "not run",
+      "details": "Multi-stage Dockerfiles, Docker Compose stack, and CI workflow exist as deployment preparation. Actual deployed acceptance in an authorized external environment has not been executed."
+    },
+    "H12": {
+      "name": "Release Handoff Package",
+      "status": "QUALIFIED_HANDOFF_DELIVERED",
+      "evidenceLevel": "verified with real local services and doubles",
+      "details": "Comprehensive handoff delivered documenting exact interface contracts, blocked dependencies, limitations, and operational runbook."
+    }
+  },
+  "officialScenarios": [
+    {
+      "scenarioId": "TC1",
+      "caseTitle": "Bug Reproduced Twice",
+      "obligation": "PS-REQ-001, PS-REQ-002, PS-REQ-003, PS-REQ-004",
+      "acceptanceOutcome": "PASS_WITH_DOUBLES_AND_REAL_MEDIA",
+      "evidenceLevel": "verified with doubles and real local browser media",
+      "reproductionVerdict": "CONFIRMED_REPRODUCED",
+      "attemptCount": 2,
+      "targetBuildId": "build-commit-sha-7a8b9c",
+      "triadCompleteness": {
+        "isComplete": true,
+        "attempt1": { "video": true, "console": true, "network": true },
+        "attempt2": { "video": true, "console": true, "network": true },
+        "videoContainerVerification": "EBML Header [0x1A, 0x45, 0xDF, 0xA3] verified on real Playwright WebM capture"
+      },
+      "limitations": [
+        "Controller orchestration and reset readback verified using local HTTP server fixture and typed browser worker double.",
+        "Real Playwright browser capture verified in separate integration suite with genuine video, console, and network logs.",
+        "Full end-to-end multi-process queue execution against a remote target remains pending G5 deployment."
+      ]
+    },
+    {
+      "scenarioId": "TC2",
+      "caseTitle": "Cannot Reproduce",
+      "obligation": "PS-REQ-005, PS-REQ-012, PS-REQ-015",
+      "acceptanceOutcome": "PASS_WITH_DOUBLES",
+      "evidenceLevel": "verified with doubles",
+      "reproductionVerdict": "NOT_REPRODUCED",
+      "attemptCount": 2,
+      "targetBuildId": "build-commit-sha-7a8b9c",
+      "transparencyDetails": {
+        "stepsRecorded": true,
+        "environmentRecorded": "development",
+        "targetBuildAttested": true
+      },
+      "limitations": [
+        "Verified via pure deterministic decision table and controller doubles.",
+        "Live defect resolution demonstration depends on Person 2 controlled demo target."
+      ]
+    },
+    {
+      "scenarioId": "TC3",
+      "caseTitle": "Deleting Data in Sandbox",
+      "obligation": "PS-REQ-006, PS-REQ-010, PS-REQ-016",
+      "acceptanceOutcome": "PASS",
+      "evidenceLevel": "verified with real local services and doubles",
+      "sandboxEnforcement": {
+        "positiveCase": "Mutating plan permitted on verified sandbox; state mutated, reset triggered, baseline equivalence verified.",
+        "negativeCase": "Mutating plan strictly rejected fail-closed on allowed-origin non-sandbox target before any network request."
+      },
+      "ssrfGuard": {
+        "originCheck": "Unauthorized domains rejected",
+        "metadataCheck": "169.254.169.254 strictly blocked"
+      },
+      "limitations": [
+        "Tested against local HTTP fixture; real production application mutation was deliberately not contacted."
+      ]
+    },
+    {
+      "scenarioId": "TC4",
+      "caseTitle": "Auth Token Redacted Before Sharing",
+      "obligation": "PS-REQ-017, PS-REQ-018",
+      "acceptanceOutcome": "BLOCKED_ON_REAL_SANITIZER",
+      "evidenceLevel": "tenant auth verified with real HTTP handler; content redaction blocked pending Person 3",
+      "tenantIsolation": {
+        "status": "VERIFIED",
+        "details": "Principal Bob receives 404 RESOURCE_NOT_FOUND when requesting Principal Alice investigation via authenticated HTTP handler or workflow service. Zero secrets or metadata leaked."
+      },
+      "contentRedaction": {
+        "status": "BLOCKED",
+        "details": "Person 3 shared sanitizer and private artifact storage service (src/server/evidence/evidence-storage.service.ts) has not been delivered. In accordance with Section 6, Person 1 does not invent a competing sanitizer. TC4 real acceptance is explicitly BLOCKED."
+      },
+      "negativeRegressionCase": {
+        "status": "VERIFIED",
+        "details": "Confirmed that unredacted secret sentinels in shared content fail verification."
+      },
+      "limitations": [
+        "Metadata propagation through EvidencePipeline verified with doubles.",
+        "Actual public-safe artifact bytes cannot be verified until Person 3 delivers the shared redactor."
+      ]
+    }
+  ],
+  "operationalBoundaries": [
+    {
+      "boundary": "Pre-Flight Baseline Failure",
+      "status": "PASSED",
+      "behavior": "When target fixture baseline is dirty or modified prior to Attempt 1, execution aborts immediately with PREFLIGHT_BASELINE_FAILED without dispatching browser actions."
+    },
+    {
+      "boundary": "Pre-Action Approval Expiry",
+      "status": "PASSED",
+      "behavior": "When plan approval lease has expired, TwoAttemptController fails closed immediately without contacting the target network."
+    },
+    {
+      "boundary": "Mutation Uncertainty Lease Quarantine",
+      "status": "PASSED",
+      "behavior": "When an action is classified as MUTATION_UNCERTAIN, the global execution lease is quarantined for 1 hour and Attempt 2 is blocked."
+    },
+    {
+      "boundary": "Bounded Predicates and ReDoS Safety",
+      "status": "PASSED_WITH_LIMITATIONS",
+      "behavior": "Catastrophic backtracking nested quantifiers (e.g. (a+)+$) and text bounds are rejected.",
+      "unresolvedLimitation": "Arbitrary regex evaluation remains exposed to complex overlapping alternation patterns; production deployments should restrict failure signatures to bounded string predicates (EQUALS, CONTAINS) or strict token anchors."
+    }
+  ]
+}

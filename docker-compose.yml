@@ -1,0 +1,63 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: tracecase-postgres
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tc_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tc_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-tracecase}
+    volumes:
+      - tracecase_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tc_user} -d ${POSTGRES_DB:-tracecase}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: tracecase-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass}@postgres:5432/${POSTGRES_DB:-tracecase}
+      AUTH_ISSUER: ${AUTH_ISSUER:-https://auth.tracecase.test}
+      AUTH_AUDIENCE: ${AUTH_AUDIENCE:-tracecase-api}
+      AUTH_JWKS_URI: ${AUTH_JWKS_URI:-https://auth.tracecase.test/.well-known/jwks.json}
+      DEV_PREVIEW_MODE: ${DEV_PREVIEW_MODE:-false}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL_ID: ${OPENAI_MODEL_ID:-gpt-6-luna}
+      AI_BUDGET_LIMIT_USD: ${AI_BUDGET_LIMIT_USD:-10.00}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: tracecase-worker
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3001"
+    environment:
+      NODE_ENV: production
+      WORKER_PORT: 3001
+      DATABASE_URL: postgres://${POSTGRES_USER:-tc_user}:${POSTGRES_PASSWORD:-tc_pass}@postgres:5432/${POSTGRES_DB:-tracecase}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL_ID: ${OPENAI_MODEL_ID:-gpt-6-luna}
+      AI_BUDGET_LIMIT_USD: ${AI_BUDGET_LIMIT_USD:-10.00}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  tracecase_pgdata:
+    name: tracecase_pgdata

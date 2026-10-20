@@ -1,0 +1,86 @@
+# Multi-stage production Dockerfile for TraceCase Background Worker Daemon
+# Stage 1: Base setup with Node and pnpm
+FROM node:22-bookworm-slim AS base
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
+WORKDIR /app
+
+# Stage 2: Install dependencies & Playwright Chromium with system dependencies
+FROM base AS deps
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+RUN pnpm exec playwright install --with-deps chromium
+
+# Stage 3: Build worker bundle
+FROM base AS builder
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN pnpm build:worker
+
+# Stage 4: Production runner
+FROM node:22-bookworm-slim AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV WORKER_PORT=3001
+
+# Install runtime dependencies required for Playwright Chromium
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget \
+    ca-certificates \
+    fonts-liberation \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libc6 \
+    libcairo2 \
+    libcups2 \
+    libdbus-1-3 \
+    libexpat1 \
+    libfontconfig1 \
+    libgbm1 \
+    libgcc1 \
+    libglib2.0-0 \
+    libgtk-3-0 \
+    libnspr4 \
+    libnss3 \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libstdc++6 \
+    libx11-6 \
+    libx11-xcb1 \
+    libxcb1 \
+    libxcomposite1 \
+    libxcursor1 \
+    libxdamage1 \
+    libxext6 \
+    libxfixes3 \
+    libxi6 \
+    libxrandr2 \
+    libxrender1 \
+    libxss1 \
+    libxtst6 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create unprivileged application user
+RUN groupadd -g 1001 tcgroup && \
+    useradd -u 1001 -g tcgroup -m -s /bin/bash tcworker
+
+# Copy artifacts, installed Playwright browser binaries, and dependencies
+COPY --from=deps /root/.cache/ms-playwright /home/tcworker/.cache/ms-playwright
+RUN chown -R tcworker:tcgroup /home/tcworker/.cache
+
+COPY --from=builder --chown=tcworker:tcgroup /app/dist/worker ./dist/worker
+COPY --from=deps --chown=tcworker:tcgroup /app/node_modules ./node_modules
+COPY --from=builder --chown=tcworker:tcgroup /app/package.json ./package.json
+COPY --from=builder --chown=tcworker:tcgroup /app/drizzle ./drizzle
+
+USER tcworker
+
+EXPOSE 3001
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3001/health || exit 1
+
+CMD ["node", "dist/worker/index.mjs"]
