@@ -5,10 +5,11 @@ import { ShieldAlert, Plus, Lock } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import type { ClientSafeTargetProfile } from '@/contracts/targets';
 import { SYNTHETIC_TARGETS } from '@/dev/fixtures';
 
 export default function TargetsPage() {
-  const [targets, setTargets] = React.useState(SYNTHETIC_TARGETS);
+  const [targets, setTargets] = React.useState<ClientSafeTargetProfile[]>(SYNTHETIC_TARGETS);
   const [formData, setFormData] = React.useState({
     name: '',
     baseUrl: '',
@@ -27,7 +28,7 @@ export default function TargetsPage() {
       return;
     }
 
-    const newTarget = {
+    const newTarget: ClientSafeTargetProfile = {
       id: crypto.randomUUID(),
       name: formData.name,
       baseUrl: formData.baseUrl,
@@ -35,7 +36,6 @@ export default function TargetsPage() {
       isSandbox: formData.isSandboxRequested,
       testAccountRef: formData.testAccountRef || null,
       fixtureResetEndpoint: formData.fixtureResetEndpoint || null,
-      fixtureResetAuthSecret: 'demo-secret',
       environment: formData.environment as 'staging' | 'development' | 'demo' | 'production',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),

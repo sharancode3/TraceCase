@@ -16,6 +16,16 @@ export const TargetProfileSchema = z.object({
 export type TargetProfile = z.infer<typeof TargetProfileSchema>;
 
 /**
+ * Client-safe target projection schema.
+ * Server-only operational credentials (such as fixtureResetAuthSecret) are strictly omitted
+ * to prevent leaking secrets into client components or browser JavaScript bundles (P3-01 / TC-INV-009).
+ */
+export const ClientSafeTargetProfileSchema = TargetProfileSchema.omit({
+  fixtureResetAuthSecret: true,
+}).strict();
+export type ClientSafeTargetProfile = z.infer<typeof ClientSafeTargetProfileSchema>;
+
+/**
  * Command schema for creating a new target profile.
  * Notice: 'isSandbox' in client commands is a requested classification;
  * trusted server code validates sandbox declarations against allowlists.
