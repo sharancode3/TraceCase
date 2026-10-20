@@ -43,6 +43,7 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+*.tsbuildinfo
 
 # Scratch and temporary scripts
 scratch/
