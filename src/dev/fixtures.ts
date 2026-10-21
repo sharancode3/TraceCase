@@ -1,10 +1,10 @@
-import type { TargetProfile } from '@/contracts/targets';
+import type { ClientSafeTargetProfile } from '@/contracts/targets';
 import type { InvestigationSnapshot } from '@/contracts/investigations';
 import type { ExperimentPlan } from '@/contracts/planning';
 import type { ClarificationQuestion } from '@/contracts/clarification';
 import type { EvidenceManifest } from '@/contracts/evidence';
 
-export const SYNTHETIC_TARGETS: TargetProfile[] = [
+export const SYNTHETIC_TARGETS: ClientSafeTargetProfile[] = [
   {
     id: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
     name: 'TraceCase-Demo-Tasks (Sandbox)',
@@ -13,7 +13,6 @@ export const SYNTHETIC_TARGETS: TargetProfile[] = [
     isSandbox: true,
     testAccountRef: 'demo_operator',
     fixtureResetEndpoint: 'http://localhost:3005/api/test/reset-fixture',
-    fixtureResetAuthSecret: 'tc-fixture-secret-2026',
     environment: 'staging',
     createdAt: '2026-10-20T10:00:00.000Z',
     updatedAt: '2026-10-20T10:00:00.000Z',

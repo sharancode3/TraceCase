@@ -73,6 +73,15 @@ export const TrustedTargetConfigSchema = z.object({
 export type TrustedTargetConfig = z.infer<typeof TrustedTargetConfigSchema>;
 
 /**
+ * Compatibility projection schema retained exclusively for legacy preview fixtures.
+ * Omit fixtureResetAuthSecret to protect secrets in test doubles (P3-01 / TC-INV-009).
+ */
+export const ClientSafeTargetProfileSchema = TargetProfileSchema.omit({
+  fixtureResetAuthSecret: true,
+}).strict();
+export type ClientSafeTargetProfile = z.infer<typeof ClientSafeTargetProfileSchema>;
+
+/**
  * Command schema for creating a new target profile.
  * Notice: 'isSandbox' in client commands is a requested classification;
  * trusted server code validates sandbox declarations against allowlists.
