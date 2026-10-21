@@ -9,7 +9,8 @@ import {
 } from '@/server/db/schema';
 import type { AuthoritativeExperimentPlan } from '@/contracts/planning';
 import { projectSafeTargetProfile } from '@/contracts/targets';
-import type { PlaywrightBrowserWorker } from '@/server/browser/playwright-worker';
+import type { BrowserWorkerPort, BrowserInvestigationAgentPort } from '@/server/services/ports';
+import { unavailableBrowserInvestigationAgent } from '@/server/services/ports';
 import { ExecutionLeaseService } from '@/server/queue/execution-lease.service';
 import { attemptsRepository } from '@/server/db/repositories/attempts.repository';
 import { eventsRepository } from '@/server/db/repositories/events.repository';
@@ -23,6 +24,12 @@ export interface ExecutePairParams {
   investigationId: string;
   workerInstanceId: string;
   epoch: number;
+  executionMode?: 'AI_GROUNDED' | 'DETERMINISTIC_FIXED_STEP';
+}
+
+export interface TwoAttemptControllerOptions {
+  browserAgent?: BrowserInvestigationAgentPort;
+  defaultExecutionMode?: 'AI_GROUNDED' | 'DETERMINISTIC_FIXED_STEP';
 }
 
 export interface PairExecutionOutcome {
@@ -38,11 +45,28 @@ export interface PairExecutionOutcome {
 }
 
 export class TwoAttemptController {
+  private browserAgent?: BrowserInvestigationAgentPort;
+  private defaultExecutionMode: 'AI_GROUNDED' | 'DETERMINISTIC_FIXED_STEP';
+
   constructor(
     private leaseService: ExecutionLeaseService,
-    private browserWorker: PlaywrightBrowserWorker,
-    private dbProvider: () => DbClient = getDb
-  ) {}
+    private browserWorker: BrowserWorkerPort,
+    private dbProvider: () => DbClient = getDb,
+    options?: TwoAttemptControllerOptions
+  ) {
+    this.browserAgent = options?.browserAgent;
+    this.defaultExecutionMode =
+      options?.defaultExecutionMode ??
+      (options?.browserAgent ? 'AI_GROUNDED' : 'DETERMINISTIC_FIXED_STEP');
+  }
+
+  public getBrowserAgent(): BrowserInvestigationAgentPort | undefined {
+    return this.browserAgent;
+  }
+
+  public getDefaultExecutionMode(): 'AI_GROUNDED' | 'DETERMINISTIC_FIXED_STEP' {
+    return this.defaultExecutionMode;
+  }
 
   /**
    * Executes the complete bounded two-attempt reproduction experiment with verified reset.
@@ -233,12 +257,19 @@ export class TwoAttemptController {
             expectedBaseline: baselineForComparison,
             resetAuthSecret: resolvedSecret,
           });
-          if (Object.keys(baselineForComparison).length === 0 && preflight.observedBaseline) {
-            baselineForComparison = preflight.observedBaseline;
+
+          const observed = preflight.observedBaseline as Record<string, unknown> | undefined;
+          const isExplicitlyDirty = observed?.isDirty === true || observed?.status === 'dirty' || observed?.error !== undefined;
+
+          if (isExplicitlyDirty) {
+            att1PreconditionsMet = false;
+          } else if (Object.keys(baselineForComparison).length === 0 && observed) {
+            baselineForComparison = observed;
             att1PreconditionsMet = true;
           } else {
             att1PreconditionsMet = preflight.isEquivalent;
           }
+
           if (preflight.targetBuildId) {
             targetBuildIdAttempt1 = preflight.targetBuildId;
           }
@@ -298,6 +329,37 @@ export class TwoAttemptController {
     // =========================================================================
     await assertExecutionAuthorized();
 
+    const executionMode = params.executionMode || this.defaultExecutionMode;
+    if (executionMode === 'AI_GROUNDED') {
+      if (!this.browserAgent || this.browserAgent === unavailableBrowserInvestigationAgent) {
+        clearInterval(periodicLeaseRenewal);
+        await attemptsRepository.createOrUpdateAttempt({
+          investigationId: params.investigationId,
+          attemptNumber: 1,
+          status: 'FAILED',
+          validity: 'INVALID',
+          finding: 'UNRESOLVED',
+          invalidityReason: 'AI_AGENT_UNAVAILABLE: AI-grounded browser investigation agent is unavailable or unconfigured.',
+          summary: 'Attempt 1 blocked: AI-grounded browser investigation agent unavailable.',
+        });
+
+        await attemptsRepository.savePairAssessment({
+          investigationId: params.investigationId,
+          verdict: 'INCONCLUSIVE',
+          validAttemptCount: 0,
+          matchingAttemptCount: 0,
+          isComparable: false,
+          summary: 'Execution halted fail-closed: AI-grounded browser agent is unconfigured or unavailable.',
+        });
+
+        return {
+          status: 'ATTEMPT_FAILED',
+          verdict: 'INCONCLUSIVE',
+          summary: 'AI-grounded browser investigation agent is unavailable or unconfigured. Execution halted fail-closed.',
+        };
+      }
+    }
+
     await db
       .update(investigationsTable)
       .set({
@@ -319,6 +381,8 @@ export class TwoAttemptController {
       attemptNumber: 1,
       plan,
       target: safeTarget,
+      browserAgent: this.browserAgent,
+      executionMode,
       onHeartbeat: renewHeartbeat,
     });
 
@@ -543,6 +607,8 @@ export class TwoAttemptController {
       attemptNumber: 2,
       plan,
       target: safeTarget,
+      browserAgent: this.browserAgent,
+      executionMode,
       onHeartbeat: renewHeartbeat,
     });
 
@@ -628,7 +694,7 @@ export class TwoAttemptController {
     const targetBuildIdAttempt2 =
       resetReceipt.targetBuildId ||
       resetReceipt.readback?.targetBuildId ||
-      targetBuildIdAttempt1;
+      undefined;
 
     const pairResult = PairAssessor.assessPair({
       investigationId: params.investigationId,

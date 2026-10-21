@@ -4,6 +4,47 @@ import type { VerifiedResetReceipt } from '@/contracts/reset';
 import { TargetNetworkGuard } from '@/server/browser/target-network-guard';
 import { BaselineComparator } from './baseline-comparator';
 
+/**
+ * Streams response body with early termination if response exceeds safety limit.
+ * Prevents memory exhaustion / DoS from malicious or corrupted endpoints.
+ */
+async function readBoundedResponseBody(
+  res: Response,
+  maxBytes = 1_000_000
+): Promise<{ text?: string; error?: string }> {
+  if (!res.body) {
+    return { text: '' };
+  }
+
+  const reader = res.body.getReader();
+  let totalBytes = 0;
+  const chunks: Uint8Array[] = [];
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        totalBytes += value.length;
+        if (totalBytes > maxBytes) {
+          try {
+            await reader.cancel();
+          } catch {
+            // Stream cancel best effort
+          }
+          return { error: `Response exceeded ${maxBytes} byte safety limit.` };
+        }
+        chunks.push(value);
+      }
+    }
+  } catch (err: unknown) {
+    return { error: `Failed reading response stream: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  const fullBuffer = Buffer.concat(chunks);
+  return { text: fullBuffer.toString('utf8') };
+}
+
 export interface CoordinateResetParams {
   target: SafeTargetProfile;
   investigationId: string;
@@ -193,12 +234,12 @@ export class TargetResetClient {
       clearTimeout(timer);
 
       if (res.ok) {
-        const text = await res.text();
-        if (text.length > 1_000_000) {
-          readbackDiscrepancy = 'Readback response exceeded 1MB safety limit.';
-        } else {
+        const bodyResult = await readBoundedResponseBody(res, 1_000_000);
+        if (bodyResult.error) {
+          readbackDiscrepancy = bodyResult.error;
+        } else if (bodyResult.text !== undefined) {
           try {
-            observedBaseline = JSON.parse(text);
+            observedBaseline = JSON.parse(bodyResult.text);
           } catch {
             readbackDiscrepancy = 'Readback endpoint returned malformed JSON.';
           }
@@ -372,17 +413,17 @@ export class TargetResetClient {
         undefined;
 
       let observedBaseline: Record<string, unknown> = {};
-      const text = await res.text();
-      if (text.length > 1_000_000) {
+      const bodyResult = await readBoundedResponseBody(res, 1_000_000);
+      if (bodyResult.error) {
         return {
           isEquivalent: false,
-          discrepancies: ['Pre-flight readback exceeded 1MB safety limit.'],
+          discrepancies: [bodyResult.error],
           expectedStateHash: 'size_limit_exceeded',
           observedStateHash: 'size_limit_exceeded',
         };
       }
       try {
-        observedBaseline = JSON.parse(text);
+        observedBaseline = JSON.parse(bodyResult.text || '{}');
       } catch {
         return {
           isEquivalent: false,

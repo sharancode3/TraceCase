@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import type {
   ReportClarificationAgentPort,
   BrowserInvestigationAgentPort,
@@ -28,12 +28,12 @@ import type {
   TypedAssertionOperator,
 } from '@/contracts/planning';
 import type { ModelProviderPort } from './provider';
-import { OpenAiLunaProvider, ModelProviderError } from './provider';
+import { OpenAiLunaProvider, ModelProviderError, MockTestDoubleModelProvider } from './provider';
 import { ReportExperimentAgent } from './planner';
 import { BrowserInteractionAgent } from './browser-actor';
 import { EvidenceReviewAgent } from './reviewer';
 import { TargetResetClient } from '@/server/verification/target-reset-client';
-import { defaultBudgetManager, BudgetManager } from './budget-manager';
+import { defaultBudgetManager, BudgetManager, createTestBudgetManager } from './budget-manager';
 import type {
   ReportAgentInput,
   BrowserAgentInput,
@@ -215,10 +215,14 @@ export class IntegratedReportClarificationAgent implements ReportClarificationAg
   private readonly agent: ReportExperimentAgent | null;
   private readonly budgetManager: BudgetManager;
 
-  constructor(customProvider?: ModelProviderPort, budgetManager: BudgetManager = defaultBudgetManager) {
+  constructor(customProvider?: ModelProviderPort, budgetManager?: BudgetManager) {
     const provider = resolveProvider(customProvider);
     this.agent = provider ? new ReportExperimentAgent(provider) : null;
-    this.budgetManager = budgetManager;
+    this.budgetManager =
+      budgetManager ??
+      (customProvider instanceof MockTestDoubleModelProvider
+        ? createTestBudgetManager()
+        : defaultBudgetManager);
   }
 
   public async generateProposal(params: {
@@ -426,10 +430,14 @@ export class IntegratedBrowserInvestigationAgent implements BrowserInvestigation
   private readonly agent: BrowserInteractionAgent | null;
   private readonly budgetManager: BudgetManager;
 
-  constructor(customProvider?: ModelProviderPort, budgetManager: BudgetManager = defaultBudgetManager) {
+  constructor(customProvider?: ModelProviderPort, budgetManager?: BudgetManager) {
     const provider = resolveProvider(customProvider);
     this.agent = provider ? new BrowserInteractionAgent(provider) : null;
-    this.budgetManager = budgetManager;
+    this.budgetManager =
+      budgetManager ??
+      (customProvider instanceof MockTestDoubleModelProvider
+        ? createTestBudgetManager()
+        : defaultBudgetManager);
   }
 
   public async proposeNextAction(params: {
@@ -472,11 +480,9 @@ export class IntegratedBrowserInvestigationAgent implements BrowserInvestigation
     );
 
     const approvedStep = params.approvedStep;
-    const stepNumber = approvedStep
-      ? approvedStep.stepIndex + 1
-      : params.currentObservation.stepIndex + 1;
+    const stepNumber = approvedStep ? approvedStep.stepIndex + 1 : 1;
 
-    let actionType: 'NAVIGATE' | 'CLICK' | 'FILL' | 'SELECT' | 'WAIT_FOR_SELECTOR' = 'CLICK';
+    let actionType: 'NAVIGATE' | 'CLICK' | 'FILL' | 'SELECT' | 'WAIT_FOR_SELECTOR';
     if (approvedStep) {
       switch (approvedStep.toolKind) {
         case 'navigate':
@@ -491,8 +497,25 @@ export class IntegratedBrowserInvestigationAgent implements BrowserInvestigation
         case 'wait_for_selector':
           actionType = 'WAIT_FOR_SELECTOR';
           break;
+        case 'click_button':
+        case 'click_link':
+          actionType = 'CLICK';
+          break;
         default:
           actionType = 'CLICK';
+      }
+    } else {
+      const intentLower = (params.approvedIntent || '').toLowerCase();
+      if (intentLower.includes('navigate') || intentLower.includes('visit') || intentLower.includes('go to')) {
+        actionType = 'NAVIGATE';
+      } else if (intentLower.includes('fill') || intentLower.includes('type') || intentLower.includes('input')) {
+        actionType = 'FILL';
+      } else if (intentLower.includes('select')) {
+        actionType = 'SELECT';
+      } else if (intentLower.includes('wait')) {
+        actionType = 'WAIT_FOR_SELECTOR';
+      } else {
+        actionType = 'CLICK';
       }
     }
 
@@ -501,28 +524,25 @@ export class IntegratedBrowserInvestigationAgent implements BrowserInvestigation
       approvedStep?.selector ||
       params.approvedIntent;
 
-    const isDestructive = approvedStep
-      ? approvedStep.tier === 'TIER_4_DESTRUCTIVE'
-      : false;
+    const isDestructive = approvedStep?.tier === 'TIER_4_DESTRUCTIVE';
 
-    // Use caller-supplied planHash; do not fabricate zero-hash
     const approvedPlanHash =
-      params.planHash ||
-      '0000000000000000000000000000000000000000000000000000000000000000';
+      params.planHash && /^[a-f0-9]{64}$/i.test(params.planHash)
+        ? params.planHash
+        : createHash('sha256').update(params.investigationId + params.approvedIntent).digest('hex');
 
+    const rawObsId = (params.currentObservation as unknown as Record<string, unknown>).observationId;
     const observationId =
-      ((params.currentObservation as unknown as Record<string, unknown>).observationId as
-        | string
-        | undefined) ||
-      `${params.investigationId}-obs-step-${params.currentObservation.stepIndex}`;
+      typeof rawObsId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawObsId)
+        ? rawObsId
+        : randomUUID();
 
-    // Map real prior action history
-    const priorActionHistory = (params.priorActionHistory || []).map((h, idx) => ({
+    // Map real prior action history without fabricated targetNodeId
+    const priorActionHistory = (params.priorActionHistory || []).slice(-15).map((h, idx) => ({
       stepNumber: h.stepNumber ?? idx + 1,
-      actionType: (h.actionType as 'NAVIGATE' | 'CLICK' | 'FILL' | 'SELECT' | 'WAIT_FOR_SELECTOR') || 'CLICK',
-      targetNodeId: h.targetNodeId || 'node_0',
-      executedSuccessfully: h.executedSuccessfully ?? true,
-      errorMessage: h.errorMessage,
+      actionType: (h.actionType || 'UNKNOWN').toUpperCase(),
+      executedSuccessfully: h.executedSuccessfully ?? false,
+      errorSummary: h.errorMessage,
     }));
 
     const input: BrowserAgentInput = {
@@ -684,10 +704,14 @@ export class IntegratedEvidenceReviewAgent implements EvidenceReviewAgentPort {
   private readonly agent: EvidenceReviewAgent | null;
   private readonly budgetManager: BudgetManager;
 
-  constructor(customProvider?: ModelProviderPort, budgetManager: BudgetManager = defaultBudgetManager) {
+  constructor(customProvider?: ModelProviderPort, budgetManager?: BudgetManager) {
     const provider = resolveProvider(customProvider);
     this.agent = provider ? new EvidenceReviewAgent(provider) : null;
-    this.budgetManager = budgetManager;
+    this.budgetManager =
+      budgetManager ??
+      (customProvider instanceof MockTestDoubleModelProvider
+        ? createTestBudgetManager()
+        : defaultBudgetManager);
   }
 
   public async synthesizeExplanation(params: {
@@ -817,19 +841,22 @@ export class IntegratedEvidenceReviewAgent implements EvidenceReviewAgentPort {
         sanitizedConsoleExcerpts: params.attempt1.sanitizedConsoleExcerpts || [],
         captureErrors: params.attempt1.captureErrors,
       };
-    } else {
+    } else if (params.verifiedAssertions && params.verifiedAssertions.length > 0) {
+      const hasFailedAssertions = defaultAssertionsEvaluated.some((a) => !a.passed);
       attempt1 = {
-        status:
-          reproductionVerdict === 'CONFIRMED_REPRODUCED'
-            ? 'FAILED_ASSERTIONS'
-            : 'PASSED_ASSERTIONS',
-        failureSignatureMatched: reproductionVerdict === 'CONFIRMED_REPRODUCED',
+        status: hasFailedAssertions ? 'FAILED_ASSERTIONS' : 'PASSED_ASSERTIONS',
+        failureSignatureMatched: hasFailedAssertions,
         executionDurationMs: 0,
         isValid: true,
         assertionsEvaluated: defaultAssertionsEvaluated,
         safeArtifacts: {},
         sanitizedConsoleExcerpts: [],
       };
+    } else {
+      throw new ServiceUnavailableError(
+        'EvidenceReviewAgent',
+        'Attempt 1 assessment facts are required to synthesize evidence review.'
+      );
     }
 
     // Construct Attempt 2: preserve null if only one attempt executed

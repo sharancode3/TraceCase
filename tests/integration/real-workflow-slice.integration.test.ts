@@ -28,10 +28,17 @@ import type { SafeTargetProfile } from '@/contracts/targets';
 
 /**
  * ============================================================================
- * REAL WORKFLOW SLICE INTEGRATION TEST
+ * HYBRID WORKFLOW SLICE & CONTRACT INTEGRATION TEST
  * ============================================================================
  *
- * Demonstrates a complete backend workflow slice connecting Person 1 & Person 2:
+ * Demonstrates a hybrid workflow and contract handoff slice connecting Person 1 & Person 2:
+ * - Uses in-memory database test double (Phase7TestDbMock) and provider doubles.
+ * - Uses real HTTP network calls to the live local demo target server for authenticated reset.
+ * - Validates contract boundaries, typed plan transitions, and post-verification synthesis.
+ * - NOTE: This is NOT an end-to-end acceptance test; live runtime acceptance requires
+ *   external PostgreSQL on port 5432 and headless Chromium execution.
+ *
+ * Steps exercised:
  * 1. Draft report intake
  * 2. Multi-turn clarification dialogue with persisted questions & answers
  * 3. Structured experiment planning with safe element grounding & assertions
@@ -41,7 +48,7 @@ import type { SafeTargetProfile } from '@/contracts/targets';
  * 7. Two-attempt deterministic verification with locked reproduction verdict
  * 8. Evidence packaging & post-verification explanation synthesis (TC-INV-008)
  */
-describe('Real Workflow Slice Integration (Person 1 <-> Person 2)', () => {
+describe('Hybrid Workflow Slice & Contract Integration (Person 1 <-> Person 2)', () => {
   let demoTargetInstance: ReturnType<typeof createDemoTargetServer>;
   let targetPort: number;
   let targetUrl: string;

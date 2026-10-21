@@ -32,13 +32,17 @@ Earlier in this conversation, type checking, linting, all 15 existing tests, and
 - Reconciled Person 1 trusted execution engine with Person 2 AI roles (Planner, Actor, Reviewer), Playwright browser worker loop, and controlled demo target.
 - Removed fabricated placeholder adapter contexts (fake hashes, synthetic selectors, static durations, dummy attempt-2 outcomes).
 - Implemented multi-turn clarification history persistence, element grounding via `ObservationManager.resolveTarget`, and `wait_for_selector` support.
-- Wrapped all AI invocations in atomic pre-allocation and reservation tracking via `BudgetManager`.
-- Verified authenticated target reset and pre-flight baseline readback against real demo target instance.
-- Verified Person 3 frontend and evidence contract readiness (`tests/integration/p3-contract-readiness.test.ts`).
-- Demonstrated complete 8-stage backend workflow slice against live demo target (`tests/integration/real-workflow-slice.integration.test.ts`).
-- All 60 test files pass (487 passed tests, 6 skipped, 0 failed in ~12s).
+- Wrapped all AI invocations in atomic pre-allocation and reservation tracking via `BudgetManager` with pessimistic `FOR UPDATE` row locking on `investigationsTable` and test-double `InMemoryBudgetLedger`.
+- Bounded chunked streaming in `TargetResetClient` with a strict 1,000,000 byte safety limit, dual headers (`X-TraceCase-Reset-Auth`, `Authorization`), and redirect rejection.
+- TwoAttemptController wired with typed execution modes (`AI_GROUNDED` vs `DETERMINISTIC_FIXED_STEP`), failing closed on missing AI agent, rejecting dirty pre-flight baselines, and requiring independent Attempt 2 build verification.
+- PlaywrightBrowserWorker hardened with exhaustive proposal discrimination, allowed tier derivation, semantic toolKind validation, bounded non-dispatching wait, and post-model latency lease verification.
+- Verified Person 3 frontend and evidence contract readiness against live route handlers and Zod schemas (`tests/integration/p3-contract-readiness.test.ts`).
+- Demonstrated complete hybrid backend workflow slice against live demo target (`tests/integration/real-workflow-slice.integration.test.ts`).
+- Added dedicated 10-case behavioral regressions suite (`tests/integration/p1-p2-behavioral-regressions.test.ts`) and budget concurrency suite (`tests/integration/budget-manager-concurrency.test.ts`).
+- Added real-runtime acceptance lane (`tests/integration/real-runtime-acceptance.test.ts`) auditing real Playwright Chromium launch and truthfully reporting PostgreSQL port 5432 status as OFFLINE.
+- All 63 test files pass (511 passed tests, 6 skipped, 0 failed in ~14s).
 - `pnpm typecheck` (`tsc --noEmit`) and `pnpm lint` (`next lint`) pass with 0 errors/warnings.
-- Quality Gates: G0 passed, G1 passed, G2 passed, G3 validated with test doubles (ready for live OpenAI Luna API key), G4 validated with Chromium media capture (shared sanitizer pending Person 3), G5 verified with test doubles and live demo target slice.
+- Quality Gates: G0 ready, G1 ready, G2 ready with test doubles, G3 blocked on live OpenAI Luna API key, G4 ready, G5 blocked on live PostgreSQL 5432 and background daemon.
 - Documented in `docs/integration/p1-p2-integration-review.md`.
 
 ## Agreed Person 1 phases

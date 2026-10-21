@@ -2,6 +2,7 @@ import { chromium, type Browser, type BrowserContext, type Page } from 'playwrig
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import type { AuthoritativeExperimentPlan, ExperimentPlan, PlanStep } from '@/contracts/planning';
+import type { ActionTier } from '@/contracts/status';
 import type { SafeTargetProfile } from '@/contracts/targets';
 import type { AttemptExecutionReceipt, ActionReceipt } from '@/contracts/observations';
 import type { BrowserWorkerPort, BrowserInvestigationAgentPort } from '@/server/services/ports';
@@ -144,7 +145,8 @@ export class PlaywrightBrowserWorker implements BrowserWorkerPort {
 
       const steps: PlanStep[] = params.plan.steps || [];
 
-      for (const step of steps) {
+      for (let i = 0; i < steps.length; i++) {
+        const step = steps[i];
         // Enforce attempt-level maximum duration budget
         const elapsedMs = Date.now() - startedAtMs;
         if (elapsedMs >= this.maxAttemptDurationMs) {
@@ -173,6 +175,8 @@ export class PlaywrightBrowserWorker implements BrowserWorkerPort {
 
         const activePage = context.pages().slice(-1)[0] || mainPage;
         let elementRefToUse: string | undefined = step.elementRef;
+        let shouldDispatch = true;
+        let stepReceipt: ActionReceipt | undefined;
 
         // Dynamic element reference grounding via AI actor if requested
         if (
@@ -180,6 +184,18 @@ export class PlaywrightBrowserWorker implements BrowserWorkerPort {
           params.executionMode === 'AI_GROUNDED' &&
           step.toolKind !== 'navigate'
         ) {
+          // Derive effective allowed tiers from target sandbox policy and approved step tier
+          const effectiveAllowedTiers: ActionTier[] = [step.tier];
+          if (step.tier === 'TIER_2_SAFE_INTERACTION') {
+            effectiveAllowedTiers.push('TIER_1_READ_ONLY');
+          } else if (step.tier === 'TIER_3_MUTATING_INTERACTION') {
+            effectiveAllowedTiers.push('TIER_2_SAFE_INTERACTION', 'TIER_1_READ_ONLY');
+          } else if (step.tier === 'TIER_4_DESTRUCTIVE') {
+            if (params.target.isSandboxVerified) {
+              effectiveAllowedTiers.push('TIER_3_MUTATING_INTERACTION', 'TIER_2_SAFE_INTERACTION', 'TIER_1_READ_ONLY');
+            }
+          }
+
           const freshObs = await observationManager.captureFreshObservation(
             activePage,
             step.stepIndex,
@@ -188,12 +204,14 @@ export class PlaywrightBrowserWorker implements BrowserWorkerPort {
           );
 
           const planHash = (params.plan as AuthoritativeExperimentPlan).planHash;
+          let proposalHalted = false;
+
           try {
             const proposal = await params.browserAgent.proposeNextAction({
               investigationId: params.investigationId,
               approvedIntent: step.semanticAction || step.rationale || `Step ${step.stepIndex}`,
               currentObservation: freshObs,
-              remainingAllowedTiers: ['TIER_1_READ_ONLY', 'TIER_2_SAFE_INTERACTION'],
+              remainingAllowedTiers: effectiveAllowedTiers,
               approvedStep: step,
               attemptNumber: params.attemptNumber,
               planHash,
@@ -201,30 +219,192 @@ export class PlaywrightBrowserWorker implements BrowserWorkerPort {
               priorActionHistory: actionReceipts.map((r) => ({
                 stepNumber: r.stepIndex + 1,
                 actionType: r.action.toolKind,
-                targetNodeId: (r.action as { elementRef?: string; targetAccessibleName?: string }).elementRef ||
-                  (r.action as { elementRef?: string; targetAccessibleName?: string }).targetAccessibleName,
                 executedSuccessfully: r.status === 'SUCCESS',
                 errorMessage: r.errorDetails,
               })),
             });
 
-            if (proposal.kind === 'EXECUTE_ACTION') {
-              if (proposal.action?.elementRef) {
-                elementRefToUse = proposal.action.elementRef;
+            // Recheck authoritative lease/cancellation immediately after model latency and before any dispatch
+            if (params.onHeartbeat) {
+              try {
+                await params.onHeartbeat();
+              } catch (err: unknown) {
+                actionReceipts.push({
+                  stepIndex: step.stepIndex,
+                  action: step,
+                  tier: step.tier,
+                  status: 'FAILED',
+                  durationMs: 0,
+                  uncertainty: 'NONE',
+                  errorDetails: `Post-model authorization / lease check failed before dispatch: ${err instanceof Error ? err.message : String(err)}`,
+                  dispatchedAt: new Date().toISOString(),
+                  completedAt: new Date().toISOString(),
+                });
+                break;
               }
-            } else if (proposal.kind === 'STOP_NO_PROGRESS') {
-              actionReceipts.push({
-                stepIndex: step.stepIndex,
-                action: step,
-                tier: step.tier,
-                status: 'FAILED',
-                durationMs: 0,
-                uncertainty: 'NONE',
-                errorDetails: `AI investigation agent halted with STOP_NO_PROGRESS: ${proposal.reason || 'No progress possible'}`,
-                dispatchedAt: new Date().toISOString(),
-                completedAt: new Date().toISOString(),
-              });
-              break;
+            }
+
+            // Exhaustive proposal handling (DR-02)
+            switch (proposal.kind) {
+              case 'EXECUTE_ACTION': {
+                // If the agent proposes waiting for an element before executing the approved action
+                if (proposal.action.toolKind === 'wait_for_selector' && step.toolKind !== 'wait_for_selector') {
+                  const selectorToWait = proposal.action.selector || proposal.action.elementRef;
+                  if (!selectorToWait) {
+                    stepReceipt = {
+                      stepIndex: step.stepIndex,
+                      action: step,
+                      tier: step.tier,
+                      status: 'FAILED',
+                      durationMs: 0,
+                      uncertainty: 'NONE',
+                      errorDetails: 'Proposed wait_for_selector missing selector or elementRef.',
+                      dispatchedAt: new Date().toISOString(),
+                      completedAt: new Date().toISOString(),
+                    };
+                    actionReceipts.push(stepReceipt);
+                    proposalHalted = true;
+                    break;
+                  }
+                  try {
+                    await activePage.waitForSelector(selectorToWait, {
+                      timeout: Math.min(step.timeoutMs || 5000, 10000),
+                    });
+                    // Step is still pending execution; do NOT dispatch action now and repeat this step
+                    shouldDispatch = false;
+                    i--; // re-evaluate same step on next loop iteration
+                    break;
+                  } catch (waitErr) {
+                    stepReceipt = {
+                      stepIndex: step.stepIndex,
+                      action: step,
+                      tier: step.tier,
+                      status: 'TIMED_OUT',
+                      durationMs: 0,
+                      uncertainty: 'NONE',
+                      errorDetails: `Proposed wait_for_selector timed out waiting for '${selectorToWait}': ${waitErr instanceof Error ? waitErr.message : String(waitErr)}`,
+                      dispatchedAt: new Date().toISOString(),
+                      completedAt: new Date().toISOString(),
+                    };
+                    actionReceipts.push(stepReceipt);
+                    proposalHalted = true;
+                    break;
+                  }
+                }
+
+                // 1. Semantic operation validation: toolKind must match approved step
+                if (proposal.action.toolKind !== step.toolKind) {
+                  stepReceipt = {
+                    stepIndex: step.stepIndex,
+                    action: step,
+                    tier: step.tier,
+                    status: 'FAILED',
+                    durationMs: 0,
+                    uncertainty: 'NONE',
+                    errorDetails: `Semantic mismatch: Proposed toolKind '${proposal.action.toolKind}' conflicts with approved step toolKind '${step.toolKind}'.`,
+                    dispatchedAt: new Date().toISOString(),
+                    completedAt: new Date().toISOString(),
+                  };
+                  actionReceipts.push(stepReceipt);
+                  proposalHalted = true;
+                  break;
+                }
+
+                // 2. Action tier permission validation
+                if (!effectiveAllowedTiers.includes(proposal.action.tier)) {
+                  stepReceipt = {
+                    stepIndex: step.stepIndex,
+                    action: step,
+                    tier: step.tier,
+                    status: 'FAILED',
+                    durationMs: 0,
+                    uncertainty: 'NONE',
+                    errorDetails: `Authorization violation: Proposed action tier '${proposal.action.tier}' exceeds authorized permissions for this step [${effectiveAllowedTiers.join(', ')}].`,
+                    dispatchedAt: new Date().toISOString(),
+                    completedAt: new Date().toISOString(),
+                  };
+                  actionReceipts.push(stepReceipt);
+                  proposalHalted = true;
+                  break;
+                }
+
+                // 3. Grounded element reference
+                if (proposal.action.elementRef) {
+                  elementRefToUse = proposal.action.elementRef;
+                }
+                break;
+              }
+
+              case 'STOP_NO_PROGRESS': {
+                actionReceipts.push({
+                  stepIndex: step.stepIndex,
+                  action: step,
+                  tier: step.tier,
+                  status: 'FAILED',
+                  durationMs: 0,
+                  uncertainty: 'NONE',
+                  errorDetails: `AI investigation agent halted with STOP_NO_PROGRESS: ${proposal.reason || 'No progress possible'}`,
+                  dispatchedAt: new Date().toISOString(),
+                  completedAt: new Date().toISOString(),
+                });
+                proposalHalted = true;
+                break;
+              }
+
+              case 'REQUEST_MANUAL_HELP': {
+                stepReceipt = {
+                  stepIndex: step.stepIndex,
+                  action: step,
+                  tier: step.tier,
+                  status: 'FAILED',
+                  durationMs: 0,
+                  uncertainty: 'NONE',
+                  errorDetails: `Manual intervention requested (${proposal.reason}): ${proposal.userPrompt}`,
+                  dispatchedAt: new Date().toISOString(),
+                  completedAt: new Date().toISOString(),
+                };
+                actionReceipts.push(stepReceipt);
+                proposalHalted = true;
+                break;
+              }
+
+              case 'READY_FOR_VERIFICATION': {
+                if (i < steps.length - 1) {
+                  stepReceipt = {
+                    stepIndex: step.stepIndex,
+                    action: step,
+                    tier: step.tier,
+                    status: 'FAILED',
+                    durationMs: 0,
+                    uncertainty: 'NONE',
+                    errorDetails: `Premature verification declaration: AI agent declared READY_FOR_VERIFICATION before completing approved steps (${i + 1}/${steps.length}).`,
+                    dispatchedAt: new Date().toISOString(),
+                    completedAt: new Date().toISOString(),
+                  };
+                  actionReceipts.push(stepReceipt);
+                  proposalHalted = true;
+                  break;
+                }
+                shouldDispatch = false;
+                break;
+              }
+
+              default: {
+                const _exhaustiveCheck: never = proposal;
+                actionReceipts.push({
+                  stepIndex: step.stepIndex,
+                  action: step,
+                  tier: step.tier,
+                  status: 'FAILED',
+                  durationMs: 0,
+                  uncertainty: 'NONE',
+                  errorDetails: `Unhandled proposal kind: ${JSON.stringify(_exhaustiveCheck)}`,
+                  dispatchedAt: new Date().toISOString(),
+                  completedAt: new Date().toISOString(),
+                });
+                proposalHalted = true;
+                break;
+              }
             }
           } catch (agentErr) {
             actionReceipts.push({
@@ -238,33 +418,39 @@ export class PlaywrightBrowserWorker implements BrowserWorkerPort {
               dispatchedAt: new Date().toISOString(),
               completedAt: new Date().toISOString(),
             });
+            proposalHalted = true;
+          }
+
+          if (proposalHalted) {
             break;
           }
         }
 
-        const receipt = await actionDispatcher.executeStep(activePage, step, {
-          elementRef: elementRefToUse,
-          screenshotDir: stagingDir,
-        });
+        if (shouldDispatch) {
+          stepReceipt = await actionDispatcher.executeStep(activePage, step, {
+            elementRef: elementRefToUse,
+            screenshotDir: stagingDir,
+          });
 
-        actionReceipts.push(receipt);
+          actionReceipts.push(stepReceipt);
 
-        // Post-action heartbeat renewal
-        if (params.onHeartbeat) {
-          try {
-            await params.onHeartbeat();
-          } catch (err: unknown) {
-            throw new Error(`Post-action lease renewal failed: ${err instanceof Error ? err.message : String(err)}`);
+          // Post-action heartbeat renewal
+          if (params.onHeartbeat) {
+            try {
+              await params.onHeartbeat();
+            } catch (err: unknown) {
+              throw new Error(`Post-action lease renewal failed: ${err instanceof Error ? err.message : String(err)}`);
+            }
+          }
+
+          // If mutating action timed out or crashed midway, halt immediately to protect state
+          if (stepReceipt.uncertainty === 'MUTATION_UNCERTAIN') {
+            break;
           }
         }
 
-        // If mutating action timed out or crashed midway, halt immediately to protect state
-        if (receipt.uncertainty === 'MUTATION_UNCERTAIN') {
-          break;
-        }
-
         // If step failed or timed out, do not blindly continue remaining dependent steps
-        if (receipt.status !== 'SUCCESS') {
+        if (stepReceipt && stepReceipt.status !== 'SUCCESS') {
           break;
         }
       }

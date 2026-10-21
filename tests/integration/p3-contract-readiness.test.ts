@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { _resetCachedEnvForTesting } from '@/server/config/env';
 import {
   projectSafeTargetProfile,
   projectSafeModelTargetContext,
@@ -291,6 +292,91 @@ describe('Person 3 Frontend & Evidence Viewer Contract Readiness', () => {
       const parsed = ArtifactAccessGrantSchema.parse(grant);
       expect(parsed.downloadUrl).toContain('https://cdn.tracecase.local');
       expect(new Date(parsed.expiresAt).getTime()).toBeGreaterThan(Date.now());
+    });
+  });
+
+  describe('Live HTTP Route Handler Output Contract Conformance', () => {
+    it('verifies GET /api/v1/targets outputs conform to SafeTargetProfileSchema in preview mode', async () => {
+      const { NextRequest } = await import('next/server');
+      const { GET: getTargetsRoute } = await import('@/app/api/v1/targets/route');
+      const originalPreview = process.env.DEV_PREVIEW_MODE;
+      try {
+        process.env.DEV_PREVIEW_MODE = 'true';
+        _resetCachedEnvForTesting();
+        const req = new NextRequest(new Request('http://localhost:3000/api/v1/targets', { method: 'GET' }));
+        const res = await getTargetsRoute(req);
+        expect(res.status).toBe(200);
+        const json = await res.json() as { data: unknown[]; total: number; mode: string };
+        expect(Array.isArray(json.data)).toBe(true);
+        expect(json.total).toBeGreaterThan(0);
+        for (const item of json.data) {
+          const validated = SafeTargetProfileSchema.parse(item);
+          expect(validated.id).toBeDefined();
+          expect((item as Record<string, unknown>).fixtureResetAuthSecretRef).toBeUndefined();
+        }
+      } finally {
+        process.env.DEV_PREVIEW_MODE = originalPreview;
+        _resetCachedEnvForTesting();
+      }
+    });
+
+    it('verifies unauthenticated GET /api/v1/targets returns SafeErrorEnvelopeSchema', async () => {
+      const { NextRequest } = await import('next/server');
+      const { GET: getTargetsRoute } = await import('@/app/api/v1/targets/route');
+      const originalPreview = process.env.DEV_PREVIEW_MODE;
+      try {
+        process.env.DEV_PREVIEW_MODE = 'false';
+        _resetCachedEnvForTesting();
+        const req = new NextRequest(new Request('http://localhost:3000/api/v1/targets', { method: 'GET' }));
+        const res = await getTargetsRoute(req);
+        expect([401, 503]).toContain(res.status);
+        const json = await res.json();
+        const parsed = SafeErrorEnvelopeSchema.parse(json);
+        expect(parsed.success).toBe(false);
+        expect(parsed.error.code).toBeDefined();
+      } finally {
+        process.env.DEV_PREVIEW_MODE = originalPreview;
+        _resetCachedEnvForTesting();
+      }
+    });
+
+    it('verifies invalid POST /api/v1/targets returns SafeErrorEnvelopeSchema with 400', async () => {
+      const { NextRequest } = await import('next/server');
+      const { POST: createTargetRoute } = await import('@/app/api/v1/targets/route');
+      const req = new NextRequest(
+        new Request('http://localhost:3000/api/v1/targets', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ invalid: 'payload' }),
+        })
+      );
+      const res = await createTargetRoute(req);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      const parsed = SafeErrorEnvelopeSchema.parse(json);
+      expect(parsed.success).toBe(false);
+      expect(parsed.error.code).toBe('INVALID_TARGET_PAYLOAD');
+    });
+
+    it('verifies unauthenticated GET /api/v1/investigations/[id] returns SafeErrorEnvelopeSchema', async () => {
+      const { NextRequest } = await import('next/server');
+      const { GET: getInvestigationRoute } = await import('@/app/api/v1/investigations/[id]/route');
+      const originalPreview = process.env.DEV_PREVIEW_MODE;
+      try {
+        process.env.DEV_PREVIEW_MODE = 'false';
+        _resetCachedEnvForTesting();
+        const invId = randomUUID();
+        const req = new NextRequest(new Request(`http://localhost:3000/api/v1/investigations/${invId}`, { method: 'GET' }));
+        const res = await getInvestigationRoute(req, { params: Promise.resolve({ id: invId }) });
+        expect([401, 503]).toContain(res.status);
+        const json = await res.json();
+        const parsed = SafeErrorEnvelopeSchema.parse(json);
+        expect(parsed.success).toBe(false);
+        expect(parsed.error.code).toBeDefined();
+      } finally {
+        process.env.DEV_PREVIEW_MODE = originalPreview;
+        _resetCachedEnvForTesting();
+      }
     });
   });
 });

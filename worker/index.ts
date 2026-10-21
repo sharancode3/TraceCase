@@ -16,11 +16,13 @@ import {
 } from '@/server/queue';
 import { PlaywrightBrowserWorker } from '@/server/browser';
 import { TwoAttemptController } from '@/server/verification/two-attempt-controller';
-import type { BrowserWorkerPort } from '@/server/services/ports';
+import type { BrowserWorkerPort, BrowserInvestigationAgentPort } from '@/server/services/ports';
+import { getServiceContainer } from '@/server/services/service-container';
 
 export async function bootstrapWorker(
   customQueue?: QueueAdapter,
-  customBrowserWorker?: BrowserWorkerPort
+  customBrowserWorker?: BrowserWorkerPort,
+  customBrowserAgent?: BrowserInvestigationAgentPort
 ) {
   const config = getWorkerConfig();
   console.log('[TraceCase Worker] Initializing daemon process...');
@@ -39,8 +41,18 @@ export async function bootstrapWorker(
 
   const browserWorker: BrowserWorkerPort =
     customBrowserWorker || new PlaywrightBrowserWorker();
+  const browserAgent: BrowserInvestigationAgentPort =
+    customBrowserAgent || getServiceContainer().browserAgent;
   const diagnosticHandler = new DiagnosticJobHandler(executionLeaseService);
-  const controller = new TwoAttemptController(executionLeaseService, browserWorker as any);
+  const controller = new TwoAttemptController(
+    executionLeaseService,
+    browserWorker,
+    undefined,
+    {
+      browserAgent,
+      defaultExecutionMode: (process.env.DEFAULT_EXECUTION_MODE as any) || 'AI_GROUNDED',
+    }
+  );
   const claimHandler = new InvestigationClaimHandler(
     executionLeaseService,
     browserWorker,
@@ -158,7 +170,17 @@ export async function bootstrapWorker(
       }
       await workerHeartbeatService.recordShutdown(config.workerId).catch(() => {});
       console.log('[TraceCase Worker] One-shot verification pass complete.');
-      return;
+      return {
+        server,
+        queue,
+        controller,
+        claimHandler,
+        browserWorker,
+        browserAgent,
+        diagnosticHandler,
+        outboxRelay,
+        shutdown: async () => {},
+      };
     }
 
     // Graceful shutdown handling
@@ -199,6 +221,18 @@ export async function bootstrapWorker(
 
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT', () => shutdown('SIGINT'));
+
+    return {
+      server,
+      queue,
+      controller,
+      claimHandler,
+      browserWorker,
+      browserAgent,
+      diagnosticHandler,
+      outboxRelay,
+      shutdown,
+    };
   } catch (err) {
     server.close();
     throw err;
