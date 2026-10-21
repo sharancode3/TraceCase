@@ -14,6 +14,8 @@ import {
   type ApprovePlanCommand,
   type StartInvestigationCommand,
   type CancelInvestigationCommand,
+  type RequestPlanningCommand,
+  type AuthoritativeExperimentPlan,
   ApprovePlanCommandSchema,
   StartInvestigationCommandSchema,
   CancelInvestigationCommandSchema,
@@ -105,6 +107,37 @@ export interface ClarificationQuestionItem {
   explanation?: string;
   isAnswered: boolean;
   answerText?: string | null;
+  createdAt: string;
+}
+
+export interface RequestPlanningResult {
+  status: 'CLARIFICATION_NEEDED' | 'PROPOSAL_READY' | 'UNABLE_TO_PROCEED' | string;
+  plan?: AuthoritativeExperimentPlan;
+  questions?: ClarificationQuestionItem[];
+  reason?: string;
+  workflowRevision?: number;
+}
+
+export interface PlanDetailResult {
+  data: AuthoritativeExperimentPlan;
+  version: number;
+  planHash: string;
+  createdAt: string;
+  mode?: string;
+}
+
+export interface ArtifactItem {
+  id: string;
+  kind: string;
+  attemptNumber?: number;
+  storageTier: string;
+  mimeType: string;
+  sizeBytes: number;
+  sha256Checksum: string;
+  isEligibleForSharing: boolean;
+  redactionApplied?: boolean;
+  quarantineReason?: string | null;
+  url: string;
   createdAt: string;
 }
 
@@ -820,6 +853,162 @@ export async function fetchInvestigationEvents(
         code: 'NETWORK_ERROR',
         category: 'INTERNAL_ERROR',
         message: err instanceof Error ? err.message : 'Network connection failure while fetching events',
+      },
+      status: 0,
+    };
+  }
+}
+
+/**
+ * Triggers experiment planning or replanning for an investigation via POST /api/v1/investigations/[id]/plan
+ */
+export async function requestPlanning(
+  id: string,
+  command?: Partial<RequestPlanningCommand>,
+  options?: { headers?: Record<string, string>; fetchFn?: typeof fetch }
+): Promise<ApiResponse<RequestPlanningResult>> {
+  const fetcher = options?.fetchFn || fetch;
+  const payload = {
+    investigationId: id,
+    ...(command || {}),
+  };
+  try {
+    const res = await fetcher(`/api/v1/investigations/${encodeURIComponent(id)}/plan`, {
+      method: 'POST',
+      headers: buildRequestHeaders({
+        'Content-Type': 'application/json',
+        ...(options?.headers || {}),
+      }),
+      body: JSON.stringify(payload),
+    });
+
+    const json = await res.json().catch(() => null);
+
+    if (!res.ok) {
+      return {
+        success: false,
+        error: {
+          code: json?.error?.code || 'REQUEST_PLANNING_FAILED',
+          category: json?.error?.category || 'INTERNAL_ERROR',
+          message: extractErrorMessage(res, json),
+          details: json?.error?.details,
+        },
+        status: res.status,
+      };
+    }
+
+    return {
+      success: true,
+      data: json?.data || json,
+      mode: json?.mode,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: {
+        code: 'NETWORK_ERROR',
+        category: 'INTERNAL_ERROR',
+        message: err instanceof Error ? err.message : 'Network connection failure while requesting planning',
+      },
+      status: 0,
+    };
+  }
+}
+
+/**
+ * Fetches the authoritative experiment plan revision for an investigation via GET /api/v1/investigations/[id]/plan
+ */
+export async function fetchPlan(
+  id: string,
+  options?: { headers?: Record<string, string>; fetchFn?: typeof fetch; signal?: AbortSignal }
+): Promise<ApiResponse<PlanDetailResult>> {
+  const fetcher = options?.fetchFn || fetch;
+  try {
+    const res = await fetcher(`/api/v1/investigations/${encodeURIComponent(id)}/plan`, {
+      method: 'GET',
+      headers: buildRequestHeaders(options?.headers),
+      signal: options?.signal,
+    });
+
+    const json = await res.json().catch(() => null);
+
+    if (!res.ok) {
+      return {
+        success: false,
+        error: {
+          code: json?.error?.code || 'FETCH_PLAN_FAILED',
+          category: json?.error?.category || 'INTERNAL_ERROR',
+          message: extractErrorMessage(res, json),
+          details: json?.error?.details,
+        },
+        status: res.status,
+      };
+    }
+
+    return {
+      success: true,
+      data: json,
+      mode: json?.mode,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: {
+        code: 'NETWORK_ERROR',
+        category: 'INTERNAL_ERROR',
+        message: err instanceof Error ? err.message : 'Network connection failure while fetching plan',
+      },
+      status: 0,
+    };
+  }
+}
+
+/**
+ * Fetches the list of eligible processed evidence artifacts for an investigation via GET /api/v1/investigations/[id]/artifacts
+ */
+export async function fetchArtifacts(
+  id: string,
+  options?: { headers?: Record<string, string>; fetchFn?: typeof fetch; signal?: AbortSignal }
+): Promise<ApiResponse<{ artifacts: ArtifactItem[]; total: number; mode: string }>> {
+  const fetcher = options?.fetchFn || fetch;
+  try {
+    const res = await fetcher(`/api/v1/investigations/${encodeURIComponent(id)}/artifacts`, {
+      method: 'GET',
+      headers: buildRequestHeaders(options?.headers),
+      signal: options?.signal,
+    });
+
+    const json = await res.json().catch(() => null);
+
+    if (!res.ok) {
+      return {
+        success: false,
+        error: {
+          code: json?.error?.code || 'FETCH_ARTIFACTS_FAILED',
+          category: json?.error?.category || 'INTERNAL_ERROR',
+          message: extractErrorMessage(res, json),
+          details: json?.error?.details,
+        },
+        status: res.status,
+      };
+    }
+
+    return {
+      success: true,
+      data: {
+        artifacts: Array.isArray(json?.data?.artifacts) ? json.data.artifacts : [],
+        total: typeof json?.data?.total === 'number' ? json.data.total : (json?.data?.artifacts?.length || 0),
+        mode: json?.mode || 'live',
+      },
+      mode: json?.mode,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: {
+        code: 'NETWORK_ERROR',
+        category: 'INTERNAL_ERROR',
+        message: err instanceof Error ? err.message : 'Network connection failure while fetching artifacts',
       },
       status: 0,
     };

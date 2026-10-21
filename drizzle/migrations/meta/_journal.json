@@ -50,6 +50,13 @@
       "when": 1792525392844,
       "tag": "0006_lumpy_iron_patriot",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792600000000,
+      "tag": "0007_derivative_lineage",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,5 @@
 import type { InvestigationSnapshot } from '@/contracts/investigations';
-import type { ExperimentPlan } from '@/contracts/planning';
+import type { ExperimentPlan, AuthoritativeExperimentPlan } from '@/contracts/planning';
 import type { EvidenceManifest } from '@/contracts/evidence';
 import type { EvidenceReadinessStatus } from '@/contracts/status';
 
@@ -271,7 +271,7 @@ export function getEvidenceAvailability(
  */
 export function buildReproductionPackage(params: {
   investigation: InvestigationSnapshot;
-  plan?: ExperimentPlan | null;
+  plan?: ExperimentPlan | AuthoritativeExperimentPlan | null;
   manifest?: EvidenceManifest | null;
 }): ReproductionPackage {
   const { investigation, plan, manifest } = params;
@@ -324,7 +324,13 @@ export function buildReproductionPackage(params: {
       })),
       expectedCorrectBehavior: plan?.expectedCorrectBehavior,
       reportedFailureSignature: plan?.reportedFailureSignature,
-      verificationCriteria: plan?.verificationCriteria,
+      verificationCriteria: (plan && 'verificationCriteria' in plan)
+        ? plan.verificationCriteria
+        : (plan && 'assertions' in plan)
+        ? (plan.assertions as Array<{ kind?: string; targetRole?: string; predicateId?: string; details?: string }>).map(
+            (a) => `${a.kind || 'ASSERTION'}: ${a.targetRole || a.predicateId || a.details || ''}`
+          )
+        : undefined,
     },
     evidenceManifest: {
       readinessStatus: manifest?.readinessStatus ?? investigation.evidenceReadiness,

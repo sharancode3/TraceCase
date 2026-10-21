@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import fs from 'node:fs/promises';
 import { eq, and } from 'drizzle-orm';
 import { getDb, isDbConfigured } from '@/server/db';
 import { evidenceArtifactsTable, investigationsTable } from '@/server/db/schema';
@@ -35,12 +34,14 @@ export async function GET(
   const grantId = url.searchParams.get('grant');
   let isGrantAuthorized = false;
   let authorizedTier: 'PUBLIC_SAFE' | 'RESTRICTED_RAW' = 'PUBLIC_SAFE';
+  let grantInvestigationId: string | undefined;
 
   if (grantId) {
     const verified = verifyAccessGrant(grantId, artifactId);
     if (verified) {
       isGrantAuthorized = true;
       authorizedTier = verified.storageTier;
+      grantInvestigationId = verified.investigationId;
     }
   }
 
@@ -53,134 +54,172 @@ export async function GET(
     );
   }
 
-  // 2. Fetch artifact metadata and verify investigation ownership
-  let mimeType = 'application/octet-stream';
-  let storageTier = 'RESTRICTED_RAW';
-  let localPath: string | null = null;
-
-  if (isDbConfigured()) {
-    try {
-      const db = getDb();
-      const [artifactRow] = await db
-        .select()
-        .from(evidenceArtifactsTable)
-        .where(
-          and(
-            eq(evidenceArtifactsTable.id, artifactId),
-            eq(evidenceArtifactsTable.investigationId, id)
-          )
-        )
-        .limit(1);
-
-      if (!artifactRow) {
-        return NextResponse.json(
-          createSafeError('NOT_FOUND', 'ARTIFACT_NOT_FOUND', `Artifact ${artifactId} was not found for investigation ${id}.`),
-          { status: 404 }
-        );
-      }
-
-      mimeType = artifactRow.mimeType;
-      storageTier = artifactRow.storageTier;
-      localPath = artifactRow.localPath;
-
-      // Verify investigation access for principal if not using a specific signed grant
-      if (principal && !isGrantAuthorized) {
-        const [investigation] = await db
-          .select()
-          .from(investigationsTable)
-          .where(eq(investigationsTable.id, id))
-          .limit(1);
-
-        if (investigation && principal.role !== 'admin' && investigation.ownerId !== principal.id) {
-          return NextResponse.json(
-            createSafeError('UNAUTHORIZED', 'FORBIDDEN', 'You do not have access to this investigation artifact.'),
-            { status: 403 }
-          );
-        }
-      }
-    } catch {
-      // In-memory or fallback mode
-    }
-  }
-
-  // 3. Fail closed if RESTRICTED_RAW and caller is only authorized for PUBLIC_SAFE
-  if (storageTier === 'RESTRICTED_RAW' && isGrantAuthorized && authorizedTier === 'PUBLIC_SAFE') {
+  // Reject grant if bound to a mismatched investigation
+  if (isGrantAuthorized && grantInvestigationId && grantInvestigationId !== id) {
     return NextResponse.json(
-      createSafeError('POLICY_VIOLATION', 'RESTRICTED_TIER_FORBIDDEN', 'Access grant is not authorized for RESTRICTED_RAW evidence.'),
+      createSafeError('UNAUTHORIZED', 'FORBIDDEN', 'Access grant is not authorized for this investigation.'),
       { status: 403 }
     );
   }
 
-  // 4. Retrieve artifact binary payload
-  let buffer: Buffer | null = null;
-
-  // Try reading from local filesystem first
-  if (localPath) {
-    try {
-      buffer = await fs.readFile(localPath);
-    } catch {
-      buffer = null;
-    }
-  }
-
-  // Try reading from EvidenceStorageDriver
-  if (!buffer) {
-    const driver = getEvidenceStorageDriver();
-    // Try both tiers if necessary
-    const primaryTier = storageTier === 'PUBLIC_SAFE' ? 'PUBLIC_SAFE' : 'RESTRICTED_RAW';
-    const prefixes = [
-      `investigations/${id}/attempts/1/`,
-      `investigations/${id}/attempts/2/`,
-      `investigations/${id}/`,
-    ];
-
-    for (const prefix of prefixes) {
-      const keys = await driver.listArtifacts(prefix, primaryTier as 'PUBLIC_SAFE' | 'RESTRICTED_RAW');
-      const matchingKey = keys.find((k) => k.includes(artifactId));
-      if (matchingKey) {
-        const item = await driver.getArtifact(matchingKey, primaryTier as 'PUBLIC_SAFE' | 'RESTRICTED_RAW');
-        if (item) {
-          buffer = item.data;
-          mimeType = item.mimeType || mimeType;
-          break;
-        }
-      }
-    }
-
-    if (!buffer && primaryTier === 'PUBLIC_SAFE') {
-      // Fallback search in RESTRICTED_RAW if authorized
-      for (const prefix of prefixes) {
-        const keys = await driver.listArtifacts(prefix, 'RESTRICTED_RAW');
-        const matchingKey = keys.find((k) => k.includes(artifactId));
-        if (matchingKey) {
-          const item = await driver.getArtifact(matchingKey, 'RESTRICTED_RAW');
-          if (item) {
-            buffer = item.data;
-            mimeType = item.mimeType || mimeType;
-            break;
-          }
-        }
-      }
-    }
-  }
-
-  if (!buffer) {
+  // 2. Fetch artifact metadata and verify investigation ownership
+  if (!isDbConfigured()) {
     return NextResponse.json(
-      createSafeError('NOT_FOUND', 'ARTIFACT_DATA_NOT_FOUND', `Artifact payload not found in storage driver or on disk.`),
+      createSafeError('SERVICE_NOT_CONFIGURED', 'DATABASE_UNAVAILABLE', 'Database is required to resolve artifact metadata.'),
+      { status: 503 }
+    );
+  }
+
+  let artifactRow: typeof evidenceArtifactsTable.$inferSelect | undefined;
+  let investigationRow: typeof investigationsTable.$inferSelect | undefined;
+
+  try {
+    const db = getDb();
+    const [foundArtifact] = await db
+      .select()
+      .from(evidenceArtifactsTable)
+      .where(
+        and(
+          eq(evidenceArtifactsTable.id, artifactId),
+          eq(evidenceArtifactsTable.investigationId, id)
+        )
+      )
+      .limit(1);
+
+    artifactRow = foundArtifact;
+
+    if (!artifactRow) {
+      return NextResponse.json(
+        createSafeError('NOT_FOUND', 'ARTIFACT_NOT_FOUND', `Artifact ${artifactId} was not found for investigation ${id}.`),
+        { status: 404 }
+      );
+    }
+
+    const [foundInvestigation] = await db
+      .select()
+      .from(investigationsTable)
+      .where(eq(investigationsTable.id, id))
+      .limit(1);
+
+    investigationRow = foundInvestigation;
+
+    if (!investigationRow) {
+      return NextResponse.json(
+        createSafeError('NOT_FOUND', 'INVESTIGATION_NOT_FOUND', `Investigation ${id} was not found.`),
+        { status: 404 }
+      );
+    }
+  } catch (error) {
+    // Fail-closed: do not swallow database errors to fall back to searching storage
+    return NextResponse.json(
+      createSafeError('INTERNAL_ERROR', 'DATABASE_ERROR', `Failed to query artifact metadata: ${error instanceof Error ? error.message : String(error)}`),
+      { status: 500 }
+    );
+  }
+
+  // 3. Strict ownership enforcement: authenticated principal must own the investigation
+  if (principal && !isGrantAuthorized) {
+    if (investigationRow.ownerId !== principal.id) {
+      return NextResponse.json(
+        createSafeError('UNAUTHORIZED', 'FORBIDDEN', 'You do not have access to this investigation artifact.'),
+        { status: 403 }
+      );
+    }
+  }
+
+  // 4. Tier and Eligibility Enforcement
+  // Normal viewers MUST NOT receive RESTRICTED_RAW merely by being logged in
+  if (artifactRow.storageTier === 'RESTRICTED_RAW') {
+    const hasExplicitRestrictedGrant = isGrantAuthorized && authorizedTier === 'RESTRICTED_RAW';
+    if (!hasExplicitRestrictedGrant) {
+      return NextResponse.json(
+        createSafeError(
+          'POLICY_VIOLATION',
+          'RESTRICTED_TIER_FORBIDDEN',
+          'Access to RESTRICTED_RAW evidence requires explicit restricted-review authorization.'
+        ),
+        { status: 403 }
+      );
+    }
+  }
+
+  // For PUBLIC_SAFE artifacts, verify sharing eligibility
+  if (artifactRow.storageTier === 'PUBLIC_SAFE' && !artifactRow.isEligibleForSharing) {
+    return NextResponse.json(
+      createSafeError('POLICY_VIOLATION', 'ARTIFACT_NOT_ELIGIBLE', 'Artifact is not eligible for viewing or sharing.'),
+      { status: 403 }
+    );
+  }
+
+  // 5. Retrieve exact persisted object identity from Storage Driver
+  // Never read raw localPath before/instead of processed derivative.
+  // Never search other tiers. Never guess keys by substring.
+  const storageKey = artifactRow.storageRef;
+  if (!storageKey) {
+    return NextResponse.json(
+      createSafeError('NOT_FOUND', 'STORAGE_KEY_NOT_FOUND', `Persisted storage reference missing for artifact ${artifactId}.`),
       { status: 404 }
     );
   }
 
-  // 5. HTTP 206 Partial Content support for video streaming / range requests
-  const rangeHeader = req.headers.get('range');
+  const driver = getEvidenceStorageDriver();
+  const targetTier = artifactRow.storageTier as 'PUBLIC_SAFE' | 'RESTRICTED_RAW';
+  const storedItem = await driver.getArtifact(storageKey, targetTier);
+
+  if (!storedItem) {
+    return NextResponse.json(
+      createSafeError('NOT_FOUND', 'DERIVATIVE_NOT_FOUND', 'Processed evidence artifact not found in storage driver.'),
+      { status: 404 }
+    );
+  }
+
+  const buffer = storedItem.data;
+  const mimeType = storedItem.mimeType || artifactRow.mimeType || 'application/octet-stream';
   const totalLength = buffer.length;
 
-  if (rangeHeader && rangeHeader.startsWith('bytes=')) {
-    const parts = rangeHeader.slice(6).split('-');
-    const start = parseInt(parts[0], 10);
-    const end = parts[1] ? parseInt(parts[1], 10) : totalLength - 1;
+  // 6. RFC 7233 Partial Content / Range Handling
+  const rangeHeader = req.headers.get('range');
 
-    if (isNaN(start) || isNaN(end) || start >= totalLength || start > end) {
+  if (rangeHeader && rangeHeader.startsWith('bytes=')) {
+    const rangeValue = rangeHeader.slice(6).trim();
+
+    // Reject multipart ranges as unsupported (RFC 7233 Sec 4.4)
+    if (rangeValue.includes(',')) {
+      return new Response(null, {
+        status: 416,
+        headers: {
+          'Content-Range': `bytes */${totalLength}`,
+        },
+      });
+    }
+
+    const parts = rangeValue.split('-');
+    let start: number;
+    let end: number;
+
+    if (parts[0] === '' && parts[1]) {
+      // Suffix range: bytes=-N
+      const suffixLength = parseInt(parts[1], 10);
+      if (isNaN(suffixLength) || suffixLength <= 0) {
+        return new Response(null, {
+          status: 416,
+          headers: { 'Content-Range': `bytes */${totalLength}` },
+        });
+      }
+      start = Math.max(0, totalLength - suffixLength);
+      end = totalLength - 1;
+    } else {
+      start = parseInt(parts[0], 10);
+      if (parts[1] === '') {
+        // Open-ended range: bytes=N-
+        end = totalLength - 1;
+      } else {
+        // Bounded range: bytes=N-M (clamped to totalLength - 1)
+        end = Math.min(parseInt(parts[1], 10), totalLength - 1);
+      }
+    }
+
+    if (isNaN(start) || isNaN(end) || start < 0 || start >= totalLength || start > end) {
       return new Response(null, {
         status: 416,
         headers: {
@@ -197,7 +236,7 @@ export async function GET(
         'Content-Range': `bytes ${start}-${end}/${totalLength}`,
         'Accept-Ranges': 'bytes',
         'Content-Length': String(chunk.length),
-        'Cache-Control': 'private, no-cache',
+        'Cache-Control': 'private, no-transform, max-age=3600',
       },
     });
   }
@@ -208,7 +247,7 @@ export async function GET(
       'Content-Type': mimeType,
       'Content-Length': String(totalLength),
       'Accept-Ranges': 'bytes',
-      'Cache-Control': 'private, no-cache',
+      'Cache-Control': 'private, no-transform, max-age=3600',
     },
   });
 }

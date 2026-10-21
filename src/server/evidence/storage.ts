@@ -12,7 +12,9 @@
  * - S3-compatible driver contract matching existing server environment config
  */
 
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual, randomUUID } from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import type { StorageTier, ArtifactKind } from '@/contracts/evidence';
 import { StorageTierSchema, ArtifactKindSchema } from '@/contracts/evidence';
 import { getServerEnv } from '@/server/config/env';
@@ -367,6 +369,191 @@ export class InMemoryEvidenceStorageDriver implements EvidenceStorageDriver {
 }
 
 /**
+ * Persistent on-disk evidence storage driver.
+ *
+ * Implements strict bucket isolation on the local filesystem:
+ * - RESTRICTED_RAW stored in <baseDir>/restricted_raw/
+ * - PUBLIC_SAFE stored in <baseDir>/public_safe/
+ * - Atomic writes via temporary files and rename
+ * - Preserves artifacts across process restarts and enables multi-process access (Web <-> Worker)
+ * - Validates keys against path traversal
+ */
+export class PersistentDiskEvidenceStorageDriver implements EvidenceStorageDriver {
+  private readonly baseDir: string;
+  private readonly restrictedDir: string;
+  private readonly publicSafeDir: string;
+
+  constructor(baseDir?: string) {
+    this.baseDir = baseDir || process.env.TRACECASE_STORAGE_DIR || path.resolve(process.cwd(), '.tracecase-storage');
+    this.restrictedDir = path.resolve(this.baseDir, 'restricted_raw');
+    this.publicSafeDir = path.resolve(this.baseDir, 'public_safe');
+  }
+
+  private getTierDir(tier: StorageTier): string {
+    return tier === 'RESTRICTED_RAW' ? this.restrictedDir : this.publicSafeDir;
+  }
+
+  private resolveKeyPath(key: string, tier: StorageTier): string {
+    validateStorageKey(key);
+    const tierDir = this.getTierDir(tier);
+    const normalizedKey = key.split('/').join(path.sep);
+    const resolved = path.resolve(tierDir, normalizedKey);
+    if (!resolved.startsWith(tierDir + path.sep) && resolved !== tierDir) {
+      throw new InvalidStorageKeyError(`Path traversal detected: "${key}"`, key);
+    }
+    return resolved;
+  }
+
+  async putArtifact(options: PutArtifactOptions): Promise<StoredArtifactRecord> {
+    const { key, tier, data, mimeType, allowOverwrite = false } = options;
+    validateStorageKey(key);
+    const filePath = this.resolveKeyPath(key, tier);
+
+    try {
+      await fs.stat(filePath);
+      if (!allowOverwrite) {
+        throw new ArtifactCollisionError(key, tier);
+      }
+    } catch (err: unknown) {
+      if (err instanceof ArtifactCollisionError) throw err;
+    }
+
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+
+    let bufferData: Buffer;
+    if (Buffer.isBuffer(data)) {
+      bufferData = Buffer.from(data);
+    } else if (typeof data === 'string') {
+      bufferData = Buffer.from(data, 'utf8');
+    } else {
+      bufferData = Buffer.from(data);
+    }
+
+    const { byteSize, sha256Checksum } = computeSha256(bufferData);
+    const storedAt = new Date().toISOString();
+
+    const tempPath = `${filePath}.tmp.${randomUUID()}`;
+    await fs.writeFile(tempPath, bufferData);
+    await fs.rename(tempPath, filePath);
+
+    const metaPath = `${filePath}.meta.json`;
+    const meta = { key, tier, mimeType, byteSize, sha256Checksum, storedAt };
+    await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), 'utf8');
+
+    return {
+      key,
+      tier,
+      bucket: resolveBucketName(tier),
+      data: bufferData,
+      mimeType,
+      byteSize,
+      sha256Checksum,
+      storedAt,
+    };
+  }
+
+  async getArtifact(key: string, tier: StorageTier): Promise<GetArtifactResult | null> {
+    validateStorageKey(key);
+    const filePath = this.resolveKeyPath(key, tier);
+
+    try {
+      await fs.stat(filePath);
+    } catch {
+      return null;
+    }
+
+    const data = await fs.readFile(filePath);
+
+    let mimeType = 'application/octet-stream';
+    let storedAt = new Date().toISOString();
+    try {
+      const metaText = await fs.readFile(`${filePath}.meta.json`, 'utf8');
+      const meta = JSON.parse(metaText);
+      mimeType = meta.mimeType || mimeType;
+      storedAt = meta.storedAt || storedAt;
+    } catch {
+      // Fallback if sidecar metadata is absent
+    }
+
+    const { byteSize, sha256Checksum } = computeSha256(data);
+    return {
+      key,
+      tier,
+      bucket: resolveBucketName(tier),
+      data,
+      mimeType,
+      byteSize,
+      sha256Checksum,
+      storedAt,
+    };
+  }
+
+  async hasArtifact(key: string, tier: StorageTier): Promise<boolean> {
+    validateStorageKey(key);
+    const filePath = this.resolveKeyPath(key, tier);
+    try {
+      await fs.stat(filePath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async deleteArtifact(key: string, tier: StorageTier): Promise<boolean> {
+    validateStorageKey(key);
+    const filePath = this.resolveKeyPath(key, tier);
+    try {
+      await fs.unlink(filePath);
+      await fs.unlink(`${filePath}.meta.json`).catch(() => {});
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async listArtifacts(prefix: string, tier: StorageTier): Promise<string[]> {
+    const tierDir = this.getTierDir(tier);
+    const results: string[] = [];
+
+    async function walk(dir: string, base: string) {
+      let entries: string[] = [];
+      try {
+        entries = await fs.readdir(dir);
+      } catch {
+        return;
+      }
+
+      for (const entry of entries) {
+        if (entry.endsWith('.meta.json') || entry.includes('.tmp.')) continue;
+        const fullPath = path.join(dir, entry);
+        const relPath = path.join(base, entry);
+        try {
+          const stat = await fs.stat(fullPath);
+          if (stat.isDirectory()) {
+            await walk(fullPath, relPath);
+          } else {
+            const key = relPath.split(path.sep).join('/');
+            if (!prefix || key.startsWith(prefix)) {
+              results.push(key);
+            }
+          }
+        } catch {
+          // Ignore read errors
+        }
+      }
+    }
+
+    await walk(tierDir, '');
+    return results.sort();
+  }
+
+  async clear(): Promise<void> {
+    await fs.rm(this.restrictedDir, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(this.publicSafeDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
  * S3-compatible configuration contract for remote object storage drivers.
  * Uses existing environment keys declared in ServerEnv without adding dependencies.
  */
@@ -398,13 +585,25 @@ let defaultDriverInstance: EvidenceStorageDriver | null = null;
 
 /**
  * Returns the active evidence storage driver.
- * In Stage 0 and for deterministic testing, returns the in-memory dual-bucket driver.
+ * Uses persistent disk storage by default for multi-process cross-boundary persistence,
+ * falling back to in-memory only when TRACECASE_FORCE_IN_MEMORY_STORAGE is set.
  */
 export function getEvidenceStorageDriver(): EvidenceStorageDriver {
   if (!defaultDriverInstance) {
-    defaultDriverInstance = new InMemoryEvidenceStorageDriver();
+    if (process.env.TRACECASE_FORCE_IN_MEMORY_STORAGE === 'true') {
+      defaultDriverInstance = new InMemoryEvidenceStorageDriver();
+    } else {
+      defaultDriverInstance = new PersistentDiskEvidenceStorageDriver();
+    }
   }
   return defaultDriverInstance;
+}
+
+/**
+ * Explicitly sets the driver instance for testing.
+ */
+export function setEvidenceStorageDriverForTesting(driver: EvidenceStorageDriver | null): void {
+  defaultDriverInstance = driver;
 }
 
 /**

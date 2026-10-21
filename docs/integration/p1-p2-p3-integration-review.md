@@ -4,7 +4,7 @@
 **Integration Branch:** `codex/integration-person-1-2-3`  
 **Base Commit (Person 1 + Person 2):** `db88fcd` (`integration/person-1-person-2`)  
 **Merged Commit (Person 3):** `c276cae` (`origin/person3`)  
-**Quality Status:** Clean production build, 0 TypeScript errors (`tsc --noEmit`), 0 ESLint warnings/errors (`next lint`), 72 test suites passed (645 passed tests, 6 skipped, 0 failed in ~12.5s).
+**Quality Status:** Clean production build, 0 TypeScript errors (`tsc --noEmit`), 0 ESLint warnings/errors (`next lint`), 75 test suites passed (663 passed tests, 6 skipped, 0 failed in ~16.8s).
 
 ---
 
@@ -26,6 +26,13 @@ Following the merge of Person 3 (`origin/person3`) into the verified Person 1 + 
    - `/investigations/[id]/live`: wired real cancellation and progress event polling via `fetchInvestigationEvents(id)`.
    - `/investigations/[id]`: strictly isolated synthetic TC1 test data to canonical synthetic targets, rendering genuine database records for all real investigations.
 6. Implemented a comprehensive 7-test three-person integrated journey suite (`tests/integration/p1-p2-p3-integrated-journey.test.ts`) validating end-to-end flow from intake and planning through browser execution, fixture reset, pair assessment, evidence sanitization, narrative review, and secure access grant generation.
+7. Multi-Process Persistent Disk Storage Driver: implemented `PersistentDiskEvidenceStorageDriver` in `src/server/evidence/storage.ts` supporting persistent disk storage with bucket isolation (`restricted_raw` vs `public_safe`), atomic write-and-rename, metadata sidecars, and path traversal prevention.
+8. Additive Schema Migration for Derivative Lineage: generated `0007_derivative_lineage.sql` adding nullable `raw_artifact_id` to `evidence_artifacts` table with updated `_journal.json`.
+9. Evidence Delivery Security Route: hardened `/api/v1/investigations/[id]/artifacts/[artifactId]` with RFC 7233 partial content / HTTP 206 range requests, strict investigation ownership verification (no admin bypass), and fail-closed HTTP 403 `RESTRICTED_TIER_FORBIDDEN` for `RESTRICTED_RAW` captures without explicit restricted grant.
+10. Artifacts Listing Endpoint: implemented `/api/v1/investigations/[id]/artifacts` returning authenticated users their accessible `PUBLIC_SAFE` artifact descriptors with safe delivery URLs.
+11. Dynamic Frontend App Router Wiring: connected live planning and execution workflows across `/investigations/new`, `/investigations/[id]/clarify`, `/investigations/[id]/approve`, and `/investigations/[id]`. Dynamic intake triggers planning via `requestPlanning(id)`, routes authoritatively to `/clarify` or `/approve` based on proposal status, binds human approval and start commands to authoritative plan version and hash, fetches live plan and artifacts, and exports reproduction packages with authoritative plan and artifact manifests.
+12. Removed Fabricated AI Explanation Defaults: replaced synthetic duration defaults (4200ms / 3800ms) with real measurements in `evidence-review-service.ts` and `investigation-claim-handler.ts`, failed closed on missing attempt 1, left missing attempt 2 null, and resolved tested target baseUrl dynamically from target profiles.
+13. Comprehensive Verification Suites: added `tests/integration/evidence-delivery-security.test.ts` (9 tests), `tests/integration/persistent-storage.test.ts` (5 tests), and `tests/integration/real-acceptance-lane.test.ts` (4 tests).
 
 Protected branch pointers (`main`, `person-1`, `person-2`, `integration/person-1-person-2`) remain untouched. No code has been pushed to remote, no PR has been created, and no external deployment or submission has occurred.
 
@@ -100,12 +107,12 @@ Protected branch pointers (`main`, `person-1`, `person-2`, `integration/person-1
 
 ## 5. Verification & Test Evidence Summary
 
-- **Total Test Suites:** 72 passed, 0 failed (100% pass rate).
-- **Total Tests:** 645 passed, 6 skipped, 0 failed.
-- **Execution Time:** ~12.5 seconds.
+- **Total Test Suites:** 75 passed, 0 failed (100% pass rate).
+- **Total Tests:** 663 passed, 6 skipped, 0 failed.
+- **Execution Time:** ~16.8 seconds.
 - **TypeScript:** 0 errors (`tsc --noEmit`).
 - **ESLint:** 0 warnings or errors (`next lint`).
-- **Next.js & Worker Build:** 25 pages/routes optimized and generated; worker bundled cleanly (`dist/worker/index.mjs`, 396 KB).
+- **Next.js & Worker Build:** 26 pages/routes optimized and generated; worker bundled cleanly (`dist/worker/index.mjs`, 405 KB).
 
 ---
 

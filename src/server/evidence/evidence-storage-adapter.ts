@@ -183,16 +183,31 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
         }
       }
 
-      // 3. Process according to artifact kind
+      // 3. Fail closed if raw bytes cannot be verified or read from disk or storage
+      if (!rawBuffer) {
+        results.push({
+          artifactId: ref.captureId,
+          investigationId: params.investigationId,
+          kind: ref.kind,
+          originalTier: 'RESTRICTED_RAW',
+          publishedTier: 'RESTRICTED_RAW',
+          redactionApplied: false,
+          isEligibleForSharing: false,
+          quarantineReason: 'RAW_SOURCE_UNAVAILABLE',
+        });
+        continue;
+      }
+
+      // 4. Process according to artifact kind
       if (ref.kind === 'CONSOLE_LOG') {
-        const rawText = rawBuffer ? rawBuffer.toString('utf-8') : '';
+        const rawText = rawBuffer.toString('utf-8');
 
         // Retain raw original in RESTRICTED_RAW
         const rawConsoleKey = buildStorageKey({
           investigationId: params.investigationId,
           attemptNumber,
           kind: 'CONSOLE_LOG',
-          fileName: `attempt_${attemptNumber}_raw_console.log`,
+          fileName: `attempt_${attemptNumber}_raw_console_${ref.captureId}.log`,
         });
         await this.storageDriver.putArtifact({
           key: rawConsoleKey,
@@ -212,7 +227,7 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
             investigationId: params.investigationId,
             attemptNumber,
             kind: 'CONSOLE_LOG',
-            fileName: `attempt_${attemptNumber}_console.log`,
+            fileName: `attempt_${attemptNumber}_console_${ref.captureId}.log`,
           });
           await this.storageDriver.putArtifact({
             key: safeConsoleKey,
@@ -240,7 +255,7 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
             investigationId: params.investigationId,
             attemptNumber,
             kind: 'CONSOLE_LOG',
-            fileName: `attempt_${attemptNumber}_quarantined_console.log`,
+            fileName: `attempt_${attemptNumber}_quarantined_console_${ref.captureId}.log`,
           });
           await this.storageDriver.putArtifact({
             key: quarantinedKey,
@@ -262,13 +277,13 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
           });
         }
       } else if (ref.kind === 'NETWORK_TRACE') {
-        const rawText = rawBuffer ? rawBuffer.toString('utf-8') : '';
+        const rawText = rawBuffer.toString('utf-8');
 
         const rawNetworkKey = buildStorageKey({
           investigationId: params.investigationId,
           attemptNumber,
           kind: 'NETWORK_TRACE',
-          fileName: `attempt_${attemptNumber}_raw_network.json`,
+          fileName: `attempt_${attemptNumber}_raw_network_${ref.captureId}.json`,
         });
         await this.storageDriver.putArtifact({
           key: rawNetworkKey,
@@ -278,31 +293,57 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
           allowOverwrite: true,
         });
 
-        let safeNetworkText = rawText;
-        let isClean = true;
-        let isCompleted = true;
+        // Bound network trace size before unrestricted parsing
+        if (rawBuffer.length > DEFAULT_MAX_NETWORK_SIZE_BYTES) {
+          results.push({
+            artifactId: ref.captureId,
+            investigationId: params.investigationId,
+            kind: 'NETWORK_TRACE',
+            originalTier: 'RESTRICTED_RAW',
+            publishedTier: 'RESTRICTED_RAW',
+            redactionApplied: false,
+            isEligibleForSharing: false,
+            quarantineReason: 'NETWORK_TRACE_OVERSIZED',
+          });
+          continue;
+        }
+
+        let isJsonParsed = false;
+        let safeNetworkText = '';
         let redactionsApplied = false;
 
         try {
           const parsed = JSON.parse(rawText);
+          isJsonParsed = true;
           const scrubbed = sanitizeStructuredData(parsed);
           safeNetworkText = JSON.stringify(scrubbed);
-          isClean = isContentClean(safeNetworkText);
           redactionsApplied = true;
         } catch {
-          const textResult = sanitizeText(rawText, { maxSizeBytes: DEFAULT_MAX_NETWORK_SIZE_BYTES });
-          safeNetworkText = textResult.safeContent;
-          isClean = isContentClean(safeNetworkText);
-          isCompleted = textResult.scanCompleted && !textResult.truncated;
-          redactionsApplied = textResult.redactionsApplied;
+          isJsonParsed = false;
         }
 
-        if (isCompleted && isClean) {
+        // Malformed JSON must not automatically be promoted to safe processed evidence
+        if (!isJsonParsed) {
+          results.push({
+            artifactId: ref.captureId,
+            investigationId: params.investigationId,
+            kind: 'NETWORK_TRACE',
+            originalTier: 'RESTRICTED_RAW',
+            publishedTier: 'RESTRICTED_RAW',
+            redactionApplied: false,
+            isEligibleForSharing: false,
+            quarantineReason: 'NETWORK_TRACE_MALFORMED_JSON',
+          });
+          continue;
+        }
+
+        const isClean = isContentClean(safeNetworkText);
+        if (isClean) {
           const safeNetworkKey = buildStorageKey({
             investigationId: params.investigationId,
             attemptNumber,
             kind: 'NETWORK_TRACE',
-            fileName: `attempt_${attemptNumber}_network.json`,
+            fileName: `attempt_${attemptNumber}_network_${ref.captureId}.json`,
           });
           await this.storageDriver.putArtifact({
             key: safeNetworkKey,
@@ -322,20 +363,6 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
             isEligibleForSharing: true,
           });
         } else {
-          const quarantinedKey = buildStorageKey({
-            investigationId: params.investigationId,
-            attemptNumber,
-            kind: 'NETWORK_TRACE',
-            fileName: `attempt_${attemptNumber}_quarantined_network.json`,
-          });
-          await this.storageDriver.putArtifact({
-            key: quarantinedKey,
-            tier: 'RESTRICTED_RAW',
-            data: safeNetworkText,
-            mimeType: 'application/json',
-            allowOverwrite: true,
-          });
-
           results.push({
             artifactId: ref.captureId,
             investigationId: params.investigationId,
@@ -344,28 +371,48 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
             publishedTier: 'RESTRICTED_RAW',
             redactionApplied: redactionsApplied,
             isEligibleForSharing: false,
-            quarantineReason: !isCompleted ? 'NETWORK_TRACE_TRUNCATED' : 'NETWORK_TRACE_RESIDUAL_SECRET',
+            quarantineReason: 'NETWORK_TRACE_RESIDUAL_SECRET',
           });
         }
       } else if (ref.kind === 'VIDEO_RECORDING') {
-        const videoByteLength = rawBuffer ? rawBuffer.length : ref.sizeBytes;
+        const videoByteLength = rawBuffer.length;
+
+        // Container check: WebM magic bytes (0x1A 0x45 0xDF 0xA3)
+        const isWebm =
+          rawBuffer.length >= 4 &&
+          rawBuffer[0] === 0x1a &&
+          rawBuffer[1] === 0x45 &&
+          rawBuffer[2] === 0xdf &&
+          rawBuffer[3] === 0xa3;
+
+        if (!isWebm) {
+          results.push({
+            artifactId: ref.captureId,
+            investigationId: params.investigationId,
+            kind: 'VIDEO_RECORDING',
+            originalTier: 'RESTRICTED_RAW',
+            publishedTier: 'RESTRICTED_RAW',
+            redactionApplied: false,
+            isEligibleForSharing: false,
+            quarantineReason: 'VIDEO_CONTAINER_INVALID',
+          });
+          continue;
+        }
 
         if (videoByteLength < MIN_VIDEO_BYTE_SIZE) {
           const rawVideoKey = buildStorageKey({
             investigationId: params.investigationId,
             attemptNumber,
             kind: 'VIDEO_RECORDING',
-            fileName: `attempt_${attemptNumber}_undersized_recording.webm`,
+            fileName: `attempt_${attemptNumber}_undersized_recording_${ref.captureId}.webm`,
           });
-          if (rawBuffer) {
-            await this.storageDriver.putArtifact({
-              key: rawVideoKey,
-              tier: 'RESTRICTED_RAW',
-              data: rawBuffer,
-              mimeType: 'video/webm',
-              allowOverwrite: true,
-            });
-          }
+          await this.storageDriver.putArtifact({
+            key: rawVideoKey,
+            tier: 'RESTRICTED_RAW',
+            data: rawBuffer,
+            mimeType: 'video/webm',
+            allowOverwrite: true,
+          });
 
           results.push({
             artifactId: ref.captureId,
@@ -379,23 +426,22 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
           });
         } else {
           // Valid video recording (>= 10 KB per VES-EVD-002)
-          // SEC-01 Remediation: Byte size confirms container integrity, NOT visual content safety.
-          // Retained in RESTRICTED_RAW; shareable internally via authenticated access grant.
+          // Privacy policy: Byte size confirms container integrity, NOT visual content safety.
+          // Uninspected video is strictly retained in RESTRICTED_RAW and withheld from sharing
+          // until verified through an explicit privacy review.
           const videoKey = buildStorageKey({
             investigationId: params.investigationId,
             attemptNumber,
             kind: 'VIDEO_RECORDING',
-            fileName: `attempt_${attemptNumber}_raw_recording.webm`,
+            fileName: `attempt_${attemptNumber}_raw_recording_${ref.captureId}.webm`,
           });
-          if (rawBuffer) {
-            await this.storageDriver.putArtifact({
-              key: videoKey,
-              tier: 'RESTRICTED_RAW',
-              data: rawBuffer,
-              mimeType: 'video/webm',
-              allowOverwrite: true,
-            });
-          }
+          await this.storageDriver.putArtifact({
+            key: videoKey,
+            tier: 'RESTRICTED_RAW',
+            data: rawBuffer,
+            mimeType: 'video/webm',
+            allowOverwrite: true,
+          });
 
           results.push({
             artifactId: ref.captureId,
@@ -404,11 +450,12 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
             originalTier: 'RESTRICTED_RAW',
             publishedTier: 'RESTRICTED_RAW',
             redactionApplied: false,
-            isEligibleForSharing: true,
+            isEligibleForSharing: false,
+            quarantineReason: 'VIDEO_PENDING_PRIVACY_REVIEW',
           });
         }
       } else {
-        // Other artifacts (e.g. SCREENSHOT, SYNTHESIS_REPORT)
+        // Unknown or unsupported artifact kinds remain withheld
         results.push({
           artifactId: ref.captureId,
           investigationId: params.investigationId,
@@ -416,7 +463,8 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
           originalTier: 'RESTRICTED_RAW',
           publishedTier: 'RESTRICTED_RAW',
           redactionApplied: false,
-          isEligibleForSharing: true,
+          isEligibleForSharing: false,
+          quarantineReason: 'UNSUPPORTED_ARTIFACT_POLICY',
         });
       }
     }
@@ -434,13 +482,36 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
   }): Promise<ArtifactAccessGrant> {
     const grantId = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15-minute expiration
-    const tier: StorageTier = params.tier === 'PUBLIC_SAFE' ? 'PUBLIC_SAFE' : 'RESTRICTED_RAW';
+    const requestedTier: StorageTier = params.tier === 'PUBLIC_SAFE' ? 'PUBLIC_SAFE' : 'RESTRICTED_RAW';
+
+    let investigationId = params.artifactId;
+    if (isDbConfigured()) {
+      try {
+        const db = this.dbProvider();
+        const [artifactRow] = await db
+          .select()
+          .from(evidenceArtifactsTable)
+          .where(eq(evidenceArtifactsTable.id, params.artifactId))
+          .limit(1);
+
+        if (artifactRow) {
+          investigationId = artifactRow.investigationId;
+          // Policy: A grant for processed content must never authorize a restricted object
+          if (artifactRow.storageTier === 'RESTRICTED_RAW' && requestedTier === 'PUBLIC_SAFE') {
+            throw new Error('A PUBLIC_SAFE grant cannot authorize a RESTRICTED_RAW artifact.');
+          }
+        }
+      } catch (err: unknown) {
+        if (err instanceof Error && err.message.includes('PUBLIC_SAFE')) throw err;
+      }
+    }
 
     storeAccessGrant({
       grantId,
       artifactId: params.artifactId,
+      investigationId,
       authorizedUserId: params.userId,
-      storageTier: tier,
+      storageTier: requestedTier,
       expiresAt,
     });
 
@@ -448,8 +519,8 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
       grantId,
       artifactId: params.artifactId,
       authorizedUserId: params.userId,
-      storageTier: tier,
-      downloadUrl: `/api/v1/investigations/${params.artifactId}/artifacts/${params.artifactId}?grant=${grantId}`,
+      storageTier: requestedTier,
+      downloadUrl: `/api/v1/investigations/${investigationId}/artifacts/${params.artifactId}?grant=${grantId}`,
       expiresAt: expiresAt.toISOString(),
     };
   }

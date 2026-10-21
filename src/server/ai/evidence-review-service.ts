@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { getDb, DbClient } from '@/server/db';
-import { investigationsTable, synthesisExplanationsTable } from '@/server/db/schema';
+import { investigationsTable, targetsTable, synthesisExplanationsTable } from '@/server/db/schema';
 import type { PairAssessmentResult } from '@/server/verification/types';
 import type { FinalizedCaptureReference } from '@/contracts/evidence';
 import type { VerificationAssertionResult } from '@/contracts/observations';
@@ -58,7 +58,7 @@ export class EvidenceReviewService {
             ? 'FAILED_ASSERTIONS'
             : 'PASSED_ASSERTIONS') as 'PASSED_ASSERTIONS' | 'FAILED_ASSERTIONS' | 'BLOCKED_ERROR' | 'INVALID_PRECONDITIONS',
           failureSignatureMatched: att1.finding === 'REPORTED_FAILURE',
-          executionDurationMs: params.attempt1DurationMs ?? 4200,
+          executionDurationMs: params.attempt1DurationMs ?? 0,
           isValid: att1.validity === 'VALID',
           assertionsEvaluated: (att1.evaluations || []).map((e) => ({
             predicateId: e.assertionId,
@@ -73,10 +73,10 @@ export class EvidenceReviewService {
         }
       : {
           attemptNumber: 1 as const,
-          status: 'FAILED_ASSERTIONS' as const,
-          failureSignatureMatched: true,
-          executionDurationMs: params.attempt1DurationMs ?? 4200,
-          isValid: true,
+          status: 'BLOCKED_ERROR' as const,
+          failureSignatureMatched: false,
+          executionDurationMs: params.attempt1DurationMs ?? 0,
+          isValid: false,
           assertionsEvaluated: (params.assertions || []).map((a) => ({
             predicateId: a.assertionId,
             predicateDescription: `Assertion ${a.assertionId}`,
@@ -122,7 +122,7 @@ export class EvidenceReviewService {
         attemptNumber: 2 as const,
         status: att2Status,
         failureSignatureMatched: att2.finding === 'REPORTED_FAILURE',
-        executionDurationMs: params.attempt2DurationMs ?? 3800,
+        executionDurationMs: params.attempt2DurationMs ?? 0,
         isValid: att2.validity === 'VALID',
         assertionsEvaluated: att2.evaluations.map((e) => ({
           predicateId: e.assertionId,
@@ -148,7 +148,15 @@ export class EvidenceReviewService {
         }
       : undefined;
 
-    const testedEnvironment = params.testedEnvironment || inv.targetId;
+    let testedEnvironment = params.testedEnvironment;
+    if (!testedEnvironment) {
+      const [target] = await db
+        .select()
+        .from(targetsTable)
+        .where(eq(targetsTable.id, inv.targetId))
+        .limit(1);
+      testedEnvironment = target?.baseUrl || target?.name || inv.targetId;
+    }
     const targetBuildId = params.targetBuildId || resetReceipt?.readback?.targetBuildId;
 
     // 2. Delegate synthesis to EvidenceReviewAgentPort

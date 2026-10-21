@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import type { ClientSafeTargetProfile, SafeTargetProfile } from '@/contracts/targets';
 import { SYNTHETIC_TARGETS } from '@/dev/fixtures';
-import { fetchTargets, submitBugReport } from '@/features/investigations/api-client';
+import { fetchTargets, submitBugReport, requestPlanning } from '@/features/investigations/api-client';
 
 export default function NewReportPage() {
   const router = useRouter();
@@ -80,9 +80,10 @@ export default function NewReportPage() {
     const payload = {
       targetId: formData.targetId,
       title: formData.title.trim(),
+      rawDescription: formData.bugDescription.trim(),
       bugDescription: formData.bugDescription.trim(),
-      expectedBehavior: formData.expectedBehavior.trim(),
-      observedBehavior: formData.observedBehavior.trim(),
+      expectedBehavior: formData.expectedBehavior.trim() || undefined,
+      observedBehavior: formData.observedBehavior.trim() || undefined,
       suspectedSteps: stepsArray && stepsArray.length > 0 ? stepsArray : undefined,
       browserEnvironment: formData.browserEnvironment.trim() || undefined,
       buildVersion: formData.buildVersion.trim() || undefined,
@@ -90,21 +91,30 @@ export default function NewReportPage() {
 
     setIsSubmitting(true);
     const result = await submitBugReport(payload);
-    setIsSubmitting(false);
 
     if (result.success) {
       // Backend returned valid report and investigation link
       const targetInvId = result.data.investigationId;
       if (targetInvId) {
-        if ('requiresClarification' in result.data && Boolean(result.data.requiresClarification)) {
+        // Trigger planning explicitly to transition state
+        const planResult = await requestPlanning(targetInvId);
+        setIsSubmitting(false);
+
+        if (planResult.success && planResult.data.status === 'CLARIFICATION_NEEDED') {
+          router.push(`/investigations/${targetInvId}/clarify`);
+        } else if (planResult.success && (planResult.data.status === 'PROPOSAL_READY' || planResult.data.status === 'EXPERIMENT_PROPOSED')) {
+          router.push(`/investigations/${targetInvId}/approve`);
+        } else if ('requiresClarification' in result.data && Boolean(result.data.requiresClarification)) {
           router.push(`/investigations/${targetInvId}/clarify`);
         } else {
           router.push(`/investigations/${targetInvId}/approve`);
         }
       } else {
+        setIsSubmitting(false);
         router.push(`/investigations/${result.data.id}`);
       }
     } else {
+      setIsSubmitting(false);
       // API error (validation, 401 unauthenticated, etc.)
       setSubmissionError(
         `Submission failed (${result.error.code}): ${result.error.message}`
@@ -254,30 +264,28 @@ export default function NewReportPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label htmlFor="report-expected" className="block text-xs font-semibold text-brand-navy mb-1.5">
-                  Expected Correct Behavior *
+                  Expected Correct Behavior (Optional)
                 </label>
                 <Textarea
                   id="report-expected"
                   rows={2}
-                  placeholder="What should have happened according to business logic?"
+                  placeholder="What should have happened according to business logic? (If known)"
                   value={formData.expectedBehavior}
                   onChange={(e) => setFormData({ ...formData, expectedBehavior: e.target.value })}
-                  required
                   disabled={isSubmitting}
                 />
               </div>
 
               <div>
                 <label htmlFor="report-observed" className="block text-xs font-semibold text-brand-navy mb-1.5">
-                  Observed Erroneous Behavior *
+                  Observed Erroneous Behavior (Optional)
                 </label>
                 <Textarea
                   id="report-observed"
                   rows={2}
-                  placeholder="What actual failure or visual defect was observed?"
+                  placeholder="What actual failure or visual defect was observed? (If known)"
                   value={formData.observedBehavior}
                   onChange={(e) => setFormData({ ...formData, observedBehavior: e.target.value })}
-                  required
                   disabled={isSubmitting}
                 />
               </div>

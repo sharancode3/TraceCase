@@ -30,8 +30,10 @@ import {
   getLifecyclePresentation,
   getVerdictPresentation,
   getEvidencePresentation,
+  type EvidenceReadinessStatus,
 } from '@/contracts/status';
 import type { InvestigationSnapshot } from '@/contracts/investigations';
+import type { EvidenceManifest, ArtifactKind, StorageTier } from '@/contracts/evidence';
 import {
   SYNTHETIC_INVESTIGATIONS_CATALOG,
   SYNTHETIC_PLAN_V1,
@@ -47,11 +49,18 @@ import {
   type ConsoleLogEntry,
   type NetworkTraceEntry,
 } from '@/features/investigations/evidence-presentation';
-import { fetchInvestigation } from '@/features/investigations/api-client';
+import {
+  fetchInvestigation,
+  fetchPlan,
+  fetchArtifacts,
+  type ArtifactItem,
+} from '@/features/investigations/api-client';
+import type { AuthoritativeExperimentPlan } from '@/contracts/planning';
 
 export default function InvestigationDetailPage() {
   const params = useParams();
   const id = params?.id as string;
+  const isPreviewId = id?.startsWith('0') || id?.includes('preview');
 
   const [activeTab, setActiveTab] = React.useState<'video' | 'console' | 'network'>('video');
   const [consoleSearch, setConsoleSearch] = React.useState('');
@@ -62,43 +71,78 @@ export default function InvestigationDetailPage() {
   const [videoLoadError, setVideoLoadError] = React.useState(false);
 
   // Investigation lookup state
-  const [investigation, setInvestigation] = React.useState<InvestigationSnapshot | null>(() => {
-    return SYNTHETIC_INVESTIGATIONS_CATALOG.find((inv) => inv.id === id) || null;
-  });
-  const [isLoading, setIsLoading] = React.useState(!investigation);
+  const [investigation, setInvestigation] = React.useState<InvestigationSnapshot | null>(null);
+  const [realPlan, setRealPlan] = React.useState<AuthoritativeExperimentPlan | null>(null);
+  const [realArtifacts, setRealArtifacts] = React.useState<ArtifactItem[]>([]);
+  const [isLoading, setIsLoading] = React.useState(true);
   const [notFound, setNotFound] = React.useState(false);
 
   React.useEffect(() => {
-    if (investigation) return;
     let isMounted = true;
     async function load() {
       setIsLoading(true);
-      const res = await fetchInvestigation(id);
+      const [invRes, planRes, artRes] = await Promise.all([
+        fetchInvestigation(id),
+        fetchPlan(id),
+        fetchArtifacts(id),
+      ]);
       if (!isMounted) return;
-      if (res.success && res.data) {
-        setInvestigation(res.data);
+
+      if (invRes.success && invRes.data) {
+        setInvestigation(invRes.data);
+      } else if (isPreviewId || (invRes.success && invRes.mode === 'preview_synthetic')) {
+        const found = SYNTHETIC_INVESTIGATIONS_CATALOG.find((inv) => inv.id === id) || null;
+        if (found) {
+          setInvestigation(found);
+        } else {
+          setNotFound(true);
+        }
       } else {
         setNotFound(true);
       }
+
+      if (planRes.success && planRes.data?.data) {
+        setRealPlan(planRes.data.data);
+      }
+
+      if (artRes.success && artRes.data?.artifacts) {
+        setRealArtifacts(artRes.data.artifacts);
+      }
+
       setIsLoading(false);
     }
     load();
     return () => {
       isMounted = false;
     };
-  }, [id, investigation]);
+  }, [id, isPreviewId]);
 
   // Telemetry and manifests
   const isTC1 = investigation?.id === SYNTHETIC_EVIDENCE_MANIFEST_TC1.investigationId;
   const manifest = isTC1 ? SYNTHETIC_EVIDENCE_MANIFEST_TC1 : null;
-  const videoArtifact = manifest?.artifacts.find((a) => a.kind === 'VIDEO_RECORDING');
+  const syntheticVideoArtifact = manifest?.artifacts.find((a) => a.kind === 'VIDEO_RECORDING');
+  const realVideoArtifact = realArtifacts.find((a) => a.kind === 'VIDEO_RECORDING');
+  const videoArtifact = realVideoArtifact
+    ? {
+        id: realVideoArtifact.id,
+        kind: realVideoArtifact.kind,
+        storageTier: realVideoArtifact.storageTier,
+        publicUrl: realVideoArtifact.url,
+        fileName: `recording-${realVideoArtifact.id.slice(0, 8)}.webm`,
+        sizeBytes: realVideoArtifact.sizeBytes,
+        sha256Checksum: realVideoArtifact.sha256Checksum,
+        isEligibleForSharing: realVideoArtifact.isEligibleForSharing,
+      }
+    : syntheticVideoArtifact;
+
   const isQuarantined = investigation?.evidenceReadiness === 'QUARANTINED_LEAK_DETECTED';
   const hasPlayableVideo = Boolean(
-    manifest?.hasVideo &&
     videoArtifact?.publicUrl &&
     !videoLoadError &&
     !isQuarantined &&
-    videoArtifact?.storageTier !== 'RESTRICTED_RAW'
+    videoArtifact.storageTier !== 'RESTRICTED_RAW' &&
+    investigation?.evidenceReadiness !== 'PENDING_GENERATION' &&
+    investigation?.evidenceReadiness !== 'PACKAGING_IN_PROGRESS'
   );
 
   const consoleLogs: ConsoleLogEntry[] = React.useMemo(() => {
@@ -130,10 +174,38 @@ export default function InvestigationDetailPage() {
     if (!investigation) return;
     setIsExporting(true);
     try {
+      const planToUse = realPlan || SYNTHETIC_PLAN_V1;
+      const manifestToUse: EvidenceManifest | null = realArtifacts.length > 0 ? {
+        investigationId: id,
+        readinessStatus: (investigation.evidenceReadiness || 'PUBLIC_SAFE_READY') as EvidenceReadinessStatus,
+        triadComplete: realArtifacts.some((a) => a.kind === 'VIDEO_RECORDING') &&
+                       realArtifacts.some((a) => a.kind === 'CONSOLE_LOG') &&
+                       realArtifacts.some((a) => a.kind === 'NETWORK_TRACE'),
+        hasVideo: realArtifacts.some((a) => a.kind === 'VIDEO_RECORDING'),
+        hasConsoleLog: realArtifacts.some((a) => a.kind === 'CONSOLE_LOG'),
+        hasNetworkTrace: realArtifacts.some((a) => a.kind === 'NETWORK_TRACE'),
+        secretScrubbingVerified: realArtifacts.every((a) => a.isEligibleForSharing),
+        generatedAt: new Date().toISOString(),
+        artifacts: realArtifacts.map((a) => ({
+          id: a.id,
+          investigationId: id,
+          attemptNumber: a.attemptNumber ?? 1,
+          kind: a.kind as ArtifactKind,
+          storageTier: a.storageTier as StorageTier,
+          fileName: `artifact-${a.id.slice(0, 8)}`,
+          mimeType: a.mimeType,
+          sizeBytes: a.sizeBytes,
+          sha256Checksum: a.sha256Checksum,
+          redactionApplied: Boolean(a.redactionApplied),
+          publicUrl: a.url,
+          createdAt: a.createdAt,
+        })),
+      } : manifest;
+
       const pkg = buildReproductionPackage({
         investigation,
-        plan: SYNTHETIC_PLAN_V1,
-        manifest,
+        plan: planToUse,
+        manifest: manifestToUse,
       });
 
       const blob = new Blob([JSON.stringify(pkg, null, 2)], { type: 'application/json' });

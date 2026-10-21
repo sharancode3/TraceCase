@@ -313,8 +313,9 @@ describe('Three-Person Integrated Lifecycle Journey (P1 + P2 + P3)', () => {
       status: 200,
     });
 
-    // Valid video buffer (>= 10 KB per VES-EVD-002)
+    // Valid video buffer (>= 10 KB per VES-EVD-002 with WebM EBML header)
     const validVideoBuffer = Buffer.alloc(MIN_VIDEO_BYTE_SIZE + 2048, 0x5a);
+    validVideoBuffer.set([0x1a, 0x45, 0xdf, 0xa3], 0);
 
     await fs.writeFile(consoleFile, rawConsole, 'utf-8');
     await fs.writeFile(networkFile, rawNetwork, 'utf-8');
@@ -394,13 +395,14 @@ describe('Three-Person Integrated Lifecycle Journey (P1 + P2 + P3)', () => {
     expect(networkRes?.publishedTier).toBe('PUBLIC_SAFE');
     expect(networkRes?.isEligibleForSharing).toBe(true);
 
-    // SEC-01 Invariant: video recording is strictly retained in RESTRICTED_RAW
+    // SEC-01 Invariant: video recording is strictly quarantined in RESTRICTED_RAW pending privacy review
     const videoRes = processingResults.find((r) => r.kind === 'VIDEO_RECORDING');
     expect(videoRes?.publishedTier).toBe('RESTRICTED_RAW');
-    expect(videoRes?.isEligibleForSharing).toBe(true); // Shareable via authenticated retrieval
+    expect(videoRes?.isEligibleForSharing).toBe(false); // Quarantined pending privacy review (SEC-01)
+    expect(videoRes?.quarantineReason).toBe('VIDEO_PENDING_PRIVACY_REVIEW');
 
     // Verify sanitized console in storage does NOT contain raw secret
-    const safeConsoleKey = `investigations/${investigationId}/attempts/1/attempt_1_console.log`;
+    const safeConsoleKey = `investigations/${investigationId}/attempts/1/attempt_1_console_${consoleCaptureId}.log`;
     const storedSafeConsole = await storageDriver.getArtifact(safeConsoleKey, 'PUBLIC_SAFE');
     expect(storedSafeConsole).not.toBeNull();
     const safeConsoleText = storedSafeConsole?.data.toString('utf-8') || '';
@@ -408,7 +410,7 @@ describe('Three-Person Integrated Lifecycle Journey (P1 + P2 + P3)', () => {
     expect(safeConsoleText).toContain('[REDACTED_BEARER_TOKEN]');
 
     // Verify raw console in RESTRICTED_RAW still holds original for auditing
-    const rawConsoleKey = `investigations/${investigationId}/attempts/1/attempt_1_raw_console.log`;
+    const rawConsoleKey = `investigations/${investigationId}/attempts/1/attempt_1_raw_console_${consoleCaptureId}.log`;
     const storedRawConsole = await storageDriver.getArtifact(rawConsoleKey, 'RESTRICTED_RAW');
     expect(storedRawConsole).not.toBeNull();
     expect(storedRawConsole?.data.toString('utf-8')).toContain('super-secret-jwt-token-987654');

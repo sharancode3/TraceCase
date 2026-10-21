@@ -12,6 +12,7 @@ import { AnswerClarificationCommandSchema } from '@/contracts/clarification';
 import {
   fetchClarifications,
   answerClarification,
+  requestPlanning,
   type ClarificationQuestionItem,
 } from '@/features/investigations/api-client';
 
@@ -19,10 +20,9 @@ export default function ClarificationPage() {
   const params = useParams();
   const router = useRouter();
   const id = params?.id as string;
+  const isPreviewId = id?.startsWith('0') || id?.includes('preview');
 
-  const [questions, setQuestions] = React.useState<ClarificationQuestionItem[]>(
-    SYNTHETIC_CLARIFICATION_QUESTIONS as unknown as ClarificationQuestionItem[]
-  );
+  const [questions, setQuestions] = React.useState<ClarificationQuestionItem[]>([]);
   const [selectedAnswers, setSelectedAnswers] = React.useState<Record<string, string>>({});
   const [validationErrors, setValidationErrors] = React.useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = React.useState(true);
@@ -39,8 +39,10 @@ export default function ClarificationPage() {
 
       if (res.success && res.data.questions.length > 0) {
         setQuestions(res.data.questions);
-      } else {
+      } else if (isPreviewId || (res.success && res.mode === 'preview_synthetic')) {
         setQuestions(SYNTHETIC_CLARIFICATION_QUESTIONS as unknown as ClarificationQuestionItem[]);
+      } else {
+        setQuestions([]);
       }
       setIsLoading(false);
     }
@@ -48,7 +50,7 @@ export default function ClarificationPage() {
     return () => {
       isMounted = false;
     };
-  }, [id]);
+  }, [id, isPreviewId]);
 
   const handleSelectOption = (questionId: string, option: string) => {
     setSelectedAnswers((prev) => ({ ...prev, [questionId]: option }));
@@ -110,11 +112,27 @@ export default function ClarificationPage() {
       }
     }
 
-    setIsSubmitting(false);
-
     if (allSucceeded) {
-      setSubmitted(true);
-      router.push(`/investigations/${id}/approve`);
+      // Trigger experiment planning with answered clarifications to transition workflow state
+      const planRes = await requestPlanning(id);
+      setIsSubmitting(false);
+
+      if (planRes.success && (planRes.data.status === 'PROPOSAL_READY' || planRes.data.status === 'EXPERIMENT_PROPOSED')) {
+        setSubmitted(true);
+        router.push(`/investigations/${id}/approve`);
+      } else if (planRes.success && planRes.data.status === 'CLARIFICATION_NEEDED') {
+        // Additional clarification required
+        const nextQ = await fetchClarifications(id);
+        if (nextQ.success && nextQ.data.questions.length > 0) {
+          setQuestions(nextQ.data.questions);
+          setSelectedAnswers({});
+        }
+      } else {
+        setSubmitted(true);
+        router.push(`/investigations/${id}/approve`);
+      }
+    } else {
+      setIsSubmitting(false);
     }
   };
 
@@ -172,6 +190,22 @@ export default function ClarificationPage() {
           <Loader2 className="w-6 h-6 animate-spin text-cobalt-action" />
           <span>Loading clarification questions...</span>
         </div>
+      ) : questions.length === 0 ? (
+        <Card className="p-8 text-center space-y-4">
+          <Check className="w-10 h-10 text-emerald-600 mx-auto" />
+          <h3 className="text-base font-bold text-brand-navy">No Pending Clarifications</h3>
+          <p className="text-xs text-brand-muted max-w-md mx-auto">
+            This investigation does not currently require clarification. You may proceed directly to the plan review and approval gate.
+          </p>
+          <div className="pt-2">
+            <Link href={`/investigations/${id}/approve`}>
+              <Button variant="primary" className="space-x-1.5">
+                <span>Proceed to Plan Review</span>
+                <ArrowRight className="w-4 h-4" />
+              </Button>
+            </Link>
+          </div>
+        </Card>
       ) : (
       <form onSubmit={handleSubmit} className="space-y-4">
         {questions.map((q, idx) => {

@@ -379,12 +379,23 @@ export class InvestigationClaimHandler {
                       assessedAt: pairAssessment.assessedAt.toISOString(),
                     };
 
+                    const att1Duration = (att1?.completedAt && att1?.startedAt)
+                      ? att1.completedAt.getTime() - att1.startedAt.getTime()
+                      : undefined;
+                    const att2Duration = (att2?.completedAt && att2?.startedAt)
+                      ? att2.completedAt.getTime() - att2.startedAt.getTime()
+                      : undefined;
+
                     await evidenceReviewService.generateExplanation({
                       investigationId: data.investigationId,
                       pairAssessment: pairAssessmentResult,
                       assertions: verifiedAssertions,
                       eligibleEvidence,
                       agent: reviewAgent,
+                      testedEnvironment: safeTarget.baseUrl || safeTarget.environment || safeTarget.name,
+                      targetBuildId: reset?.observedStateHash || undefined,
+                      attempt1DurationMs: att1Duration,
+                      attempt2DurationMs: att2Duration,
                     });
                   }
                 } catch {

@@ -1,6 +1,7 @@
 import type { Page, ConsoleMessage, Request, Response } from 'playwright';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { sanitizeText as sharedSanitizeText, sanitizeUrl as sharedSanitizeUrl } from '@/server/evidence/sanitizer';
 
 export interface CapturedConsoleEntry {
   level: 'log' | 'warn' | 'error' | 'info';
@@ -48,11 +49,7 @@ export class EvidenceCollector {
    * Sanitizes sensitive credentials, tokens, and secrets from recorded log text.
    */
   private sanitizeText(raw: string): string {
-    return raw
-      .replace(/bearer\s+[a-zA-Z0-9_\-\.]{10,}/gi, 'Bearer [REDACTED]')
-      .replace(/(password|secret|token|api_key|apiKey)=([^&\s]+)/gi, '$1=[REDACTED]')
-      .replace(/basic\s+[a-zA-Z0-9+/=]{10,}/gi, 'Basic [REDACTED]')
-      .slice(0, 500);
+    return sharedSanitizeText(raw, { maxSizeBytes: 2048 }).safeContent;
   }
 
   /**
@@ -96,7 +93,7 @@ export class EvidenceCollector {
       }
 
       const reqId = `${pageId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-      const safeUrl = this.sanitizeText(req.url());
+      const safeUrl = sharedSanitizeUrl(req.url());
 
       const entry: CapturedNetworkEntry = {
         requestId: reqId,

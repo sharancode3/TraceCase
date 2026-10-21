@@ -377,6 +377,7 @@ export const evidenceArtifactsTable = pgTable(
   'evidence_artifacts',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    rawArtifactId: uuid('raw_artifact_id'),
     investigationId: uuid('investigation_id').notNull().references(() => investigationsTable.id),
     attemptNumber: integer('attempt_number'),
     kind: text('kind').notNull(),
@@ -397,6 +398,7 @@ export const evidenceArtifactsTable = pgTable(
     index('evidence_artifacts_investigation_id_idx').on(table.investigationId),
     index('evidence_artifacts_kind_idx').on(table.kind),
     index('evidence_artifacts_storage_tier_idx').on(table.storageTier),
+    index('evidence_artifacts_raw_artifact_id_idx').on(table.rawArtifactId),
   ]
 );
 
