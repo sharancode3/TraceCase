@@ -259,9 +259,18 @@ export class TwoAttemptController {
           });
 
           const observed = preflight.observedBaseline as Record<string, unknown> | undefined;
-          const isExplicitlyDirty = observed?.isDirty === true || observed?.status === 'dirty' || observed?.error !== undefined;
+          const isExplicitlyDirty =
+            observed?.isDirty === true ||
+            observed?.status === 'dirty' ||
+            observed?.status === 'unhealthy' ||
+            observed?.ready === false ||
+            observed?.error !== undefined;
 
-          if (isExplicitlyDirty) {
+          const hasEndpointFailure = preflight.discrepancies.some(
+            (d) => d.includes('http_error') || d.includes('out of scope') || d.includes('malformed')
+          );
+
+          if (isExplicitlyDirty || hasEndpointFailure) {
             att1PreconditionsMet = false;
           } else if (Object.keys(baselineForComparison).length === 0 && observed) {
             baselineForComparison = observed;

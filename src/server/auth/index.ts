@@ -57,52 +57,58 @@ export async function resolvePrincipal(req: Request): Promise<Principal | null> 
     return customPrincipalResolver(req);
   }
 
-  const authHeader = req.headers.get('authorization');
-  if (!authHeader) {
-    return null;
-  }
-
   // Reject synthetic preview headers on live API endpoints
   if (req.headers.get('x-tracecase-preview') === 'true') {
     return null;
   }
 
-  // Check for bearer token
-  if (authHeader.startsWith('Bearer ')) {
-    const token = authHeader.slice(7).trim();
-    if (!token) return null;
-
-    // Cryptographic JWT verification via jose
-    const claims = await verifyJwtToken(token);
-
-    // If database persistence is configured, resolve/create internal DB principal
-    if (isDbConfigured()) {
-      try {
-        const principalRecord = await principalsRepository.findOrCreateByExternalAuth({
-          externalIssuer: claims.issuer,
-          externalSubject: claims.subject,
-          email: claims.email,
-          role: claims.roles?.includes('admin') ? 'admin' : 'operator',
-        });
-        return {
-          id: principalRecord.id,
-          email: principalRecord.email ?? undefined,
-          role: principalRecord.role as 'operator' | 'admin',
-          externalIssuer: principalRecord.externalIssuer,
-          externalSubject: principalRecord.externalSubject,
-        };
-      } catch (dbError) {
-        throw new AuthenticationError(
-          `Unable to resolve principal in database: ${dbError instanceof Error ? dbError.message : 'Database error'}`
-        );
+  let token: string | null = null;
+  const authHeader = req.headers.get('authorization');
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.slice(7).trim();
+  } else {
+    // Check for same-origin session cookie
+    const cookieHeader = req.headers.get('cookie');
+    if (cookieHeader) {
+      const match = cookieHeader.match(/(?:^|;\s*)tc_session=([^;]+)/);
+      if (match) {
+        token = decodeURIComponent(match[1]).trim();
       }
     }
-
-    // Fail closed: without database persistence configured, authenticated mutations are unavailable
-    throw new AuthenticationError('Persistence is not configured; cannot establish internal principal authority.');
   }
 
-  return null;
+  if (!token) {
+    return null;
+  }
+
+  // Cryptographic JWT verification via jose
+  const claims = await verifyJwtToken(token);
+
+  // If database persistence is configured, resolve/create internal DB principal
+  if (isDbConfigured()) {
+    try {
+      const principalRecord = await principalsRepository.findOrCreateByExternalAuth({
+        externalIssuer: claims.issuer,
+        externalSubject: claims.subject,
+        email: claims.email,
+        role: claims.roles?.includes('admin') ? 'admin' : 'operator',
+      });
+      return {
+        id: principalRecord.id,
+        email: principalRecord.email ?? undefined,
+        role: principalRecord.role as 'operator' | 'admin',
+        externalIssuer: principalRecord.externalIssuer,
+        externalSubject: principalRecord.externalSubject,
+      };
+    } catch (dbError) {
+      throw new AuthenticationError(
+        `Unable to resolve principal in database: ${dbError instanceof Error ? dbError.message : 'Database error'}`
+      );
+    }
+  }
+
+  // Fail closed: without database persistence configured, authenticated mutations are unavailable
+  throw new AuthenticationError('Persistence is not configured; cannot establish internal principal authority.');
 }
 
 /**

@@ -34,6 +34,10 @@ import {
   getEvidencePresentation,
 } from '@/contracts/status';
 import type { InvestigationSnapshot } from '@/contracts/investigations';
+import {
+  cancelInvestigationExecution,
+  fetchInvestigationEvents,
+} from '@/features/investigations/api-client';
 
 const SIMULATED_STAGES = [
   {
@@ -143,8 +147,32 @@ export default function LiveInvestigationProgressPage() {
   const [pollerError, setPollerError] = React.useState<string | null>(null);
   const [isTerminal, setIsTerminal] = React.useState(false);
 
-  // Cancellation Modal/Notice State
-  const [showCancellationNotice, setShowCancellationNotice] = React.useState(false);
+  // Cancellation State
+  const [isCancelling, setIsCancelling] = React.useState(false);
+  const [cancellationNotice, setCancellationNotice] = React.useState<string | null>(null);
+  const [cancelError, setCancelError] = React.useState<string | null>(null);
+
+  const handleCancelExecution = async () => {
+    if (!confirm('Are you sure you want to cancel execution of this investigation?')) {
+      return;
+    }
+    setIsCancelling(true);
+    setCancelError(null);
+    const result = await cancelInvestigationExecution(id, {
+      investigationId: id,
+      cancellationReason: 'Operator cancelled from live progress view',
+    });
+    setIsCancelling(false);
+
+    if (result.success) {
+      setCancellationNotice(`Execution successfully cancelled at ${new Date(result.data.cancelledAt).toLocaleTimeString()}.`);
+      setIsTerminal(true);
+      setIsPollerActive(false);
+      setLiveSnapshot((prev) => prev ? { ...prev, lifecycleStatus: 'CANCELLED' } : null);
+    } else {
+      setCancelError(`Cancellation failed (${result.error.code}): ${result.error.message}`);
+    }
+  };
 
   // Reducer Simulation State
   const [currentStep, setCurrentStep] = React.useState(0);
@@ -187,8 +215,24 @@ export default function LiveInvestigationProgressPage() {
     poller.start();
     setIsPollerActive(true);
 
+    let lastEventId: string | undefined;
+    const eventInterval = setInterval(async () => {
+      try {
+        const evRes = await fetchInvestigationEvents(id, lastEventId);
+        if (evRes.success && evRes.data.events.length > 0) {
+          for (const ev of evRes.data.events) {
+            lastEventId = ev.eventId;
+            setProgressState((prev) => reduceProgressEvent(prev, ev));
+          }
+        }
+      } catch {
+        // Event stream poll fallback
+      }
+    }, 2500);
+
     return () => {
       poller.stop();
+      clearInterval(eventInterval);
       setIsPollerActive(false);
     };
   }, [id]);
@@ -239,11 +283,16 @@ export default function LiveInvestigationProgressPage() {
           <Button
             size="sm"
             variant="outline"
-            onClick={() => setShowCancellationNotice(true)}
+            onClick={handleCancelExecution}
+            disabled={isCancelling || isTerminal}
             className="text-red-700 border-red-200 hover:bg-red-50 hover:text-red-800 space-x-1.5"
           >
-            <XCircle className="w-3.5 h-3.5" />
-            <span>Cancel Run</span>
+            {isCancelling ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <XCircle className="w-3.5 h-3.5" />
+            )}
+            <span>{isCancelling ? 'Cancelling...' : 'Cancel Run'}</span>
           </Button>
 
           <Link href={`/investigations/${id}`}>
@@ -255,28 +304,43 @@ export default function LiveInvestigationProgressPage() {
         </div>
       </div>
 
-      {/* Cancellation Blocker Notice */}
-      {showCancellationNotice && (
+      {/* Cancellation Notice */}
+      {cancellationNotice && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="p-4 rounded-control bg-amber-50 border border-amber-300 text-xs text-amber-900 flex items-center justify-between"
+        >
+          <div className="flex items-center space-x-2 font-semibold">
+            <CheckCircle2 className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>{cancellationNotice}</span>
+          </div>
+          <button
+            onClick={() => setCancellationNotice(null)}
+            className="text-amber-800 font-semibold hover:underline"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* Cancellation Error */}
+      {cancelError && (
         <div
           role="alert"
           aria-live="assertive"
-          className="p-4 rounded-control bg-status-confirmedBg border border-red-300 text-xs text-status-confirmed space-y-2"
+          className="p-4 rounded-control bg-red-50 border border-red-300 text-xs text-red-900 flex items-center justify-between"
         >
-          <div className="flex items-start justify-between">
-            <div className="flex items-center space-x-2 font-semibold">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>Cancellation Unavailable (Person 1 Backend Dependency)</span>
-            </div>
-            <button
-              onClick={() => setShowCancellationNotice(false)}
-              className="text-status-confirmed font-semibold hover:underline"
-            >
-              Dismiss
-            </button>
+          <div className="flex items-center space-x-2 font-semibold">
+            <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+            <span>{cancelError}</span>
           </div>
-          <p className="text-[11px] text-neutral-800 leading-relaxed">
-            The worker cancellation endpoint <code className="font-mono bg-white px-1 py-0.5 rounded border border-red-200">POST /api/v1/investigations/[id]/cancel</code> is pending implementation by Person 1 (P1-05). To prevent desynchronizing the live orchestrator, no fake cancellation was dispatched and local state remains untouched.
-          </p>
+          <button
+            onClick={() => setCancelError(null)}
+            className="text-red-800 font-semibold hover:underline"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 

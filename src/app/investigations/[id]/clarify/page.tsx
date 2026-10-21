@@ -3,22 +3,52 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { HelpCircle, Check, ArrowRight, ArrowLeft, AlertCircle, Info, Sparkles } from 'lucide-react';
+import { HelpCircle, Check, ArrowRight, ArrowLeft, AlertCircle, Info, Sparkles, Loader2 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { SYNTHETIC_CLARIFICATION_QUESTIONS } from '@/dev/fixtures';
 import { AnswerClarificationCommandSchema } from '@/contracts/clarification';
+import {
+  fetchClarifications,
+  answerClarification,
+  type ClarificationQuestionItem,
+} from '@/features/investigations/api-client';
 
 export default function ClarificationPage() {
   const params = useParams();
   const router = useRouter();
   const id = params?.id as string;
 
-  const [questions] = React.useState(SYNTHETIC_CLARIFICATION_QUESTIONS);
+  const [questions, setQuestions] = React.useState<ClarificationQuestionItem[]>(
+    SYNTHETIC_CLARIFICATION_QUESTIONS as unknown as ClarificationQuestionItem[]
+  );
   const [selectedAnswers, setSelectedAnswers] = React.useState<Record<string, string>>({});
   const [validationErrors, setValidationErrors] = React.useState<Record<string, string>>({});
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [submitError, setSubmitError] = React.useState<string | null>(null);
   const [submitted, setSubmitted] = React.useState(false);
+
+  React.useEffect(() => {
+    let isMounted = true;
+    async function load() {
+      setIsLoading(true);
+      const res = await fetchClarifications(id);
+      if (!isMounted) return;
+
+      if (res.success && res.data.questions.length > 0) {
+        setQuestions(res.data.questions);
+      } else {
+        setQuestions(SYNTHETIC_CLARIFICATION_QUESTIONS as unknown as ClarificationQuestionItem[]);
+      }
+      setIsLoading(false);
+    }
+    load();
+    return () => {
+      isMounted = false;
+    };
+  }, [id]);
 
   const handleSelectOption = (questionId: string, option: string) => {
     setSelectedAnswers((prev) => ({ ...prev, [questionId]: option }));
@@ -38,8 +68,9 @@ export default function ClarificationPage() {
     });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitError(null);
     const errors: Record<string, string> = {};
 
     // Validate each question's answer against AnswerClarificationCommandSchema
@@ -60,10 +91,31 @@ export default function ClarificationPage() {
       return;
     }
 
-    setSubmitted(true);
-    setTimeout(() => {
+    setIsSubmitting(true);
+    let allSucceeded = true;
+
+    for (const q of questions) {
+      const answer = (selectedAnswers[q.id] || (q.isAnswered ? q.answerText || '' : '')).trim();
+      if (answer && !q.isAnswered) {
+        const res = await answerClarification(id, {
+          questionId: q.id,
+          answerText: answer,
+        });
+
+        if (!res.success) {
+          allSucceeded = false;
+          setSubmitError(`Failed to submit answer for question "${q.questionText}": ${res.error.message}`);
+          break;
+        }
+      }
+    }
+
+    setIsSubmitting(false);
+
+    if (allSucceeded) {
+      setSubmitted(true);
       router.push(`/investigations/${id}/approve`);
-    }, 600);
+    }
   };
 
   return (
@@ -96,17 +148,31 @@ export default function ClarificationPage() {
         </div>
       </div>
 
-      {/* Backend Dependency Status Notice */}
+      {/* Submission Error Banner */}
+      {submitError && (
+        <div className="p-4 rounded-control bg-amber-50 border border-amber-300 text-xs text-amber-900 flex items-center space-x-2">
+          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+          <span>{submitError}</span>
+        </div>
+      )}
+
+      {/* Backend Integration Notice */}
       <div className="p-4 rounded-control bg-lavender-surface border border-cobalt-action/30 text-xs text-brand-deepPurple space-y-1.5">
         <div className="font-semibold flex items-center space-x-1.5 text-cobalt-action">
           <Info className="w-4 h-4 shrink-0" />
-          <span>Backend Clarification API Status (P1-02 / P2-04 Integration Pending)</span>
+          <span>Integrated Clarification Intake</span>
         </div>
         <p className="text-[11px] leading-relaxed text-brand-navy/80">
-          The autonomous AI clarification engine and persistent clarification API endpoints are currently pending Person 1 / Person 2 backend integration. Responses entered below are validated locally against canonical contract <code className="font-mono bg-white/70 px-1 py-0.5 rounded">AnswerClarificationCommandSchema</code> and staged for preview workflow testing.
+          Clarification answers are validated against <code className="font-mono bg-white/70 px-1 py-0.5 rounded">AnswerClarificationCommandSchema</code> and submitted directly to the investigation workflow engine.
         </p>
       </div>
 
+      {isLoading ? (
+        <div className="p-12 text-center text-xs text-brand-muted flex flex-col items-center justify-center space-y-2">
+          <Loader2 className="w-6 h-6 animate-spin text-cobalt-action" />
+          <span>Loading clarification questions...</span>
+        </div>
+      ) : (
       <form onSubmit={handleSubmit} className="space-y-4">
         {questions.map((q, idx) => {
           const currentAnswer = selectedAnswers[q.id] !== undefined
@@ -122,8 +188,8 @@ export default function ClarificationPage() {
                   <span>Clarification Question #{idx + 1}</span>
                 </div>
                 <CardTitle className="text-base mt-1">{q.questionText}</CardTitle>
-                {q.contextExplanation && (
-                  <CardDescription>{q.contextExplanation}</CardDescription>
+                {q.explanation && (
+                  <CardDescription>{q.explanation}</CardDescription>
                 )}
               </CardHeader>
               <CardContent className="space-y-3">
@@ -174,12 +240,14 @@ export default function ClarificationPage() {
           <span className="text-[11px] text-brand-muted">
             Validated against AnswerClarificationCommandSchema. Answers stage to Experiment Plan generator.
           </span>
-          <Button type="submit" variant="primary" className="space-x-1.5" disabled={submitted}>
-            <span>{submitted ? 'Updating Plan...' : 'Submit Answers & Review Plan'}</span>
+          <Button type="submit" variant="primary" className="space-x-1.5" disabled={submitted || isSubmitting}>
+            {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+            <span>{isSubmitting ? 'Submitting Answers...' : submitted ? 'Updating Plan...' : 'Submit Answers & Review Plan'}</span>
             <ArrowRight className="w-4 h-4" />
           </Button>
         </div>
       </form>
+      )}
     </div>
   );
 }

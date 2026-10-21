@@ -45,6 +45,21 @@ Earlier in this conversation, type checking, linting, all 15 existing tests, and
 - Quality Gates: G0 ready, G1 ready, G2 ready with test doubles, G3 blocked on live OpenAI Luna API key, G4 ready, G5 blocked on live PostgreSQL 5432 and background daemon.
 - Documented in `docs/integration/p1-p2-integration-review.md`.
 
+**Person 1, Person 2, and Person 3 Comprehensive System Integration (`codex/integration-person-1-2-3`):** Completed local integration, semantic reconciliation, and runtime wiring across all three contributors' subsystems.
+- Merged Person 3 (`origin/person3`, `c276cae`) cleanly into the verified Person 1 + Person 2 baseline (`db88fcd`).
+- Transport and Auth: added cryptographic cookie session verification (`tc_session`) alongside Bearer authorization, resolving cookie-based API access across Next.js frontend pages. Harmonized 409 Conflict messages on plan state revision mismatches.
+- Evidence Storage: implemented `IntegratedEvidenceStorageAdapter` implementing `EvidenceStoragePort`, bridging Person 1 capture commands to Person 3 dual-tier storage (`RESTRICTED_RAW` vs `PUBLIC_SAFE`), in-stream log/network sanitization, video byte bounding (>=10 KB), and access grant verification.
+- Media Streaming: created authenticated artifact streaming route (`/api/v1/investigations/[id]/artifacts/[artifactId]`) supporting RFC 7233 partial content / HTTP 206 range requests for WebM video streaming with fail-closed privacy withholding for unredacted video.
+- Backend Fact Hardening: forwarded factual `attempt1`, `attempt2`, `resetStatus`, and `targetBuildId` to `synthesizeExplanation` in `evidence-review-service.ts`, preserving strict separation of verified facts from model hypotheses.
+- Frontend App Router Pages: removed all synthetic fallbacks and fake placeholders across `/`, `/targets`, `/investigations/new`, `/investigations/[id]/clarify`, `/investigations/[id]/approve`, `/investigations/[id]/live`, and `/investigations/[id]`. Isolated canonical TC1 test telemetry strictly to synthetic demo targets (`isTC1`).
+- End-to-End Three-Person Suite: implemented comprehensive 7-test suite (`tests/integration/p1-p2-p3-integrated-journey.test.ts`) validating end-to-end flow from intake and planning through browser execution, fixture reset, pair assessment, evidence sanitization, narrative review, and secure access grant generation.
+- All 72 test suites pass (645 passed tests, 6 skipped, 0 failed in ~12.5s).
+- `pnpm typecheck` (`tsc --noEmit`) and `pnpm lint` (`next lint`) pass with 0 errors/warnings.
+- Production `pnpm build` (`build:web` and `build:worker`) succeeds cleanly with 25 routes generated and worker bundled.
+- Quality Gates: G0 ready, G1 ready, G2 ready with test doubles, G3 blocked on live OpenAI Luna API key, G4 ready, G5 blocked on live PostgreSQL 5432 and background daemon.
+- Preserved references: `main` (`af56f5a`), `person-1` (`297125b`), `person-2` (`a7d9ffc`), `integration/person-1-person-2` (`db88fcd`). Zero pushes to remote, zero PRs, zero external deployments.
+- Documented in `docs/integration/p1-p2-p3-integration-review.md`.
+
 ## Agreed Person 1 phases
 
 | Phase | Work | Completion condition | Current record |

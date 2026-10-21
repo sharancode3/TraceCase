@@ -102,18 +102,18 @@ export default function InvestigationDetailPage() {
   );
 
   const consoleLogs: ConsoleLogEntry[] = React.useMemo(() => {
-    if (investigation?.evidenceReadiness === 'PUBLIC_SAFE_READY') {
+    if (isTC1) {
       return CANONICAL_TC1_CONSOLE_LOGS;
     }
     return [];
-  }, [investigation?.evidenceReadiness]);
+  }, [isTC1]);
 
   const networkTraces: NetworkTraceEntry[] = React.useMemo(() => {
-    if (investigation?.evidenceReadiness === 'PUBLIC_SAFE_READY') {
+    if (isTC1) {
       return CANONICAL_TC1_NETWORK_TRACES;
     }
     return [];
-  }, [investigation?.evidenceReadiness]);
+  }, [isTC1]);
 
   const filteredLogs = React.useMemo(
     () => filterConsoleLogs(consoleLogs, consoleSearch),

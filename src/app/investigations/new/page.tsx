@@ -7,7 +7,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter }
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import type { ClientSafeTargetProfile } from '@/contracts/targets';
+import type { ClientSafeTargetProfile, SafeTargetProfile } from '@/contracts/targets';
 import { SYNTHETIC_TARGETS } from '@/dev/fixtures';
 import { fetchTargets, submitBugReport } from '@/features/investigations/api-client';
 
@@ -22,14 +22,14 @@ export default function NewReportPage() {
   const [attachedFileName, setAttachedFileName] = React.useState<string | null>(null);
 
   const [formData, setFormData] = React.useState({
-    targetId: SYNTHETIC_TARGETS[0].id,
+    targetId: '',
     title: '',
     bugDescription: '',
     expectedBehavior: '',
     observedBehavior: '',
     suspectedSteps: '',
-    browserEnvironment: 'Chrome 128 / macOS',
-    buildVersion: 'v1.0.4-staging',
+    browserEnvironment: '',
+    buildVersion: '',
   });
 
   // Fetch target environments on mount
@@ -39,11 +39,26 @@ export default function NewReportPage() {
       const res = await fetchTargets();
       if (!isMounted) return;
       if (res.success && res.data.targets.length > 0) {
-        setTargets(res.data.targets);
+        setTargets(
+          res.data.targets.map((t: SafeTargetProfile) => ({
+            ...t,
+            isSandbox: Boolean(t.isSandboxVerified),
+          }))
+        );
         setTargetLoadStatus(res.data.mode);
         setFormData((prev) => ({
           ...prev,
-          targetId: res.data.targets[0].id,
+          targetId: prev.targetId || res.data.targets[0].id,
+        }));
+      } else if (res.success && res.data.mode === 'live') {
+        setTargets([]);
+        setTargetLoadStatus('live');
+      } else {
+        setTargets(SYNTHETIC_TARGETS);
+        setTargetLoadStatus('preview');
+        setFormData((prev) => ({
+          ...prev,
+          targetId: prev.targetId || SYNTHETIC_TARGETS[0].id,
         }));
       }
     }
@@ -81,7 +96,11 @@ export default function NewReportPage() {
       // Backend returned valid report and investigation link
       const targetInvId = result.data.investigationId;
       if (targetInvId) {
-        router.push(`/investigations/${targetInvId}/approve`);
+        if ('requiresClarification' in result.data && Boolean(result.data.requiresClarification)) {
+          router.push(`/investigations/${targetInvId}/clarify`);
+        } else {
+          router.push(`/investigations/${targetInvId}/approve`);
+        }
       } else {
         router.push(`/investigations/${result.data.id}`);
       }

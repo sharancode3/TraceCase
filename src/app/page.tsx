@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { Plus, ArrowUpRight, Search, ShieldAlert } from 'lucide-react';
+import { Plus, ArrowUpRight, Search, ShieldAlert, Loader2, AlertCircle, Inbox } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -10,14 +10,53 @@ import {
   getVerdictPresentation,
   getEvidencePresentation,
 } from '@/contracts/status';
+import type { InvestigationSnapshot } from '@/contracts/investigations';
 import { SYNTHETIC_INVESTIGATIONS_CATALOG } from '@/dev/fixtures';
+import { fetchInvestigations } from '@/features/investigations/api-client';
 
 export default function DashboardPage() {
+  const [investigations, setInvestigations] = React.useState<InvestigationSnapshot[]>(SYNTHETIC_INVESTIGATIONS_CATALOG);
   const [filter, setFilter] = React.useState<string>('ALL');
   const [search, setSearch] = React.useState<string>('');
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [errorNotice, setErrorNotice] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let isMounted = true;
+    async function load() {
+      setIsLoading(true);
+      setErrorNotice(null);
+      const res = await fetchInvestigations();
+      if (!isMounted) return;
+
+      if (res.success) {
+        if (res.data.investigations.length > 0) {
+          setInvestigations(res.data.investigations);
+        } else if (res.data.mode === 'live') {
+          // Live mode with 0 records: truthfully render empty catalog
+          setInvestigations([]);
+        } else {
+          setInvestigations(SYNTHETIC_INVESTIGATIONS_CATALOG);
+        }
+      } else {
+        if (res.status === 401) {
+          setErrorNotice('Live session unauthenticated. Showing preview catalog.');
+          setInvestigations(SYNTHETIC_INVESTIGATIONS_CATALOG);
+        } else {
+          setErrorNotice(`Live API unavailable (${res.error.message}). Showing preview catalog.`);
+          setInvestigations(SYNTHETIC_INVESTIGATIONS_CATALOG);
+        }
+      }
+      setIsLoading(false);
+    }
+    load();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const filteredItems = React.useMemo(() => {
-    return SYNTHETIC_INVESTIGATIONS_CATALOG.filter((item) => {
+    return investigations.filter((item) => {
       const matchesSearch =
         item.title.toLowerCase().includes(search.toLowerCase()) ||
         item.targetName.toLowerCase().includes(search.toLowerCase());
@@ -30,7 +69,7 @@ export default function DashboardPage() {
       if (filter === 'INCONCLUSIVE') return item.reproductionVerdict === 'INCONCLUSIVE';
       return true;
     });
-  }, [filter, search]);
+  }, [investigations, filter, search]);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
@@ -89,8 +128,40 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* Error / Mode Notice */}
+      {errorNotice && (
+        <div className="p-3 rounded-control bg-amber-50 border border-amber-300 text-xs text-amber-900 flex items-center space-x-2">
+          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+          <span>{errorNotice}</span>
+        </div>
+      )}
+
       {/* Investigations Table Card */}
       <Card className="p-0 overflow-hidden">
+        {isLoading ? (
+          <div className="p-12 text-center text-xs text-brand-muted flex flex-col items-center justify-center space-y-2">
+            <Loader2 className="w-6 h-6 animate-spin text-cobalt-action" />
+            <span>Loading investigations...</span>
+          </div>
+        ) : filteredItems.length === 0 ? (
+          <div className="p-12 text-center text-xs text-brand-muted flex flex-col items-center justify-center space-y-3">
+            <Inbox className="w-8 h-8 text-neutral-divider" />
+            <div>
+              <p className="font-semibold text-brand-navy">No investigations found</p>
+              <p className="mt-1 text-brand-muted">
+                {search ? 'Try adjusting your search or filter criteria.' : 'Create a bug report to start reproducing defects.'}
+              </p>
+            </div>
+            {!search && (
+              <Link href="/investigations/new">
+                <Button size="sm" variant="outline" className="space-x-1.5 mt-2">
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>New Investigation</span>
+                </Button>
+              </Link>
+            )}
+          </div>
+        ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
@@ -157,6 +228,7 @@ export default function DashboardPage() {
             </tbody>
           </table>
         </div>
+        )}
       </Card>
     </div>
   );

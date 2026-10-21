@@ -25,6 +25,7 @@ import {
   IntegratedBrowserInvestigationAgent,
   IntegratedEvidenceReviewAgent,
 } from '@/server/ai/integrated-adapters';
+import { IntegratedEvidenceStorageAdapter } from '@/server/evidence/evidence-storage-adapter';
 
 export interface ServiceContainer {
   clarificationAgent: ReportClarificationAgentPort;
@@ -94,13 +95,20 @@ export function createDefaultServiceContainer(): ServiceContainer {
     evidenceReviewAgent = unavailableEvidenceReviewAgent;
   }
 
+  let evidenceStorage: EvidenceStoragePort;
+  try {
+    evidenceStorage = new IntegratedEvidenceStorageAdapter();
+  } catch {
+    evidenceStorage = unavailableEvidenceStorage;
+  }
+
   return {
     clarificationAgent,
     browserAgent,
     evidenceReviewAgent,
     browserWorker,
     targetReset: unavailableTargetReset,
-    evidenceStorage: unavailableEvidenceStorage,
+    evidenceStorage,
     queueDispatcher,
   };
 }

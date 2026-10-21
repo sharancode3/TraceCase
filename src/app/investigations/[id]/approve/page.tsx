@@ -2,24 +2,57 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useRouter, useParams } from 'next/navigation';
 import { ShieldCheck, ShieldAlert, CheckCircle2, Play, Hash, AlertTriangle, ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { SYNTHETIC_PLAN_V1 } from '@/dev/fixtures';
-import { approveInvestigationPlan } from '@/features/investigations/api-client';
+import {
+  approveInvestigationPlan,
+  startInvestigationExecution,
+  fetchInvestigation,
+} from '@/features/investigations/api-client';
 
 export default function PlanApprovalPage() {
+  const router = useRouter();
   const params = useParams();
   const id = params?.id as string;
 
   const [isApproved, setIsApproved] = React.useState(false);
   const [operatorNotes, setOperatorNotes] = React.useState('');
   const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [isStarting, setIsStarting] = React.useState(false);
   const [approvalError, setApprovalError] = React.useState<string | null>(null);
+  const [startError, setStartError] = React.useState<string | null>(null);
   const [approvalSuccessMessage, setApprovalSuccessMessage] = React.useState<string | null>(null);
 
   const plan = SYNTHETIC_PLAN_V1;
+
+  React.useEffect(() => {
+    let isMounted = true;
+    async function load() {
+      const res = await fetchInvestigation(id);
+      if (!isMounted) return;
+      if (res.success && res.data) {
+        const st = res.data.lifecycleStatus as string;
+        if (
+          st === 'APPROVED' ||
+          st === 'QUEUED' ||
+          st === 'RUNNING_ATTEMPT_1' ||
+          st === 'RESETTING_TARGET' ||
+          st === 'RUNNING_ATTEMPT_2' ||
+          st === 'FINALIZING_EVIDENCE' ||
+          st === 'COMPLETED'
+        ) {
+          setIsApproved(true);
+        }
+      }
+    }
+    load();
+    return () => {
+      isMounted = false;
+    };
+  }, [id]);
 
   const handleApprove = async () => {
     setIsSubmitting(true);
@@ -47,6 +80,23 @@ export default function PlanApprovalPage() {
       setApprovalError(
         `Approval failed (${result.error.code}): ${result.error.message}`
       );
+    }
+  };
+
+  const handleStartReproduction = async () => {
+    setIsStarting(true);
+    setStartError(null);
+    const result = await startInvestigationExecution(id, {
+      investigationId: id,
+      planVersion: plan.version,
+      approvedPlanHash: plan.planHash,
+    });
+    setIsStarting(false);
+
+    if (result.success) {
+      router.push(`/investigations/${id}/live`);
+    } else {
+      setStartError(`Execution start failed (${result.error.code}): ${result.error.message}`);
     }
   };
 
@@ -251,14 +301,29 @@ export default function PlanApprovalPage() {
           <span className="text-[11px] text-brand-muted">
             Submits authorization signature to POST /api/v1/investigations/{id}/approve (TC-INV-003).
           </span>
-          <div className="flex items-center space-x-3 w-full sm:w-auto">
+          <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto">
+            {startError && (
+              <span className="text-xs text-status-confirmed font-medium">{startError}</span>
+            )}
             {isApproved ? (
-              <Link href={`/investigations/${id}/live`} className="w-full sm:w-auto">
-                <Button variant="primary" className="space-x-1.5 w-full sm:w-auto">
-                  <Play className="w-4 h-4" />
-                  <span>Launch Live Reproduction</span>
-                </Button>
-              </Link>
+              <Button
+                variant="primary"
+                onClick={handleStartReproduction}
+                disabled={isStarting}
+                className="space-x-1.5 w-full sm:w-auto bg-emerald-700 hover:bg-emerald-800"
+              >
+                {isStarting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Admitting Execution to Queue...</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-4 h-4" />
+                    <span>Start Reproduction Run</span>
+                  </>
+                )}
+              </Button>
             ) : (
               <Button
                 variant="primary"

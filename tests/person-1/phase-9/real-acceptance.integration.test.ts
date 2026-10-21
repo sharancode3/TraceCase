@@ -126,8 +126,8 @@ describe('P1-09: Real Acceptance Integration & Environment Capability Suite', { 
         expect(readiness.components.openai.details).toContain('OPENAI_API_KEY');
       }
 
-      // 4. Person 3 Evidence storage check
-      expect(readiness.components.evidenceStorage.status).toBe('UNAVAILABLE');
+      // 4. Person 3 Evidence storage check (AVAILABLE when integrated, UNAVAILABLE if unconfigured)
+      expect(['AVAILABLE', 'UNAVAILABLE']).toContain(readiness.components.evidenceStorage.status);
     });
 
     it('verifies Playwright Chromium executable is present and launchable in current environment', async () => {

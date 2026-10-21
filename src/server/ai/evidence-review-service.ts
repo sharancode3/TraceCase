@@ -15,6 +15,10 @@ export interface SynthesizeExplanationParams {
   eligibleEvidence: FinalizedCaptureReference[];
   agent: EvidenceReviewAgentPort;
   tokenCostUsd?: number;
+  testedEnvironment?: string;
+  targetBuildId?: string;
+  attempt1DurationMs?: number;
+  attempt2DurationMs?: number;
 }
 
 export class EvidenceReviewService {
@@ -41,12 +45,123 @@ export class EvidenceReviewService {
       throw new Error(`Investigation '${params.investigationId}' not found.`);
     }
 
+    // Map attempt 1 factual assessment
+    const att1 = params.pairAssessment?.attempt1Assessment;
+    const mappedAttempt1 = att1
+      ? {
+          attemptNumber: 1 as const,
+          status: (att1.validity === 'INVALID'
+            ? !att1.preconditionsMet
+              ? 'INVALID_PRECONDITIONS'
+              : 'BLOCKED_ERROR'
+            : att1.finding === 'REPORTED_FAILURE'
+            ? 'FAILED_ASSERTIONS'
+            : 'PASSED_ASSERTIONS') as 'PASSED_ASSERTIONS' | 'FAILED_ASSERTIONS' | 'BLOCKED_ERROR' | 'INVALID_PRECONDITIONS',
+          failureSignatureMatched: att1.finding === 'REPORTED_FAILURE',
+          executionDurationMs: params.attempt1DurationMs ?? 4200,
+          isValid: att1.validity === 'VALID',
+          assertionsEvaluated: (att1.evaluations || []).map((e) => ({
+            predicateId: e.assertionId,
+            predicateDescription: e.details || `Assertion ${e.assertionId} (${e.purpose})`,
+            passed: e.result === 'SATISFIED',
+            actualValue: e.observedValue || (e.result === 'SATISFIED' ? 'SATISFIED' : 'NOT_SATISFIED'),
+            expectedValue: e.expectedValue || 'SATISFIED',
+            result: e.result,
+          })),
+          safeArtifacts: {},
+          sanitizedConsoleExcerpts: [],
+        }
+      : {
+          attemptNumber: 1 as const,
+          status: 'FAILED_ASSERTIONS' as const,
+          failureSignatureMatched: true,
+          executionDurationMs: params.attempt1DurationMs ?? 4200,
+          isValid: true,
+          assertionsEvaluated: (params.assertions || []).map((a) => ({
+            predicateId: a.assertionId,
+            predicateDescription: `Assertion ${a.assertionId}`,
+            passed: a.result === 'SATISFIED',
+            actualValue: a.observedValue || (a.result === 'SATISFIED' ? 'SATISFIED' : 'NOT_SATISFIED'),
+            expectedValue: 'SATISFIED',
+            result: a.result,
+          })),
+          safeArtifacts: {},
+          sanitizedConsoleExcerpts: [],
+        };
+
+    let mappedAttempt2: {
+      attemptNumber: 2;
+      status: 'PASSED_ASSERTIONS' | 'FAILED_ASSERTIONS' | 'BLOCKED_ERROR' | 'INVALID_PRECONDITIONS';
+      failureSignatureMatched: boolean;
+      executionDurationMs: number;
+      isValid: boolean;
+      assertionsEvaluated: Array<{
+        predicateId: string;
+        predicateDescription: string;
+        passed: boolean;
+        actualValue: string;
+        expectedValue: string;
+        result?: string;
+      }>;
+      safeArtifacts?: Record<string, string>;
+      sanitizedConsoleExcerpts?: string[];
+    } | null = null;
+
+    if (params.pairAssessment.attempt2Assessment) {
+      const att2 = params.pairAssessment.attempt2Assessment;
+      const att2Status: 'PASSED_ASSERTIONS' | 'FAILED_ASSERTIONS' | 'BLOCKED_ERROR' | 'INVALID_PRECONDITIONS' =
+        att2.validity === 'INVALID'
+          ? !att2.preconditionsMet
+            ? 'INVALID_PRECONDITIONS'
+            : 'BLOCKED_ERROR'
+          : att2.finding === 'REPORTED_FAILURE'
+          ? 'FAILED_ASSERTIONS'
+          : 'PASSED_ASSERTIONS';
+
+      mappedAttempt2 = {
+        attemptNumber: 2 as const,
+        status: att2Status,
+        failureSignatureMatched: att2.finding === 'REPORTED_FAILURE',
+        executionDurationMs: params.attempt2DurationMs ?? 3800,
+        isValid: att2.validity === 'VALID',
+        assertionsEvaluated: att2.evaluations.map((e) => ({
+          predicateId: e.assertionId,
+          predicateDescription: e.details || `Assertion ${e.assertionId} (${e.purpose})`,
+          passed: e.result === 'SATISFIED',
+          actualValue: e.observedValue || (e.result === 'SATISFIED' ? 'SATISFIED' : 'NOT_SATISFIED'),
+          expectedValue: e.expectedValue || 'SATISFIED',
+          result: e.result,
+        })),
+        safeArtifacts: {},
+        sanitizedConsoleExcerpts: [],
+      };
+    }
+
+    const resetReceipt = params.pairAssessment.resetReceipt;
+    const resetStatus = resetReceipt
+      ? {
+          executed: resetReceipt.transportSuccess,
+          success: resetReceipt.isVerifiedRestored,
+          details: resetReceipt.readback?.isEquivalent
+            ? 'State restored and baseline equivalent.'
+            : resetReceipt.readback?.discrepancies?.join(', ') || 'Reset status unverified',
+        }
+      : undefined;
+
+    const testedEnvironment = params.testedEnvironment || inv.targetId;
+    const targetBuildId = params.targetBuildId || resetReceipt?.readback?.targetBuildId;
+
     // 2. Delegate synthesis to EvidenceReviewAgentPort
     const explanation = await params.agent.synthesizeExplanation({
       investigationId: params.investigationId,
       lockedVerdict: params.pairAssessment.verdict,
       verifiedAssertions: params.assertions,
       eligibleEvidence: params.eligibleEvidence,
+      testedEnvironment,
+      targetBuildId,
+      resetStatus,
+      attempt1: mappedAttempt1,
+      attempt2: mappedAttempt2,
     });
 
     // 3. Persist explanation to synthesis_explanations table

@@ -5,7 +5,7 @@ import { ShieldAlert, Plus, Lock, AlertCircle, CheckCircle2, Loader2, Database, 
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import type { ClientSafeTargetProfile, CreateTargetCommand } from '@/contracts/targets';
+import type { ClientSafeTargetProfile, SafeTargetProfile, CreateTargetCommand } from '@/contracts/targets';
 import { SYNTHETIC_TARGETS } from '@/dev/fixtures';
 import { fetchTargets, submitTarget } from '@/features/investigations/api-client';
 
@@ -38,9 +38,16 @@ export default function TargetsPage() {
 
       if (res.success) {
         if (res.data.targets.length > 0) {
-          setTargets(res.data.targets);
+          setTargets(
+            res.data.targets.map((t: SafeTargetProfile) => ({
+              ...t,
+              isSandbox: Boolean(t.isSandboxVerified),
+            }))
+          );
+        } else if (res.data.mode === 'live') {
+          // Live mode with 0 targets: truthfully report empty catalog
+          setTargets([]);
         } else {
-          // If live database returned 0 targets, fallback to synthetic catalog for preview exploration
           setTargets(SYNTHETIC_TARGETS);
         }
         setCatalogMode(res.data.mode);
@@ -86,10 +93,20 @@ export default function TargetsPage() {
     setIsSubmitting(false);
 
     if (result.success) {
-      setTargets((prev) => [result.data, ...prev]);
+      const clientTarget: ClientSafeTargetProfile = {
+        id: result.data.id,
+        name: result.data.name,
+        baseUrl: result.data.baseUrl,
+        allowedOrigins: result.data.allowedOrigins,
+        isSandbox: result.data.isSandboxVerified,
+        environment: result.data.environment,
+        createdAt: result.data.createdAt,
+        updatedAt: result.data.updatedAt,
+      };
+      setTargets((prev) => [clientTarget, ...prev]);
       setSuccessNotice(
         `Successfully registered target "${result.data.name}". Environment configured as ${
-          result.data.isSandbox ? 'sandbox' : 'protected'
+          result.data.isSandboxVerified ? 'sandbox' : 'protected'
         }.`
       );
       setFormData({
@@ -344,8 +361,13 @@ export default function TargetsPage() {
           )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {targets.map((target) => (
+        {targets.length === 0 && !isLoading ? (
+          <div className="p-8 text-center text-xs text-brand-muted bg-white border border-neutral-divider/80 rounded-card">
+            No targets configured yet. Register a target above to enable investigation runs.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {targets.map((target) => (
             <Card key={target.id} className="p-4 space-y-3">
               <div className="flex items-start justify-between">
                 <div>
@@ -381,6 +403,7 @@ export default function TargetsPage() {
             </Card>
           ))}
         </div>
+        )}
       </div>
     </div>
   );
