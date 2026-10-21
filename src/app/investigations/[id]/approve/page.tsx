@@ -3,10 +3,11 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { ShieldCheck, ShieldAlert, CheckCircle2, Play, Hash, AlertTriangle, ArrowLeft } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, CheckCircle2, Play, Hash, AlertTriangle, ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { SYNTHETIC_PLAN_V1 } from '@/dev/fixtures';
+import { approveInvestigationPlan } from '@/features/investigations/api-client';
 
 export default function PlanApprovalPage() {
   const params = useParams();
@@ -14,16 +15,39 @@ export default function PlanApprovalPage() {
 
   const [isApproved, setIsApproved] = React.useState(false);
   const [operatorNotes, setOperatorNotes] = React.useState('');
-  const [isSimulating, setIsSimulating] = React.useState(false);
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [approvalError, setApprovalError] = React.useState<string | null>(null);
+  const [approvalSuccessMessage, setApprovalSuccessMessage] = React.useState<string | null>(null);
 
   const plan = SYNTHETIC_PLAN_V1;
 
-  const handleApprove = () => {
-    setIsSimulating(true);
-    setTimeout(() => {
+  const handleApprove = async () => {
+    setIsSubmitting(true);
+    setApprovalError(null);
+    setApprovalSuccessMessage(null);
+
+    const command = {
+      investigationId: id,
+      planVersion: plan.version,
+      approvedPlanHash: plan.planHash,
+      operatorNotes: operatorNotes.trim() || undefined,
+    };
+
+    const result = await approveInvestigationPlan(id, command);
+    setIsSubmitting(false);
+
+    if (result.success) {
       setIsApproved(true);
-      setIsSimulating(false);
-    }, 600);
+      setApprovalSuccessMessage(
+        result.message ||
+        `Cryptographic authorization verified. Bound to plan SHA-256: ${plan.planHash.substring(0, 16)}...`
+      );
+    } else {
+      setIsApproved(false);
+      setApprovalError(
+        `Approval failed (${result.error.code}): ${result.error.message}`
+      );
+    }
   };
 
   return (
@@ -51,7 +75,7 @@ export default function PlanApprovalPage() {
         {isApproved ? (
           <span className="px-3.5 py-1.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-300 font-semibold text-xs flex items-center space-x-1.5">
             <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-            <span>Plan Approved (Simulated)</span>
+            <span>Plan Approved</span>
           </span>
         ) : (
           <span className="px-3.5 py-1.5 rounded-full bg-status-pendingBg text-status-pending border border-amber-300 font-semibold text-xs flex items-center space-x-1.5">
@@ -60,6 +84,45 @@ export default function PlanApprovalPage() {
           </span>
         )}
       </div>
+
+      {/* Notifications */}
+      {approvalSuccessMessage && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="p-4 rounded-control bg-emerald-50 border border-emerald-300 text-xs text-emerald-900 flex items-center justify-between"
+        >
+          <div className="flex items-center space-x-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{approvalSuccessMessage}</span>
+          </div>
+          <button
+            onClick={() => setApprovalSuccessMessage(null)}
+            className="text-emerald-700 font-semibold ml-4 hover:underline"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {approvalError && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="p-4 rounded-control bg-status-confirmedBg border border-red-200 text-xs text-status-confirmed flex items-center justify-between"
+        >
+          <div className="flex items-center space-x-2">
+            <AlertCircle className="w-4 h-4 text-status-confirmed shrink-0" />
+            <span>{approvalError}</span>
+          </div>
+          <button
+            onClick={() => setApprovalError(null)}
+            className="text-status-confirmed font-semibold ml-4 hover:underline"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Plan Details Card */}
       <Card>
@@ -170,39 +233,50 @@ export default function PlanApprovalPage() {
         </CardHeader>
         <CardContent className="space-y-3">
           <div>
-            <label className="block text-xs font-semibold text-brand-navy mb-1.5">
+            <label htmlFor="operator-notes" className="block text-xs font-semibold text-brand-navy mb-1.5">
               Operator Sign-off Notes (Optional)
             </label>
             <input
+              id="operator-notes"
               type="text"
               placeholder="e.g. Verified target is staging demo sandbox. Approved for two-run reproduction."
               value={operatorNotes}
               onChange={(e) => setOperatorNotes(e.target.value)}
-              className="w-full px-3.5 py-2 text-xs rounded-control border border-neutral-divider bg-white text-brand-navy focus:outline-none focus:ring-2 focus:ring-cobalt-action"
+              disabled={isSubmitting || isApproved}
+              className="w-full px-3.5 py-2 text-xs rounded-control border border-neutral-divider bg-white text-brand-navy focus:outline-none focus:ring-2 focus:ring-cobalt-action disabled:bg-neutral-100"
             />
           </div>
         </CardContent>
         <CardFooter className="flex flex-col sm:flex-row items-center justify-between gap-3">
           <span className="text-[11px] text-brand-muted">
-            Development Preview: This simulates cryptographic approval without triggering live browser jobs.
+            Submits authorization signature to POST /api/v1/investigations/{id}/approve (TC-INV-003).
           </span>
           <div className="flex items-center space-x-3 w-full sm:w-auto">
             {isApproved ? (
               <Link href={`/investigations/${id}/live`} className="w-full sm:w-auto">
                 <Button variant="primary" className="space-x-1.5 w-full sm:w-auto">
                   <Play className="w-4 h-4" />
-                  <span>Launch Live Simulation</span>
+                  <span>Launch Live Reproduction</span>
                 </Button>
               </Link>
             ) : (
               <Button
                 variant="primary"
                 onClick={handleApprove}
-                disabled={isSimulating}
+                disabled={isSubmitting}
                 className="space-x-1.5 w-full sm:w-auto"
               >
-                <CheckCircle2 className="w-4 h-4" />
-                <span>{isSimulating ? 'Recording Signature...' : 'Authorize & Approve Plan'}</span>
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Verifying Cryptographic Approval...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Authorize & Approve Plan</span>
+                  </>
+                )}
               </Button>
             )}
           </div>

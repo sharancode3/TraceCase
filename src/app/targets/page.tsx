@@ -1,15 +1,22 @@
 'use client';
 
 import * as React from 'react';
-import { ShieldAlert, Plus, Lock } from 'lucide-react';
+import { ShieldAlert, Plus, Lock, AlertCircle, CheckCircle2, Loader2, Database, Sparkles } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import type { ClientSafeTargetProfile } from '@/contracts/targets';
+import type { ClientSafeTargetProfile, CreateTargetCommand } from '@/contracts/targets';
 import { SYNTHETIC_TARGETS } from '@/dev/fixtures';
+import { fetchTargets, submitTarget } from '@/features/investigations/api-client';
 
 export default function TargetsPage() {
   const [targets, setTargets] = React.useState<ClientSafeTargetProfile[]>(SYNTHETIC_TARGETS);
+  const [catalogMode, setCatalogMode] = React.useState<string>('preview_synthetic');
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [successNotice, setSuccessNotice] = React.useState<string | null>(null);
+  const [errorNotice, setErrorNotice] = React.useState<string | null>(null);
+
   const [formData, setFormData] = React.useState({
     name: '',
     baseUrl: '',
@@ -17,58 +24,153 @@ export default function TargetsPage() {
     isSandboxRequested: true,
     testAccountRef: '',
     fixtureResetEndpoint: '',
-    environment: 'staging',
+    environment: 'staging' as 'staging' | 'development' | 'demo' | 'production',
   });
-  const [notice, setNotice] = React.useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formData.name || !formData.baseUrl) {
-      setNotice('Target Name and Base URL are required fields.');
-      return;
+  // Load targets on component mount
+  React.useEffect(() => {
+    let isMounted = true;
+    async function load() {
+      setIsLoading(true);
+      setErrorNotice(null);
+      const res = await fetchTargets();
+      if (!isMounted) return;
+
+      if (res.success) {
+        if (res.data.targets.length > 0) {
+          setTargets(res.data.targets);
+        } else {
+          // If live database returned 0 targets, fallback to synthetic catalog for preview exploration
+          setTargets(SYNTHETIC_TARGETS);
+        }
+        setCatalogMode(res.data.mode);
+      } else {
+        // Safe fallback with informative error
+        setTargets(SYNTHETIC_TARGETS);
+        setCatalogMode('preview_synthetic');
+        if (res.status === 401) {
+          setErrorNotice('Live database query requires authentication. Displaying synthetic preview catalog.');
+        } else {
+          setErrorNotice(`Live API unavailable (${res.error.message}). Displaying synthetic preview catalog.`);
+        }
+      }
+      setIsLoading(false);
     }
+    load();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
-    const newTarget: ClientSafeTargetProfile = {
-      id: crypto.randomUUID(),
-      name: formData.name,
-      baseUrl: formData.baseUrl,
-      allowedOrigins: formData.allowedOrigins ? formData.allowedOrigins.split(',').map((s) => s.trim()) : [formData.baseUrl],
-      isSandbox: formData.isSandboxRequested,
-      testAccountRef: formData.testAccountRef || null,
-      fixtureResetEndpoint: formData.fixtureResetEndpoint || null,
-      environment: formData.environment as 'staging' | 'development' | 'demo' | 'production',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSuccessNotice(null);
+    setErrorNotice(null);
+
+    const origins = formData.allowedOrigins
+      ? formData.allowedOrigins.split(',').map((s) => s.trim()).filter(Boolean)
+      : [formData.baseUrl.trim()];
+
+    const command: CreateTargetCommand = {
+      name: formData.name.trim(),
+      baseUrl: formData.baseUrl.trim(),
+      allowedOrigins: origins,
+      isSandboxRequested: formData.isSandboxRequested,
+      testAccountRef: formData.testAccountRef.trim() || undefined,
+      fixtureResetEndpoint: formData.fixtureResetEndpoint.trim() || undefined,
+      environment: formData.environment,
     };
 
-    setTargets([newTarget, ...targets]);
-    setNotice('Target environment registered in local preview state. (Stage 0: server database persistence is simulated).');
-    setFormData({
-      name: '',
-      baseUrl: '',
-      allowedOrigins: '',
-      isSandboxRequested: true,
-      testAccountRef: '',
-      fixtureResetEndpoint: '',
-      environment: 'staging',
-    });
+    setIsSubmitting(true);
+    const result = await submitTarget(command);
+    setIsSubmitting(false);
+
+    if (result.success) {
+      setTargets((prev) => [result.data, ...prev]);
+      setSuccessNotice(
+        `Successfully registered target "${result.data.name}". Environment configured as ${
+          result.data.isSandbox ? 'sandbox' : 'protected'
+        }.`
+      );
+      setFormData({
+        name: '',
+        baseUrl: '',
+        allowedOrigins: '',
+        isSandboxRequested: true,
+        testAccountRef: '',
+        fixtureResetEndpoint: '',
+        environment: 'staging',
+      });
+    } else {
+      setErrorNotice(
+        `Registration rejected (${result.error.code}): ${result.error.message}`
+      );
+    }
   };
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
-      <div>
-        <h2 className="text-2xl font-bold text-brand-navy tracking-tight">
-          Target Environment Management
-        </h2>
-        <p className="text-sm text-brand-muted mt-1">
-          Configure verified target web applications, sandbox safety flags, and fixture reset hooks.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-bold text-brand-navy tracking-tight">
+            Target Environment Management
+          </h2>
+          <p className="text-sm text-brand-muted mt-1">
+            Configure verified target web applications, sandbox safety flags, and fixture reset hooks.
+          </p>
+        </div>
+
+        <div className="shrink-0 flex items-center space-x-2">
+          {catalogMode === 'live_database' ? (
+            <span className="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-300 flex items-center space-x-1.5">
+              <Database className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Live Database Mode</span>
+            </span>
+          ) : (
+            <span className="px-3 py-1 rounded-full text-xs font-semibold bg-lavender-surface text-brand-deepPurple border border-cobalt-action/30 flex items-center space-x-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-cobalt-action" />
+              <span>Synthetic Preview Catalog</span>
+            </span>
+          )}
+        </div>
       </div>
 
-      {notice && (
-        <div className="p-4 rounded-control bg-lavender-surface border border-cobalt-action/30 text-xs text-brand-deepPurple flex items-center justify-between">
-          <span>{notice}</span>
-          <button onClick={() => setNotice(null)} className="text-cobalt-action font-semibold ml-4">Dismiss</button>
+      {/* Notifications */}
+      {successNotice && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="p-4 rounded-control bg-emerald-50 border border-emerald-300 text-xs text-emerald-900 flex items-center justify-between"
+        >
+          <div className="flex items-center space-x-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{successNotice}</span>
+          </div>
+          <button
+            onClick={() => setSuccessNotice(null)}
+            className="text-emerald-700 font-semibold ml-4 hover:underline"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {errorNotice && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="p-4 rounded-control bg-status-confirmedBg border border-red-200 text-xs text-status-confirmed flex items-center justify-between"
+        >
+          <div className="flex items-center space-x-2">
+            <AlertCircle className="w-4 h-4 text-status-confirmed shrink-0" />
+            <span>{errorNotice}</span>
+          </div>
+          <button
+            onClick={() => setErrorNotice(null)}
+            className="text-status-confirmed font-semibold ml-4 hover:underline"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 
@@ -84,50 +186,96 @@ export default function TargetsPage() {
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-brand-navy mb-1.5">
+                <label htmlFor="target-name" className="block text-xs font-semibold text-brand-navy mb-1.5">
                   Application Name *
                 </label>
                 <Input
+                  id="target-name"
                   placeholder="e.g. Acme Staging Portal"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   required
+                  disabled={isSubmitting}
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-brand-navy mb-1.5">
+                <label htmlFor="target-base-url" className="block text-xs font-semibold text-brand-navy mb-1.5">
                   Base URL *
                 </label>
                 <Input
+                  id="target-base-url"
                   placeholder="https://staging.acme.corp"
                   value={formData.baseUrl}
                   onChange={(e) => setFormData({ ...formData, baseUrl: e.target.value })}
                   required
+                  disabled={isSubmitting}
                 />
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-brand-navy mb-1.5">
+                <label htmlFor="target-origins" className="block text-xs font-semibold text-brand-navy mb-1.5">
                   Allowed Origins (Comma-separated)
                 </label>
                 <Input
+                  id="target-origins"
                   placeholder="https://staging.acme.corp, https://auth.acme.corp"
                   value={formData.allowedOrigins}
                   onChange={(e) => setFormData({ ...formData, allowedOrigins: e.target.value })}
+                  disabled={isSubmitting}
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-brand-navy mb-1.5">
+                <label htmlFor="target-reset-hook" className="block text-xs font-semibold text-brand-navy mb-1.5">
                   Fixture Reset Hook URL (Optional)
                 </label>
                 <Input
+                  id="target-reset-hook"
                   placeholder="https://staging.acme.corp/api/test/reset-fixture"
                   value={formData.fixtureResetEndpoint}
                   onChange={(e) => setFormData({ ...formData, fixtureResetEndpoint: e.target.value })}
+                  disabled={isSubmitting}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="target-env" className="block text-xs font-semibold text-brand-navy mb-1.5">
+                  Target Environment
+                </label>
+                <select
+                  id="target-env"
+                  value={formData.environment}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      environment: e.target.value as 'staging' | 'development' | 'demo' | 'production',
+                    })
+                  }
+                  disabled={isSubmitting}
+                  className="w-full h-11 rounded-control border border-neutral-divider bg-white px-3.5 py-2 text-sm text-brand-navy focus:outline-none focus:ring-2 focus:ring-cobalt-action"
+                >
+                  <option value="staging">Staging</option>
+                  <option value="development">Development</option>
+                  <option value="demo">Demo</option>
+                  <option value="production">Production</option>
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="target-account-ref" className="block text-xs font-semibold text-brand-navy mb-1.5">
+                  Test Account Identifier (Optional)
+                </label>
+                <Input
+                  id="target-account-ref"
+                  placeholder="e.g. test-operator-sandbox-account"
+                  value={formData.testAccountRef}
+                  onChange={(e) => setFormData({ ...formData, testAccountRef: e.target.value })}
+                  disabled={isSubmitting}
                 />
               </div>
             </div>
@@ -136,10 +284,10 @@ export default function TargetsPage() {
             <div className="p-3.5 rounded-control bg-status-pendingBg/50 border border-amber-200 text-xs text-amber-900 space-y-1">
               <div className="font-semibold flex items-center space-x-1.5">
                 <ShieldAlert className="w-4 h-4 text-amber-700" />
-                <span>Sandbox Safety Warning (TC-INV-008)</span>
+                <span>Sandbox Safety Invariant (TC-INV-008)</span>
               </div>
               <p className="text-[11px] leading-relaxed">
-                Checking the sandbox box does not magically secure a production database. TraceCase strictly blocks Tier 4 destructive operations unless the target application is isolated and confirmed non-production.
+                Checking the sandbox declaration requests sandbox classification; server policy strictly governs whether Tier 4 destructive operations are authorized. Production targets are permanently locked against automated deletion.
               </p>
             </div>
 
@@ -149,21 +297,36 @@ export default function TargetsPage() {
                 id="isSandboxRequested"
                 checked={formData.isSandboxRequested}
                 onChange={(e) => setFormData({ ...formData, isSandboxRequested: e.target.checked })}
+                disabled={isSubmitting}
                 className="w-4 h-4 rounded text-cobalt-action focus:ring-cobalt-action border-neutral-divider"
               />
               <label htmlFor="isSandboxRequested" className="text-xs font-medium text-brand-navy cursor-pointer">
-                Declare as Isolated Sandbox Target (Permits Tier 4 Destructive Actions upon Human Approval)
+                Request Isolated Sandbox Classification (Permits Tier 4 Destructive Actions upon Human Approval)
               </label>
             </div>
           </CardContent>
 
           <CardFooter className="flex justify-between items-center">
             <span className="text-[11px] text-brand-muted">
-              Stage 0: Registration validates input locally. Live network probing is deferred to Stage 5.
+              Live registration invokes POST /api/v1/targets and requires valid operator authorization.
             </span>
-            <Button type="submit" variant="primary" className="space-x-1.5">
-              <Plus className="w-4 h-4" />
-              <span>Register Target</span>
+            <Button
+              type="submit"
+              variant="primary"
+              className="space-x-1.5"
+              disabled={isSubmitting || isLoading}
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Submitting to API...</span>
+                </>
+              ) : (
+                <>
+                  <Plus className="w-4 h-4" />
+                  <span>Register Target</span>
+                </>
+              )}
             </Button>
           </CardFooter>
         </form>
@@ -171,7 +334,16 @@ export default function TargetsPage() {
 
       {/* Existing Target Profiles List */}
       <div className="space-y-3">
-        <h3 className="text-sm font-semibold text-brand-navy">Configured Targets</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-brand-navy">Configured Targets ({targets.length})</h3>
+          {isLoading && (
+            <span className="text-xs text-brand-muted flex items-center space-x-1">
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-cobalt-action" />
+              <span>Refreshing targets...</span>
+            </span>
+          )}
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {targets.map((target) => (
             <Card key={target.id} className="p-4 space-y-3">
@@ -202,6 +374,9 @@ export default function TargetsPage() {
               <div className="text-[11px] text-brand-muted space-y-1">
                 <div>Environment: <span className="font-medium text-brand-navy uppercase">{target.environment}</span></div>
                 <div>Reset Hook: <span className="font-mono text-[10px]">{target.fixtureResetEndpoint || 'None configured'}</span></div>
+                {target.allowedOrigins && target.allowedOrigins.length > 0 && (
+                  <div>Allowed Origins: <span className="font-mono text-[10px]">{target.allowedOrigins.join(', ')}</span></div>
+                )}
               </div>
             </Card>
           ))}
