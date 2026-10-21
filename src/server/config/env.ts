@@ -10,7 +10,7 @@ const ServerEnvSchema = z.object({
 
   // AI Configuration (Luna via OpenAI API only, TC-INV-001)
   OPENAI_API_KEY: z.string().optional(),
-  OPENAI_MODEL_ID: z.string().default('gpt-6-luna'),
+  OPENAI_MODEL_ID: z.string().optional(),
   OPENAI_BASE_URL: z.string().url().default('https://api.openai.com/v1'),
 
   // Object Storage (MinIO / S3)
