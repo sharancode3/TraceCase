@@ -28,6 +28,15 @@ Earlier in this conversation, type checking, linting, all 15 existing tests, and
 - **Campaign Index:** Machine-readable index saved at `implementation-stages/person-1/p1-09-campaign-index.json`. Corrective review and handoff documented in `implementation-stages/person-1/p1-09-acceptance-and-release-review.md` and `p1-09-acceptance-and-release-handoff.md`.
 **Person 1 Roadmap:** All planned phases (P1-01 through P1-09) implemented, hardened, and verified locally. Person 1 boundary is complete and ready for joint integration with Person 2 and Person 3.
 
+**Person 1 & Person 2 Integration (`integration/person-1-person-2`):** Completed locally on isolated integration branch. Reconciled Person 1 trusted execution engine with Person 2 AI roles (Planner, Actor, Reviewer) and controlled demo target.
+- All 58 test files pass (475 passed tests, 6 skipped, 0 failed in ~24s).
+- `pnpm typecheck` and `pnpm lint` pass with 0 errors/warnings.
+- Unified provider enforces single model path (`gpt-6-luna`), rejects unauthorized models, and strictly forbids local models in production (TC-INV-001 / TC-INV-005).
+- Integrated adapters (`src/server/ai/integrated-adapters.ts`) bridge Person 1 ports with Person 2 role agents, preserving hypothesis non-fact separation (TC-INV-008).
+- Outbound target reset client aligned with demo target authentication and dual readback endpoint resolution.
+- Quality Gates: G0 passed, G1 passed, G2 passed, G3 validated with test doubles (ready for live OpenAI Luna API key), G4 validated with Chromium media capture (shared sanitizer pending Person 3), G5 verified with test doubles.
+- Documented in `docs/integration/p1-p2-integration-review.md`.
+
 ## Agreed Person 1 phases
 
 | Phase | Work | Completion condition | Current record |

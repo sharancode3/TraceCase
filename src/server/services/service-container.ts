@@ -20,6 +20,11 @@ import { workerHeartbeatService } from '@/server/queue/worker-heartbeat.service'
 import { defaultOpenAiClient } from '@/server/ai/openai-client';
 import { checkDbConnectivity } from '@/server/db';
 import { getServerEnv } from '@/server/config/env';
+import {
+  IntegratedReportClarificationAgent,
+  IntegratedBrowserInvestigationAgent,
+  IntegratedEvidenceReviewAgent,
+} from '@/server/ai/integrated-adapters';
 
 export interface ServiceContainer {
   clarificationAgent: ReportClarificationAgentPort;
@@ -68,10 +73,31 @@ export function createDefaultServiceContainer(): ServiceContainer {
     queueDispatcher = unavailableQueueDispatcher;
   }
 
+  let clarificationAgent: ReportClarificationAgentPort;
+  try {
+    clarificationAgent = new IntegratedReportClarificationAgent();
+  } catch {
+    clarificationAgent = unavailableReportClarificationAgent;
+  }
+
+  let browserAgent: BrowserInvestigationAgentPort;
+  try {
+    browserAgent = new IntegratedBrowserInvestigationAgent();
+  } catch {
+    browserAgent = unavailableBrowserInvestigationAgent;
+  }
+
+  let evidenceReviewAgent: EvidenceReviewAgentPort;
+  try {
+    evidenceReviewAgent = new IntegratedEvidenceReviewAgent();
+  } catch {
+    evidenceReviewAgent = unavailableEvidenceReviewAgent;
+  }
+
   return {
-    clarificationAgent: unavailableReportClarificationAgent,
-    browserAgent: unavailableBrowserInvestigationAgent,
-    evidenceReviewAgent: unavailableEvidenceReviewAgent,
+    clarificationAgent,
+    browserAgent,
+    evidenceReviewAgent,
     browserWorker,
     targetReset: unavailableTargetReset,
     evidenceStorage: unavailableEvidenceStorage,

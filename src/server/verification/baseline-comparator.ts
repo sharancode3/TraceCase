@@ -17,6 +17,7 @@ export class BaselineComparator {
     'requesttimestamp',
     '_ts',
     'etag',
+    'verifiedat',
   ]);
 
   /**

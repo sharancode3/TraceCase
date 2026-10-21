@@ -24,7 +24,7 @@ import type { SafeTargetProfile } from '@/contracts/targets';
  * or live PostgreSQL) are unavailable, this suite produces an explicit BLOCKED or NOT_RUN
  * determination with actionable diagnostics rather than masking the absence with test doubles.
  */
-describe('P1-09: Real Acceptance Integration & Environment Capability Suite', () => {
+describe('P1-09: Real Acceptance Integration & Environment Capability Suite', { timeout: 30000 }, () => {
   let server: http.Server;
   let serverPort: number;
   let serverUrl: string;

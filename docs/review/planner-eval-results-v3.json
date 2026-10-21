@@ -1,0 +1,76 @@
+{
+  "timestamp": "2026-10-21T08:08:23.002Z",
+  "model": "qwen2.5-coder:3b",
+  "endpoint": "http://localhost:11434",
+  "declaredPerCallTimeoutMs": 90000,
+  "declaredTotalCallsLimit": 5,
+  "retries": 0,
+  "totalCases": 4,
+  "passCount": 1,
+  "failCount": 3,
+  "totalProviderCalls": 4,
+  "totalTimeouts": 0,
+  "totalFallbacks": 0,
+  "failureBreakdown": {
+    "fixture": 0,
+    "transport": 0,
+    "timeout": 0,
+    "parsing": 2,
+    "semantic": 1
+  },
+  "cases": [
+    {
+      "caseId": "PLN-01",
+      "category": "demo_case",
+      "description": "Unambiguous defect report (TC1)",
+      "declaredExpectation": "PLAN_PROPOSED with entities Task A, Task B",
+      "observedResult": "NEEDS_CLARIFICATION",
+      "observedVariant": "NEEDS_CLARIFICATION",
+      "status": "FAIL",
+      "failureClassification": "semantic",
+      "durationMs": 54870,
+      "providerCallCount": 1,
+      "fallbackUsed": false,
+      "errorDetail": "Observed variant NEEDS_CLARIFICATION"
+    },
+    {
+      "caseId": "PLN-02",
+      "category": "demo_case",
+      "description": "Vague/incomplete report missing steps and context",
+      "declaredExpectation": "NEEDS_CLARIFICATION with targeted questions",
+      "observedResult": "ERROR: [TraceCase AI Provider] [correlationId: 22222222-2222-4222-8222-222222222222] MODEL_SCHEMA_VIOLATION: Model completion failed schema validation: [\n  {\n    \"code\": \"too_big\",\n    \"maximum\": 4,\n    \"type\": \"array\",\n    \"inclusive\": true,\n    \"exact\": false,\n    \"message\": \"Array must contain at most 4 element(s)\",\n    \"path\": [\n      \"questions\",\n      0,\n      \"options\"\n    ]\n  }\n]",
+      "status": "FAIL",
+      "failureClassification": "parsing",
+      "durationMs": 20875,
+      "providerCallCount": 1,
+      "fallbackUsed": false,
+      "errorDetail": "ModelProviderError: [TraceCase AI Provider] [correlationId: 22222222-2222-4222-8222-222222222222] MODEL_SCHEMA_VIOLATION: Model completion failed schema validation: [\n  {\n    \"code\": \"too_big\",\n    \"maximum\": 4,\n    \"type\": \"array\",\n    \"inclusive\": true,\n    \"exact\": false,\n    \"message\": \"Array must contain at most 4 element(s)\",\n    \"path\": [\n      \"questions\",\n      0,\n      \"options\"\n    ]\n  }\n]"
+    },
+    {
+      "caseId": "REG-PLN-01",
+      "category": "non_demo_regression",
+      "description": "Non-demo unambiguous defect report (InventoryApp)",
+      "declaredExpectation": "PLAN_PROPOSED with entities SKU-401, SKU-402",
+      "observedResult": "ERROR: [TraceCase Planner Semantic Validation] Semantic conflict: correctBehaviorAssertions and reportedFailureAssertions share identical verification semantics despite different predicateIds. A condition cannot represent both correct behavior and failure.",
+      "status": "FAIL",
+      "failureClassification": "parsing",
+      "durationMs": 75439,
+      "providerCallCount": 1,
+      "fallbackUsed": false,
+      "errorDetail": "SemanticValidationError: [TraceCase Planner Semantic Validation] Semantic conflict: correctBehaviorAssertions and reportedFailureAssertions share identical verification semantics despite different predicateIds. A condition cannot represent both correct behavior and failure."
+    },
+    {
+      "caseId": "REG-PLN-02",
+      "category": "non_demo_regression",
+      "description": "Non-demo vague report (BillingPortal)",
+      "declaredExpectation": "NEEDS_CLARIFICATION with targeted questions",
+      "observedResult": "NEEDS_CLARIFICATION",
+      "observedVariant": "NEEDS_CLARIFICATION",
+      "status": "PASS",
+      "failureClassification": "none",
+      "durationMs": 22614,
+      "providerCallCount": 1,
+      "fallbackUsed": false
+    }
+  ]
+}

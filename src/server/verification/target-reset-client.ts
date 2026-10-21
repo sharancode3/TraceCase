@@ -56,14 +56,17 @@ export class TargetResetClient {
       ((params.target as unknown as Record<string, unknown>).fixtureResetEndpoint as string | undefined) ||
       `${params.target.baseUrl.replace(/\/+$/, '')}/api/test/reset-fixture`;
 
-    const readbackEndpoint =
-      params.readbackEndpoint ||
-      `${params.target.baseUrl.replace(/\/+$/, '')}/api/test/baseline`;
+    const targetBase = params.target.baseUrl.replace(/\/+$/, '');
+    const candidateReadback = params.readbackEndpoint || `${targetBase}/api/test/readback`;
+    const fallbackReadback = `${targetBase}/api/test/baseline`;
 
     // 1. Validate destination endpoints against TargetNetworkGuard outbound policy
     try {
       networkGuard.assertUrlAllowed(resetEndpoint);
-      networkGuard.assertUrlAllowed(readbackEndpoint);
+      networkGuard.assertUrlAllowed(candidateReadback);
+      if (!params.readbackEndpoint) {
+        networkGuard.assertUrlAllowed(fallbackReadback);
+      }
     } catch (err: unknown) {
       const reason = err instanceof Error ? err.message : String(err);
       return {
@@ -99,6 +102,8 @@ export class TargetResetClient {
       };
       if (params.resetAuthSecret) {
         headers['X-TraceCase-Reset-Secret'] = params.resetAuthSecret;
+        headers['X-TraceCase-Reset-Auth'] = params.resetAuthSecret;
+        headers['Authorization'] = `Bearer ${params.resetAuthSecret}`;
       }
 
       const res = await fetch(resetEndpoint, {
@@ -163,13 +168,23 @@ export class TargetResetClient {
       };
       if (params.resetAuthSecret) {
         headers['X-TraceCase-Reset-Secret'] = params.resetAuthSecret;
+        headers['X-TraceCase-Reset-Auth'] = params.resetAuthSecret;
+        headers['Authorization'] = `Bearer ${params.resetAuthSecret}`;
       }
 
-      const res = await fetch(readbackEndpoint, {
+      let res = await fetch(candidateReadback, {
         method: 'GET',
         headers,
         signal: controller.signal,
       });
+
+      if (res.status === 404 && !params.readbackEndpoint) {
+        res = await fetch(fallbackReadback, {
+          method: 'GET',
+          headers,
+          signal: controller.signal,
+        });
+      }
 
       clearTimeout(timer);
 
@@ -280,13 +295,18 @@ export class TargetResetClient {
   }> {
     const networkGuard = new TargetNetworkGuard(params.target);
     const timeoutMs = params.timeoutMs ?? 10_000;
-    const readbackEndpoint =
+    const targetBase = params.target.baseUrl.replace(/\/+$/, '');
+    const candidateReadback =
       params.readbackEndpoint ||
       ((params.target as unknown as Record<string, unknown>).baselineEndpoint as string | undefined) ||
-      `${params.target.baseUrl.replace(/\/+$/, '')}/api/test/baseline`;
+      `${targetBase}/api/test/readback`;
+    const fallbackReadback = `${targetBase}/api/test/baseline`;
 
     try {
-      networkGuard.assertUrlAllowed(readbackEndpoint);
+      networkGuard.assertUrlAllowed(candidateReadback);
+      if (!params.readbackEndpoint) {
+        networkGuard.assertUrlAllowed(fallbackReadback);
+      }
     } catch (err: unknown) {
       return {
         isEquivalent: false,
@@ -302,13 +322,23 @@ export class TargetResetClient {
       const headers: Record<string, string> = { Accept: 'application/json' };
       if (params.resetAuthSecret) {
         headers['X-TraceCase-Reset-Secret'] = params.resetAuthSecret;
+        headers['X-TraceCase-Reset-Auth'] = params.resetAuthSecret;
+        headers['Authorization'] = `Bearer ${params.resetAuthSecret}`;
       }
 
-      const res = await fetch(readbackEndpoint, {
+      let res = await fetch(candidateReadback, {
         method: 'GET',
         headers,
         signal: controller.signal,
       });
+
+      if (res.status === 404 && !params.readbackEndpoint) {
+        res = await fetch(fallbackReadback, {
+          method: 'GET',
+          headers,
+          signal: controller.signal,
+        });
+      }
       clearTimeout(timer);
 
       if (!res.ok) {

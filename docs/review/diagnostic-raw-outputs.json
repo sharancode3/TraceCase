@@ -1,0 +1,89 @@
+{
+  "timestamp": "2026-10-21T08:02:31.236Z",
+  "PLN_01": {
+    "input": {
+      "contractVersion": "1.0.0",
+      "investigationId": "11111111-1111-4111-8111-111111111111",
+      "targetProfile": {
+        "name": "Demo App",
+        "baseUrl": "http://localhost:3005",
+        "isSandbox": true,
+        "allowedOrigins": [
+          "http://localhost:3005"
+        ],
+        "hasResetFixture": true
+      },
+      "rawReport": {
+        "title": "Deleting active task deletes completed task instead",
+        "description": "Under Active filter, clicking delete on Task B removes Task A instead. Task B remains.",
+        "claimedExpectedBehavior": "Task B should be deleted and Task A should remain intact."
+      },
+      "clarificationHistory": []
+    },
+    "output": {
+      "variant": "NEEDS_CLARIFICATION",
+      "extractedClaim": {
+        "summary": "Deleting active task deletes completed task instead",
+        "affectedFeature": "Task deletion",
+        "missingFacts": [
+          "Specific actions or entities involved"
+        ]
+      },
+      "questions": [
+        {
+          "questionId": "q_1",
+          "questionText": "What specific actions or entities are involved in this issue?",
+          "whyItMatters": "To accurately reproduce the bug, we need to know which tasks and filters are being used.",
+          "options": [
+            "Active filter, Task B, Task A",
+            "Delete button, Active filter, Task B"
+          ],
+          "blocksExecution": true
+        }
+      ]
+    }
+  },
+  "REG_PLN_01": {
+    "input": {
+      "contractVersion": "1.0.0",
+      "investigationId": "44444444-4444-4444-8444-444444444444",
+      "targetProfile": {
+        "name": "InventoryApp",
+        "baseUrl": "http://localhost:4050",
+        "isSandbox": true,
+        "allowedOrigins": [
+          "http://localhost:4050"
+        ],
+        "hasResetFixture": true
+      },
+      "rawReport": {
+        "title": "Stock decrement failure on checkout",
+        "description": "On product detail page for SKU-401, clicking Checkout Now decrements SKU-402 inventory balance instead of SKU-401.",
+        "claimedExpectedBehavior": "SKU-401 inventory should decrease by 1, and SKU-402 balance should remain unchanged."
+      },
+      "clarificationHistory": []
+    },
+    "output": {
+      "variant": "NEEDS_CLARIFICATION",
+      "extractedClaim": {
+        "summary": "Stock decrement failure on checkout",
+        "affectedFeature": "Inventory Management",
+        "missingFacts": [
+          "Specific actions to reproduce the issue"
+        ]
+      },
+      "questions": [
+        {
+          "questionId": "q_1",
+          "questionText": "What specific actions are needed to reproduce the issue?",
+          "whyItMatters": "To accurately plan the test steps and assertions.",
+          "options": [
+            "Navigate to product detail page for SKU-401, click Checkout Now",
+            "Navigate to product detail page for SKU-402, click Checkout Now"
+          ],
+          "blocksExecution": true
+        }
+      ]
+    }
+  }
+}
