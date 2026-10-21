@@ -41,23 +41,20 @@ export class ActionDispatcher {
   }
 
   /**
-   * Resolves a locator for a step either via opaque elementRef or direct CSS selector.
+   * Resolves a locator for a step either via opaque elementRef or target resolution.
    */
   private async resolveLocator(
     page: Page,
     step: PlanStep,
     elementRef?: string
   ): Promise<Locator> {
-    if (elementRef) {
-      const res = await this.observationManager.resolveElementLocator(page, elementRef);
+    const targetRef = elementRef || step.elementRef;
+    if (targetRef) {
+      const res = await this.observationManager.resolveElementLocator(page, targetRef);
       return res.locator;
     }
 
-    if (!step.selector) {
-      throw new Error(`Step ${step.stepIndex} (${step.toolKind}) requires a target element selector or elementRef.`);
-    }
-
-    return this.observationManager.resolveSelector(page, step.selector);
+    return this.observationManager.resolveTarget(page, step);
   }
 
   /**
@@ -87,6 +84,12 @@ export class ActionDispatcher {
             timeout: timeoutMs,
             waitUntil: 'load',
           });
+          break;
+        }
+
+        case 'wait_for_selector': {
+          const locator = await this.resolveLocator(page, step, options?.elementRef);
+          await locator.waitFor({ state: 'visible', timeout: timeoutMs });
           break;
         }
 

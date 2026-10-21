@@ -48,6 +48,7 @@ export const SafeModelTargetContextSchema = z.object({
   allowedOrigins: z.array(z.string().url()).min(1),
   isSandboxVerified: z.boolean(),
   environment: z.enum(['staging', 'development', 'demo', 'production']),
+  hasResetCapability: z.boolean().optional(),
 }).strict();
 export type SafeModelTargetContext = z.infer<typeof SafeModelTargetContextSchema>;
 
@@ -122,5 +123,10 @@ export function projectSafeModelTargetContext(
     allowedOrigins: Array.isArray(target.allowedOrigins) ? [...target.allowedOrigins] : [],
     isSandboxVerified: Boolean(target.isSandboxVerified ?? target.isSandbox ?? false),
     environment: target.environment,
+    hasResetCapability: Boolean(
+      target.fixtureResetEndpoint ||
+      target.hasResetCapability ||
+      (typeof target.fixtureResetAuthSecretRef === 'string' && target.fixtureResetAuthSecretRef.length > 0)
+    ),
   });
 }

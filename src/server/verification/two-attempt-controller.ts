@@ -210,12 +210,14 @@ export class TwoAttemptController {
       // Fail closed immediately if authorization, approval, or lease is invalid before touching target network
       await assertExecutionAuthorized();
 
-      const expectedBaseline: Record<string, unknown> = {
-        targetId: safeTarget.id,
-        environment: safeTarget.environment,
-        fixtureScope: 'default',
-        ...(((plan as unknown as Record<string, unknown>).expectedBaseline as Record<string, unknown>) || {}),
-      };
+      const targetEndpoint = (target as Record<string, unknown>).fixtureResetEndpoint as string | undefined;
+      const targetSecretRef = (target as Record<string, unknown>).fixtureResetAuthSecretRef as string | undefined;
+      const resolvedSecret = targetSecretRef
+        ? (targetSecretRef.startsWith('env:') ? process.env[targetSecretRef.slice(4)] : process.env[targetSecretRef] || targetSecretRef)
+        : undefined;
+
+      const planBaseline = ((plan as unknown as Record<string, unknown>).expectedBaseline as Record<string, unknown>) || {};
+      let baselineForComparison = { ...planBaseline };
 
       // Pre-flight baseline verification for Attempt 1
       let att1PreconditionsMet = true;
@@ -228,15 +230,22 @@ export class TwoAttemptController {
         try {
           const preflight = await TargetResetClient.verifyBaselineReadback({
             target: safeTarget,
-            expectedBaseline,
+            expectedBaseline: baselineForComparison,
+            resetAuthSecret: resolvedSecret,
           });
-          att1PreconditionsMet = preflight.isEquivalent;
+          if (Object.keys(baselineForComparison).length === 0 && preflight.observedBaseline) {
+            baselineForComparison = preflight.observedBaseline;
+            att1PreconditionsMet = true;
+          } else {
+            att1PreconditionsMet = preflight.isEquivalent;
+          }
           if (preflight.targetBuildId) {
             targetBuildIdAttempt1 = preflight.targetBuildId;
           }
         } catch {
           att1PreconditionsMet = false;
         }
+      }
 
       if (!att1PreconditionsMet) {
         clearInterval(periodicLeaseRenewal);
@@ -283,7 +292,6 @@ export class TwoAttemptController {
           summary: 'Pre-flight target baseline verification failed; execution blocked to protect target state.',
         };
       }
-    }
 
     // =========================================================================
     // ATTEMPT 1 EXECUTION
@@ -448,7 +456,10 @@ export class TwoAttemptController {
       target: safeTarget,
       investigationId: params.investigationId,
       attemptPairId: params.executionRequestId,
-      expectedBaseline,
+      expectedBaseline: baselineForComparison,
+      resetEndpoint: targetEndpoint,
+      resetAuthSecret: resolvedSecret,
+      fixtureScope: (plan as unknown as { fixtureScope?: string }).fixtureScope || 'default',
     });
 
     await attemptsRepository.saveResetReceipt(resetReceipt);

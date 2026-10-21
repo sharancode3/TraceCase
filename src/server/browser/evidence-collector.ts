@@ -160,7 +160,7 @@ export class EvidenceCollector {
     }));
   }
 
-  getRecentNetworkFailures(count: number = 10): Array<{ url: string; method: string; status?: number; timestamp: string }> {
+  getRecentNetworkFailures(count: number = 10): Array<{ url: string; method: string; status: number; timestamp: string }> {
     return this.networkFailures.slice(-count).map((f) => ({
       url: f.url,
       method: f.method,

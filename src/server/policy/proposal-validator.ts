@@ -28,6 +28,7 @@ const SUPPORTED_EXECUTABLE_TOOLS = new Set([
   'inspect_dom',
   'get_text',
   'screenshot',
+  'wait_for_selector',
 ]);
 
 const FORBIDDEN_UNSUPPORTED_TOOLS = new Map<string, string>([

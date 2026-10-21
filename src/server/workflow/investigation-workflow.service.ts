@@ -196,15 +196,37 @@ export class InvestigationWorkflowService {
     };
 
     // Call planner
+    const clarificationHistory = questions
+      .filter((q) => q.isAnswered && q.answerText)
+      .map((q) => {
+        const isSuggested =
+          q.suggestedOptions &&
+          Array.isArray(q.suggestedOptions) &&
+          q.suggestedOptions.includes(q.answerText!);
+        return {
+          questionId: q.id,
+          questionText: q.questionText,
+          selectedOption: isSuggested ? q.answerText! : (q.answerText || 'Answered'),
+          customText: isSuggested ? undefined : (q.answerText || undefined),
+        };
+      });
+
     const plannerOutput = await planner.generateProposal({
+      investigationId: inv.id,
       report: plannerInput,
       target: safeTargetContext,
+      clarificationHistory,
     });
 
     if (plannerOutput.status === 'CLARIFICATION_NEEDED') {
       const persistedQuestions = await clarificationsRepository.saveQuestions(
         inv.id,
-        plannerOutput.questions
+        plannerOutput.questions.map((q, idx) => ({
+          questionIndex: q.questionIndex ?? idx,
+          questionText: q.questionText,
+          explanation: q.explanation || (q as unknown as { whyItMatters?: string }).whyItMatters || null,
+          suggestedOptions: q.suggestedOptions || (q as unknown as { options?: string[] }).options || null,
+        }))
       );
 
       const nextRev = inv.workflowRevision + 1;

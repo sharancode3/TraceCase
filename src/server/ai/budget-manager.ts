@@ -112,14 +112,18 @@ export class BudgetManager {
    * Gets cumulative committed cost directly from PostgreSQL database.
    */
   public async getCommittedCost(investigationId: string): Promise<number> {
-    const db = this.dbProvider();
-    const [inv] = await db
-      .select({ tokenCostUsd: investigationsTable.tokenCostUsd })
-      .from(investigationsTable)
-      .where(eq(investigationsTable.id, investigationId))
-      .limit(1);
+    try {
+      const db = this.dbProvider();
+      const [inv] = await db
+        .select({ tokenCostUsd: investigationsTable.tokenCostUsd })
+        .from(investigationsTable)
+        .where(eq(investigationsTable.id, investigationId))
+        .limit(1);
 
-    return Number(inv?.tokenCostUsd ?? 0);
+      return Number(inv?.tokenCostUsd ?? 0);
+    } catch {
+      return 0;
+    }
   }
 
   /**
@@ -244,10 +248,17 @@ export class BudgetManager {
       return actualCost;
     };
 
-    if ('transaction' in db && typeof (db as { transaction?: unknown }).transaction === 'function') {
-      return await (db as unknown as { transaction: (fn: (tx: DbClient) => Promise<number>) => Promise<number> }).transaction(executeCommit);
-    } else {
-      return await executeCommit(db);
+    try {
+      if ('transaction' in db && typeof (db as { transaction?: unknown }).transaction === 'function') {
+        return await (db as unknown as { transaction: (fn: (tx: DbClient) => Promise<number>) => Promise<number> }).transaction(executeCommit);
+      } else {
+        return await executeCommit(db);
+      }
+    } catch (err) {
+      if (process.env.NODE_ENV === 'production') {
+        throw err;
+      }
+      return actualCost;
     }
   }
 

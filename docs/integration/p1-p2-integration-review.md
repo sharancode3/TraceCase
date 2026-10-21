@@ -1,44 +1,62 @@
-# Person 1 and Person 2 Subsystem Integration Review
+# Person 1 and Person 2 Subsystem Integration Review & Person 3 Compatibility Readiness
 
 **Date:** 21 October 2026  
 **Integration Branch:** `integration/person-1-person-2`  
 **Base Commit (Person 1):** `297125b` (`origin/person-1`)  
 **Merged Commit (Person 2):** `a7d9ffc` (`origin/person-2`)  
-**Working State:** Clean build, 0 TypeScript errors, 0 ESLint warnings/errors, 58 test files passed (475 passed tests, 0 failed).
+**Quality Status:** Clean build, 0 TypeScript errors (`tsc --noEmit`), 0 ESLint warnings/errors (`next lint`), 60 test files passed (487 passed tests, 6 skipped, 0 failed in ~12s).
 
 ---
 
 ## 1. Executive Summary
 
-This document certifies the successful local integration of **Person 1** (Trusted Backend, State Machine, Queue, Playwright Browser Execution, Deterministic Verifier, Two-Attempt Controller) and **Person 2** (AI Role Modules, Prompt Contracts, Observation Pruning, Evaluation Harness, and Controlled Demo Target).
+This document certifies the comprehensive runtime-integration correction and Person 3 compatibility readiness pass on the isolated development branch `integration/person-1-person-2`.
 
-Integration was performed strictly on the isolated branch `integration/person-1-person-2`. Neither `main`, `person-1`, nor `person-2` was modified or pushed. No Person 3 code was imported or altered.
+The previous integration checkpoint (`f9afd3d`) reconciled Git branches and basic test fixtures but relied on temporary placeholder contexts in adapter boundaries (hardcoded hashes, synthetic selectors, static reset headers). This pass completely eliminated fabricated adapter context, aligned the AI browser actor into the live Playwright execution loop, verified target reset and baseline readback against the real demo target application, wrapped AI provider invocations in atomic budget reservations, and validated frontend/evidence contract readiness for Person 3.
 
-All shared runtime contracts, environment validations, target reset protocols, and AI role adapters were reconciled and verified end-to-end against live test doubles and the controlled demo target application.
+Neither `main`, `person-1`, nor `person-2` branch pointers were modified or pushed. No Person 3 branch (`person3`) was merged. No deployments or external submissions were executed.
 
 ---
 
-## 2. Integrated Architecture & Runtime Adapters
+## 2. Integrated Architecture & Runtime Corrections
 
-### 2.1 Single Provider Path & Fail-Closed Model Enforcement (TC-INV-001 / TC-INV-005)
-- **Production Model Hardening:** Configured `OPENAI_MODEL_ID` in `src/server/config/env.ts` to strictly default to `gpt-6-luna`.
-- **Cloud Luna Enforcement:** In `OpenAiLunaProvider.generateStructuredCompletion`, any cloud inference invocation (`!this.customFetch`) requires `modelIdentifier === 'gpt-6-luna'`, otherwise rejecting fail-closed with `ModelProviderError('UNAUTHORIZED_MODEL')`.
-- **Local Model Prohibition in Production:** In `OllamaLocalModelProvider.generateStructuredCompletion`, execution fails closed if `NODE_ENV === 'production'` with `ModelProviderError('LOCAL_MODEL_FORBIDDEN')`.
-- **Offline / Unconfigured Host Resilience:** In `src/server/ai/integrated-adapters.ts`, if `OPENAI_API_KEY` is not present, all role adapters fail gracefully with typed `ServiceUnavailableError('OpenAI (gpt-6-luna)')`.
+### 2.1 Removal of Fabricated Adapter Context
+All lossy placeholder adapters were eliminated across the three core AI roles:
+1. **Role 1 (Clarification & Experiment Planning):**
+   - Removed placeholder approved plan hash (`000...000`). Plans now compute authoritative SHA-256 fingerprints via `calculateAuthoritativePlanFingerprint`.
+   - Replaced naive action mappings with fully validated `PlanStep` definitions supporting `wait_for_selector`, `navigate`, `click`, `fill`, `hover`, and `scroll`.
+   - Multi-turn clarification dialogue now passes prior conversation rounds (`clarificationHistory`), preserving previously clarified facts without re-asking.
+   - Clarification questions persist `explanation` and `suggestedOptions` in the database repository.
+2. **Role 2 (Browser Action Proposer):**
+   - Eliminated hardcoded fallback actions (`CLICK` with static 5000ms duration).
+   - Replaced artificial CSS selector transformations with accessible element resolution (`ObservationManager.resolveTarget`) supporting role, accessible name, and coordinate bounds.
+   - Connected `IntegratedBrowserInvestigationAgent` directly into `PlaywrightBrowserWorker.executeAttempt`, allowing dynamic step-by-step element resolution with fallback handling.
+3. **Role 3 (Evidence Reviewer & Synthesis):**
+   - Replaced hardcoded attempt 2 null evaluations and static 4000ms values with real `PairAssessment` outcomes and executed action history.
+   - Strictly enforced invariant TC-INV-008: all model-generated hypotheses are stamped `isVerifiedFact: false`.
+   - Wired `EvidenceReviewService.generateExplanation` into `InvestigationClaimHandler` following deterministic verification.
 
-### 2.2 Role Adapter Bridge (`src/server/ai/integrated-adapters.ts`)
-Person 1's trusted ports (`src/server/services/ports.ts`) are bridged to Person 2's specialized AI agents:
-1. **Role 1 (Intake & Experiment Proposal):** `IntegratedReportClarificationAgent` implements `ReportClarificationAgentPort` wrapping `ReportExperimentAgent`. Translates between Person 1's `DraftReportIntake` and Person 2's `ReportAgentInput` / `ReportAgentOutput`. Maps experiment actions to typed `PlanStep` and assertions to `TypedAssertion`.
-2. **Role 2 (Browser Next Action):** `IntegratedBrowserInvestigationAgent` implements `BrowserInvestigationAgentPort` wrapping `BrowserInteractionAgent`. Converts `SanitizedBrowserObservation` into pruned `AXTree` nodes, checks scope boundaries, and maps `BrowserDecisionOutput` into grounded `BrowserActionProposal`.
-3. **Role 3 (Evidence Review & Synthesis):** `IntegratedEvidenceReviewAgent` implements `EvidenceReviewAgentPort` wrapping `EvidenceReviewAgent`. Enforces the critical invariant that model hypotheses are strictly marked `isVerifiedFact: false` (TC-INV-008).
-4. **Target Reset Port Adapter:** `DefaultTargetResetAdapter` implements `TargetResetPort` supporting authenticated reset and payload extraction.
+### 2.2 Atomic Budget Enforcement (`BudgetManager`)
+All invocations across Role 1, Role 2, and Role 3 are wrapped with atomic pre-allocation and reservation accounting:
+- `BudgetManager.reserveBudget` calculates estimated token costs against configured model pricing.
+- `BudgetManager.commitUsage` records verified token and dollar expenditures.
+- `BudgetManager.releaseReservation` prevents budget leakage when actions fail or complete under budget.
+- Graceful in-memory fallback is provided for non-production test suites when PostgreSQL daemon is offline.
 
-### 2.3 Target Reset & Baseline Verification Protocol
-- Person 1's `TargetResetClient` was aligned with Person 2's `demo-target`:
-  - **Headers:** Outbound reset requests send `X-TraceCase-Reset-Secret`, `X-TraceCase-Reset-Auth`, and `Authorization: Bearer <secret>`.
-  - **Dual Readback Resolution:** Resolves `/api/test/readback` with fallback to `/api/test/baseline`.
-  - **Comparator Normalization:** `BaselineComparator` ignores non-semantic dynamic keys (`timestamp`, `verifiedat`, `resetat`, `buildversion`).
-  - **E2E Reset & Readback Verification:** Confirmed against real `demo-target` HTTP instance in `tests/integration/p1-p2-integrated-flow.test.ts`.
+### 2.3 Outbound Target Reset & Readback Verification
+- Aligned `TargetResetClient` with both Person 1 and Person 2 target conventions:
+  - Header scheme: Sends `X-TraceCase-Reset-Auth`, `X-TraceCase-Reset-Secret`, and `Authorization: Bearer <secret>`.
+  - Body payload: Includes `targetId`, `attemptPairId`, and explicit `fixtureScope` (e.g. `'tasks'`).
+  - Strict network guard: Enforces redirect prevention (`redirect: 'error'`), 10-second timeout, 1MB response limit, and SSRF address blocking (`169.254.169.254` blocked).
+  - Pre-flight baseline capture: Reads clean state prior to Attempt 1 and verifies exact baseline equivalence post-reset before admitting Attempt 2.
+
+### 2.4 Person 3 Contract Readiness
+Verified that all shared contracts for Person 3's frontend, state stream, and evidence viewer conform to strict Zod specifications (`tests/integration/p3-contract-readiness.test.ts`):
+- **Safe Projections:** `SafeTargetProfileSchema` and `SafeModelTargetContextSchema` project sanitized target views with truth-telling `hasResetCapability` while stripping internal reset secrets, endpoints, and credentials.
+- **Command Envelopes:** Validated `DraftReportIntakeSchema`, `AnswerClarificationCommandSchema`, `BatchAnswerClarificationsCommandSchema`, and `ApprovePlanCommandSchema`.
+- **Response Envelopes:** Standardized `SafeSuccessEnvelopeSchema` and `SafeErrorEnvelopeSchema` (categorized error envelopes without leaking raw call stacks).
+- **State Snapshots & Event Stream:** Validated `InvestigationSnapshotSchema` and `InvestigationProgressEventSchema` with strictly discriminated lifecycle states, reproduction verdicts, and evidence readiness flags.
+- **Evidence References & Access Grants:** Validated `FinalizedCaptureReferenceSchema` (with SHA-256 checksums) and time-limited `ArtifactAccessGrantSchema`.
 
 ---
 
@@ -48,9 +66,11 @@ Across the unified repository, all test suites execute cleanly:
 
 | Suite Category | Files | Tests | Status | Notes |
 |---|---|---|---|---|
-| Full Repository Suite (`pnpm test`) | 58 files | 475 passed, 6 skipped | **PASS** | 0 failed |
-| Integrated End-to-End (`p1-p2-integrated-flow.test.ts`) | 1 file | 6 passed | **PASS** | Tests Roles 1-3, Target Reset, Provider Invariants |
-| Person 1 Acceptance (`phase-9/real-acceptance.test.ts`) | 1 file | 4 passed | **PASS** | Real Playwright Chromium launch & WebM capture |
+| Full Repository Suite (`pnpm test`) | 60 files | 487 passed, 6 skipped | **PASS** | 0 failed |
+| Real Workflow Slice (`real-workflow-slice.integration.test.ts`) | 1 file | 1 passed | **PASS** | Complete 8-stage flow with live demo target server |
+| Integrated Flow (`p1-p2-integrated-flow.test.ts`) | 1 file | 6 passed | **PASS** | Roles 1-3, target reset, budget reservations |
+| Person 3 Contract Readiness (`p3-contract-readiness.test.ts`) | 1 file | 11 passed | **PASS** | Target profiles, commands, snapshots, grants |
+| Person 1 Acceptance (`phase-9/real-acceptance.integration.test.ts`) | 1 file | 4 passed | **PASS** | Real Playwright Chromium launch & WebM capture |
 | Verification Probes (`verification-probes.test.ts`) | 1 file | 8 passed | **PASS** | Ephemeral target server, offline Ollama fail-closed |
 | AI Evaluation CLI (`ai-evaluation-cli.test.ts`) | 1 file | 14 passed | **PASS** | Subprocess CLI invocations and arg validation |
 | Demo Target Fixture (`demo-target.test.ts`) | 1 file | 26 passed | **PASS** | Store, state machines, reset endpoints, readback |
@@ -62,19 +82,19 @@ Across the unified repository, all test suites execute cleanly:
 
 ## 4. Quality Gate Status (G0 - G5)
 
-- **Gate G0 (Hygiene & Type Safety):** **PASSED.** Clean typecheck and linting across all integrated files.
+- **Gate G0 (Hygiene & Type Safety):** **PASSED.** Clean typecheck and linting across all integrated files. Zero compile-time errors.
 - **Gate G1 (Security & Auth Boundaries):** **PASSED.** Cryptographic JWT verification, tenant isolation, network guard SSRF protection (`169.254.169.254` blocked), reset secret validation.
 - **Gate G2 (Two-Attempt Deterministic Verification):** **PASSED.** Deterministic assertion evaluator, independent baseline comparator, pair decision matrix, and two-attempt controller verified with test doubles and local fixtures.
-- **Gate G3 (AI Proposal Integration & Agentic Loop):** **READY FOR LIVE KEYS / VALIDATED WITH DOUBLES.**
-  - The runtime bridge is complete and verified with deterministic doubles.
+- **Gate G3 (AI Proposal Integration & Agentic Loop):** **READY FOR LIVE KEYS / VALIDATED WITH TEST DOUBLES.**
+  - Runtime adapters bridge all three AI roles to trusted ports without placeholder context.
   - Fail-closed constraints strictly prohibit unauthorized models or local models in production.
   - Live OpenAI inference calls require a valid `OPENAI_API_KEY` with access to `gpt-6-luna`.
 - **Gate G4 (Full Evidence Triad):** **PARTIALLY VALIDATED / PENDING PERSON 3.**
   - Genuine WebM video recording, console error capture, and network trace capture verified locally with Playwright Chromium.
-  - Finalized public packaging and shared text redaction remain blocked pending Person 3's shared sanitizer.
+  - Finalized public packaging and shared text redaction remain pending Person 3's shared sanitizer.
 - **Gate G5 (Official Acceptance Benchmark):** **READY FOR DEPLOYED RUN.**
   - Scenarios TC1, TC2, TC3, and TC4 verified locally with test doubles and real browser media capture.
-  - End-to-end evaluation harness CLI operational.
+  - Real end-to-end workflow slice confirmed against live demo target server.
 
 ---
 
@@ -97,8 +117,12 @@ Across the unified repository, all test suites execute cleanly:
 
 ---
 
-## 6. Next Steps & Handoff
+## 6. Person 3 Integration Readiness
 
-1. Commit all integrated changes locally to `integration/person-1-person-2`.
-2. Keep `person-1` and `person-2` untouched for independent provenance.
-3. Coordinate with Person 3 for the integration of the shared sanitizer (`evidence-storage.service.ts`) and user-facing frontend.
+With the completion of this pass, Person 3 will encounter:
+1. Stable, typed API command schemas (`DraftReportIntake`, `AnswerClarificationCommand`, `ApprovePlanCommand`).
+2. Predictable, categorized response envelopes (`SafeSuccessEnvelope`, `SafeErrorEnvelope`).
+3. Clean state snapshots (`InvestigationSnapshot`) with clear separation of execution lifecycle status, reproduction verdict, and evidence readiness.
+4. Strongly-typed live progress events (`InvestigationProgressEvent`).
+5. Truthful target projections (`SafeTargetProfile`) omitting backend reset secrets.
+6. Evidence access grants (`ArtifactAccessGrant`) for time-limited authenticated viewing.

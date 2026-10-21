@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { getDb, DbClient } from '@/server/db';
 import { investigationsTable, evidenceArtifactsTable } from '@/server/db/schema';
 import { eventsRepository } from '@/server/db/repositories/events.repository';
@@ -303,6 +303,35 @@ export class EvidencePipeline {
         isEligibleForSharing: a.isEligibleForSharing,
       })),
     };
+  }
+
+  public async getEligibleEvidence(
+    investigationId: string
+  ): Promise<FinalizedCaptureReference[]> {
+    const db = this.dbProvider();
+    const artifacts = await db
+      .select()
+      .from(evidenceArtifactsTable)
+      .where(
+        and(
+          eq(evidenceArtifactsTable.investigationId, investigationId),
+          eq(evidenceArtifactsTable.isEligibleForSharing, true),
+          eq(evidenceArtifactsTable.storageTier, 'PUBLIC_SAFE')
+        )
+      );
+
+    return artifacts
+      .filter((a) => a.attemptNumber === 1 || a.attemptNumber === 2)
+      .map((a) => ({
+        captureId: a.id,
+        investigationId: a.investigationId,
+        attemptNumber: a.attemptNumber as 1 | 2,
+        kind: a.kind as FinalizedCaptureReference['kind'],
+        storageRef: a.storageRef || `local://${a.localPath || a.id}`,
+        sizeBytes: a.sizeBytes,
+        sha256Checksum: a.sha256Checksum,
+        capturedAt: a.capturedAt.toISOString(),
+      }));
   }
 }
 

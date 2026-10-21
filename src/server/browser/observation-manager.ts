@@ -1,6 +1,7 @@
 import type { Page, Locator } from 'playwright';
 import { ElementReference } from './types';
 import { SanitizedBrowserObservation } from '@/contracts/observations';
+import type { PlanStep } from '@/contracts/planning';
 
 export class ObservationResolutionError extends Error {
   constructor(
@@ -198,5 +199,94 @@ export class ObservationManager {
     }
 
     return locator;
+  }
+
+  /**
+   * Resolves a target for an action step safely without passing raw accessible names to CSS querySelectorAll.
+   */
+  async resolveTarget(page: Page, step: PlanStep): Promise<Locator> {
+    if (step.elementRef) {
+      const res = await this.resolveElementLocator(page, step.elementRef);
+      return res.locator;
+    }
+
+    if (step.targetRole && step.targetAccessibleName) {
+      const roleLocator = page.getByRole(step.targetRole.toLowerCase() as Parameters<Page['getByRole']>[0], {
+        name: step.targetAccessibleName,
+        exact: false,
+      });
+      const count = await roleLocator.count().catch(() => 0);
+      if (count === 1) return roleLocator;
+      if (count > 1) {
+        const exact = page.getByRole(step.targetRole.toLowerCase() as Parameters<Page['getByRole']>[0], {
+          name: step.targetAccessibleName,
+          exact: true,
+        });
+        const exactCount = await exact.count().catch(() => 0);
+        if (exactCount === 1) return exact;
+        throw new ObservationResolutionError(
+          step.targetAccessibleName,
+          'AMBIGUOUS_LOCATOR',
+          `Accessible role locator (${step.targetRole} "${step.targetAccessibleName}") matched ${count} elements.`
+        );
+      }
+    }
+
+    if (step.targetAccessibleName) {
+      const textLocator = page.getByText(step.targetAccessibleName, { exact: false });
+      const count = await textLocator.count().catch(() => 0);
+      if (count === 1) return textLocator;
+      if (count > 1) {
+        const exact = page.getByText(step.targetAccessibleName, { exact: true });
+        const exactCount = await exact.count().catch(() => 0);
+        if (exactCount === 1) return exact;
+        throw new ObservationResolutionError(
+          step.targetAccessibleName,
+          'AMBIGUOUS_LOCATOR',
+          `Text locator "${step.targetAccessibleName}" matched ${count} elements.`
+        );
+      }
+    }
+
+    if (step.selector) {
+      // Determine if selector is a valid CSS selector or plain text description
+      const isLikelyCss = /^[a-zA-Z0-9_\-\.\#\[\]\:\>\+\~\*\s\=\"\']+$/.test(step.selector) &&
+        !step.selector.includes('\n') &&
+        (step.selector.startsWith('#') ||
+         step.selector.startsWith('.') ||
+         step.selector.startsWith('[') ||
+         /^(button|a|input|select|textarea|div|span|p|li|ul|ol|h[1-6]|form|label|table|tr|td|th)\b/i.test(step.selector));
+
+      if (isLikelyCss) {
+        try {
+          return await this.resolveSelector(page, step.selector);
+        } catch (err) {
+          if (err instanceof ObservationResolutionError && err.code === 'AMBIGUOUS_LOCATOR') {
+            throw err;
+          }
+        }
+      }
+
+      // Fallback: try getByText
+      const textLocator = page.getByText(step.selector, { exact: false });
+      const count = await textLocator.count().catch(() => 0);
+      if (count === 1) return textLocator;
+      if (count > 1) {
+        const exact = page.getByText(step.selector, { exact: true });
+        const exactCount = await exact.count().catch(() => 0);
+        if (exactCount === 1) return exact;
+        throw new ObservationResolutionError(
+          step.selector,
+          'AMBIGUOUS_LOCATOR',
+          `Selector/text '${step.selector}' matched ${count} elements.`
+        );
+      }
+
+      return this.resolveSelector(page, step.selector);
+    }
+
+    throw new Error(
+      `Step ${step.stepIndex} (${step.toolKind}) requires a target element selector, targetAccessibleName, or elementRef.`
+    );
   }
 }

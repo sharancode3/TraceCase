@@ -12,6 +12,7 @@ export interface CoordinateResetParams {
   resetEndpoint?: string;
   resetAuthSecret?: string;
   readbackEndpoint?: string;
+  fixtureScope?: string;
   timeoutMs?: number;
 }
 
@@ -101,8 +102,8 @@ export class TargetResetClient {
         'Content-Type': 'application/json',
       };
       if (params.resetAuthSecret) {
-        headers['X-TraceCase-Reset-Secret'] = params.resetAuthSecret;
         headers['X-TraceCase-Reset-Auth'] = params.resetAuthSecret;
+        headers['X-TraceCase-Reset-Secret'] = params.resetAuthSecret;
         headers['Authorization'] = `Bearer ${params.resetAuthSecret}`;
       }
 
@@ -111,9 +112,10 @@ export class TargetResetClient {
         headers,
         body: JSON.stringify({
           targetId: params.target.id,
-          fixtureScope: 'default',
+          fixtureScope: params.fixtureScope || 'default',
           attemptPairId: params.attemptPairId,
         }),
+        redirect: 'error',
         signal: controller.signal,
       });
 
@@ -167,14 +169,15 @@ export class TargetResetClient {
         Accept: 'application/json',
       };
       if (params.resetAuthSecret) {
-        headers['X-TraceCase-Reset-Secret'] = params.resetAuthSecret;
         headers['X-TraceCase-Reset-Auth'] = params.resetAuthSecret;
+        headers['X-TraceCase-Reset-Secret'] = params.resetAuthSecret;
         headers['Authorization'] = `Bearer ${params.resetAuthSecret}`;
       }
 
       let res = await fetch(candidateReadback, {
         method: 'GET',
         headers,
+        redirect: 'error',
         signal: controller.signal,
       });
 
@@ -182,6 +185,7 @@ export class TargetResetClient {
         res = await fetch(fallbackReadback, {
           method: 'GET',
           headers,
+          redirect: 'error',
           signal: controller.signal,
         });
       }
@@ -189,7 +193,16 @@ export class TargetResetClient {
       clearTimeout(timer);
 
       if (res.ok) {
-        observedBaseline = await res.json();
+        const text = await res.text();
+        if (text.length > 1_000_000) {
+          readbackDiscrepancy = 'Readback response exceeded 1MB safety limit.';
+        } else {
+          try {
+            observedBaseline = JSON.parse(text);
+          } catch {
+            readbackDiscrepancy = 'Readback endpoint returned malformed JSON.';
+          }
+        }
         headerBuildId =
           res.headers.get('x-target-build-id') ||
           res.headers.get('target-build-id') ||
@@ -292,6 +305,7 @@ export class TargetResetClient {
     expectedStateHash: string;
     observedStateHash: string;
     targetBuildId?: string;
+    observedBaseline?: Record<string, unknown>;
   }> {
     const networkGuard = new TargetNetworkGuard(params.target);
     const timeoutMs = params.timeoutMs ?? 10_000;
@@ -321,14 +335,15 @@ export class TargetResetClient {
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       const headers: Record<string, string> = { Accept: 'application/json' };
       if (params.resetAuthSecret) {
-        headers['X-TraceCase-Reset-Secret'] = params.resetAuthSecret;
         headers['X-TraceCase-Reset-Auth'] = params.resetAuthSecret;
+        headers['X-TraceCase-Reset-Secret'] = params.resetAuthSecret;
         headers['Authorization'] = `Bearer ${params.resetAuthSecret}`;
       }
 
       let res = await fetch(candidateReadback, {
         method: 'GET',
         headers,
+        redirect: 'error',
         signal: controller.signal,
       });
 
@@ -336,6 +351,7 @@ export class TargetResetClient {
         res = await fetch(fallbackReadback, {
           method: 'GET',
           headers,
+          redirect: 'error',
           signal: controller.signal,
         });
       }
@@ -355,7 +371,27 @@ export class TargetResetClient {
         res.headers.get('target-build-id') ||
         undefined;
 
-      const observedBaseline = await res.json();
+      let observedBaseline: Record<string, unknown> = {};
+      const text = await res.text();
+      if (text.length > 1_000_000) {
+        return {
+          isEquivalent: false,
+          discrepancies: ['Pre-flight readback exceeded 1MB safety limit.'],
+          expectedStateHash: 'size_limit_exceeded',
+          observedStateHash: 'size_limit_exceeded',
+        };
+      }
+      try {
+        observedBaseline = JSON.parse(text);
+      } catch {
+        return {
+          isEquivalent: false,
+          discrepancies: ['Pre-flight readback returned malformed JSON.'],
+          expectedStateHash: 'malformed_json',
+          observedStateHash: 'malformed_json',
+        };
+      }
+
       const targetBuildId =
         headerBuildId ||
         (typeof observedBaseline.targetBuildId === 'string'
@@ -386,6 +422,7 @@ export class TargetResetClient {
         expectedStateHash: comparison.expectedStateHash,
         observedStateHash: comparison.observedStateHash,
         targetBuildId,
+        observedBaseline,
       };
     } catch (err: unknown) {
       return {

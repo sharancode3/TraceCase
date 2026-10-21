@@ -1,4 +1,4 @@
-import type { ExperimentPlan, AuthoritativeExperimentPlan } from '@/contracts/planning';
+import type { ExperimentPlan, AuthoritativeExperimentPlan, PlanStep } from '@/contracts/planning';
 import type { SafeTargetProfile, SafeModelTargetContext } from '@/contracts/targets';
 import type { DraftReportIntake, ClarifiedReportContext } from '@/contracts/reports';
 import type { ReportPlannerOutput, BrowserActionProposal, EvidenceExplanationProposal } from '@/contracts/ai';
@@ -32,6 +32,13 @@ export interface ReportClarificationAgentPort {
   generateProposal(params: {
     report: DraftReportIntake | ClarifiedReportContext;
     target: SafeModelTargetContext;
+    investigationId?: string;
+    clarificationHistory?: Array<{
+      questionId: string;
+      questionText: string;
+      selectedOption: string;
+      customText?: string;
+    }>;
   }): Promise<ReportPlannerOutput>;
 }
 
@@ -52,6 +59,17 @@ export interface BrowserInvestigationAgentPort {
     approvedIntent: string;
     currentObservation: SanitizedBrowserObservation;
     remainingAllowedTiers: string[];
+    approvedStep?: PlanStep;
+    attemptNumber?: 1 | 2;
+    planHash?: string;
+    allowedOrigins?: string[];
+    priorActionHistory?: Array<{
+      stepNumber?: number;
+      actionType?: string;
+      targetNodeId?: string;
+      executedSuccessfully?: boolean;
+      errorMessage?: string;
+    }>;
   }): Promise<BrowserActionProposal>;
 }
 
@@ -72,6 +90,68 @@ export interface EvidenceReviewAgentPort {
     lockedVerdict: string;
     verifiedAssertions: VerificationAssertionResult[];
     eligibleEvidence: FinalizedCaptureReference[];
+    rawReport?: {
+      title: string;
+      description: string;
+      claimedExpectedBehavior?: string;
+    };
+    testedEnvironment?: string;
+    targetBuildId?: string;
+    resetStatus?: {
+      executed: boolean;
+      success: boolean;
+      details?: string;
+    };
+    attempt1?: {
+      attemptNumber: 1;
+      status: 'PASSED_ASSERTIONS' | 'FAILED_ASSERTIONS' | 'BLOCKED_ERROR' | 'INVALID_PRECONDITIONS';
+      failureSignatureMatched: boolean;
+      executionDurationMs: number;
+      isValid: boolean;
+      assertionsEvaluated: Array<{
+        predicateId: string;
+        predicateDescription: string;
+        passed: boolean;
+        actualValue: string;
+        expectedValue: string;
+        result?: string;
+      }>;
+      safeArtifacts?: {
+        videoId?: string;
+        videoUrl?: string;
+        consoleLogId?: string;
+        consoleLogUrl?: string;
+        networkLogId?: string;
+        networkLogUrl?: string;
+      };
+      sanitizedConsoleExcerpts?: string[];
+      captureErrors?: string[];
+    };
+    attempt2?: {
+      attemptNumber: 2;
+      status: 'PASSED_ASSERTIONS' | 'FAILED_ASSERTIONS' | 'BLOCKED_ERROR' | 'INVALID_PRECONDITIONS';
+      failureSignatureMatched: boolean;
+      executionDurationMs: number;
+      isValid: boolean;
+      assertionsEvaluated: Array<{
+        predicateId: string;
+        predicateDescription: string;
+        passed: boolean;
+        actualValue: string;
+        expectedValue: string;
+        result?: string;
+      }>;
+      safeArtifacts?: {
+        videoId?: string;
+        videoUrl?: string;
+        consoleLogId?: string;
+        consoleLogUrl?: string;
+        networkLogId?: string;
+        networkLogUrl?: string;
+      };
+      sanitizedConsoleExcerpts?: string[];
+      captureErrors?: string[];
+    } | null;
   }): Promise<EvidenceExplanationProposal>;
 }
 
@@ -116,6 +196,8 @@ export interface BrowserWorkerPort {
     plan: AuthoritativeExperimentPlan | ExperimentPlan;
     target: SafeTargetProfile;
     onHeartbeat?: () => Promise<void>;
+    browserAgent?: BrowserInvestigationAgentPort;
+    executionMode?: 'AI_GROUNDED' | 'DETERMINISTIC_FIXED_STEP';
   }): Promise<AttemptExecutionReceipt>;
 }
 

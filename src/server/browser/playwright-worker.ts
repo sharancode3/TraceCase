@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import type { AuthoritativeExperimentPlan, ExperimentPlan, PlanStep } from '@/contracts/planning';
 import type { SafeTargetProfile } from '@/contracts/targets';
 import type { AttemptExecutionReceipt, ActionReceipt } from '@/contracts/observations';
-import type { BrowserWorkerPort } from '@/server/services/ports';
+import type { BrowserWorkerPort, BrowserInvestigationAgentPort } from '@/server/services/ports';
 import { TargetNetworkGuard } from './target-network-guard';
 import { ObservationManager } from './observation-manager';
 import { EvidenceCollector } from './evidence-collector';
@@ -74,6 +74,8 @@ export class PlaywrightBrowserWorker implements BrowserWorkerPort {
     plan: AuthoritativeExperimentPlan | ExperimentPlan;
     target: SafeTargetProfile;
     onHeartbeat?: () => Promise<void>;
+    browserAgent?: BrowserInvestigationAgentPort;
+    executionMode?: 'AI_GROUNDED' | 'DETERMINISTIC_FIXED_STEP';
   }): Promise<ExtendedAttemptReceipt> {
     const startedAt = new Date().toISOString();
     const startedAtMs = Date.now();
@@ -170,7 +172,78 @@ export class PlaywrightBrowserWorker implements BrowserWorkerPort {
         }
 
         const activePage = context.pages().slice(-1)[0] || mainPage;
+        let elementRefToUse: string | undefined = step.elementRef;
+
+        // Dynamic element reference grounding via AI actor if requested
+        if (
+          params.browserAgent &&
+          params.executionMode === 'AI_GROUNDED' &&
+          step.toolKind !== 'navigate'
+        ) {
+          const freshObs = await observationManager.captureFreshObservation(
+            activePage,
+            step.stepIndex,
+            evidenceCollector.getRecentConsole(20),
+            evidenceCollector.getRecentNetworkFailures(10)
+          );
+
+          const planHash = (params.plan as AuthoritativeExperimentPlan).planHash;
+          try {
+            const proposal = await params.browserAgent.proposeNextAction({
+              investigationId: params.investigationId,
+              approvedIntent: step.semanticAction || step.rationale || `Step ${step.stepIndex}`,
+              currentObservation: freshObs,
+              remainingAllowedTiers: ['TIER_1_READ_ONLY', 'TIER_2_SAFE_INTERACTION'],
+              approvedStep: step,
+              attemptNumber: params.attemptNumber,
+              planHash,
+              allowedOrigins: params.target.allowedOrigins,
+              priorActionHistory: actionReceipts.map((r) => ({
+                stepNumber: r.stepIndex + 1,
+                actionType: r.action.toolKind,
+                targetNodeId: (r.action as { elementRef?: string; targetAccessibleName?: string }).elementRef ||
+                  (r.action as { elementRef?: string; targetAccessibleName?: string }).targetAccessibleName,
+                executedSuccessfully: r.status === 'SUCCESS',
+                errorMessage: r.errorDetails,
+              })),
+            });
+
+            if (proposal.kind === 'EXECUTE_ACTION') {
+              if (proposal.action?.elementRef) {
+                elementRefToUse = proposal.action.elementRef;
+              }
+            } else if (proposal.kind === 'STOP_NO_PROGRESS') {
+              actionReceipts.push({
+                stepIndex: step.stepIndex,
+                action: step,
+                tier: step.tier,
+                status: 'FAILED',
+                durationMs: 0,
+                uncertainty: 'NONE',
+                errorDetails: `AI investigation agent halted with STOP_NO_PROGRESS: ${proposal.reason || 'No progress possible'}`,
+                dispatchedAt: new Date().toISOString(),
+                completedAt: new Date().toISOString(),
+              });
+              break;
+            }
+          } catch (agentErr) {
+            actionReceipts.push({
+              stepIndex: step.stepIndex,
+              action: step,
+              tier: step.tier,
+              status: 'FAILED',
+              durationMs: 0,
+              uncertainty: 'NONE',
+              errorDetails: `AI investigation agent error: ${agentErr instanceof Error ? agentErr.message : String(agentErr)}`,
+              dispatchedAt: new Date().toISOString(),
+              completedAt: new Date().toISOString(),
+            });
+            break;
+          }
+        }
+
         const receipt = await actionDispatcher.executeStep(activePage, step, {
+          elementRef: elementRefToUse,
           screenshotDir: stagingDir,
         });
 

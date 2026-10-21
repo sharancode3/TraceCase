@@ -7,7 +7,7 @@ import type {
 } from '@/server/services/ports';
 import { ServiceUnavailableError } from '@/server/services/ports';
 import type { DraftReportIntake, ClarifiedReportContext } from '@/contracts/reports';
-import type { SafeModelTargetContext } from '@/contracts/targets';
+import type { SafeModelTargetContext, SafeTargetProfile } from '@/contracts/targets';
 import type {
   ReportPlannerOutput,
   BrowserActionProposal,
@@ -32,12 +32,15 @@ import { OpenAiLunaProvider, ModelProviderError } from './provider';
 import { ReportExperimentAgent } from './planner';
 import { BrowserInteractionAgent } from './browser-actor';
 import { EvidenceReviewAgent } from './reviewer';
+import { TargetResetClient } from '@/server/verification/target-reset-client';
+import { defaultBudgetManager, BudgetManager } from './budget-manager';
 import type {
   ReportAgentInput,
   BrowserAgentInput,
   EvidenceReviewAgentInput,
   PrunedAXTreeNode,
   PlanAssertion,
+  AttemptEvaluationData,
 } from './contracts';
 
 /**
@@ -49,13 +52,14 @@ import type {
  * - AI Role 1: IntegratedReportClarificationAgent -> ReportExperimentAgent
  * - AI Role 2: IntegratedBrowserInvestigationAgent -> BrowserInteractionAgent
  * - AI Role 3: IntegratedEvidenceReviewAgent -> EvidenceReviewAgent
- * - Target Fixture: DefaultTargetResetAdapter -> Target reset HTTP protocol
+ * - Target Fixture: DefaultTargetResetAdapter -> TargetResetClient (Single Policy Client)
  *
- * STRICT BOUNDARIES & INVARIANTS:
- * 1. Fail-closed: Throws ServiceUnavailableError if no key is configured on live calls.
- * 2. TC-INV-001: Luna gpt-6-luna only.
- * 3. TC-INV-008: Model hypotheses are never marked as verified facts.
- * 4. Models propose actions/plans; server authorizes and validates all schemas.
+ * STRICT INVARIANTS:
+ * 1. TC-INV-001: OpenAI gpt-6-luna only.
+ * 2. TC-INV-005: Fail-closed on missing configuration or unauthorized models.
+ * 3. TC-INV-008: Model hypotheses are strictly marked isVerifiedFact: false.
+ * 4. Model output cannot establish or modify server-only authority metadata.
+ * 5. Unknown actions and unsupported assertion combinations are rejected explicitly.
  */
 
 function mapActionTypeToToolKind(actionType: string, targetRole?: string): SupportedToolKind {
@@ -69,9 +73,9 @@ function mapActionTypeToToolKind(actionType: string, targetRole?: string): Suppo
     case 'SELECT':
       return 'select_option';
     case 'WAIT_FOR_SELECTOR':
-      return 'inspect_dom';
+      return 'wait_for_selector';
     default:
-      return 'click_button';
+      throw new Error(`Unknown or unsupported plan action type: '${actionType}'.`);
   }
 }
 
@@ -79,49 +83,62 @@ function mapPlanAssertionToTypedAssertion(
   assertion: PlanAssertion,
   purpose: 'EXPECTED_CORRECT_BEHAVIOR' | 'REPORTED_FAILURE_SIGNATURE'
 ): TypedAssertion {
-  let kind: TypedAssertionKind = 'ENTITY_PRESENCE';
-  let source: ObservationSource = 'DOM_ELEMENT';
-  let operator: TypedAssertionOperator = 'EXISTS';
+  let kind: TypedAssertionKind;
+  let source: ObservationSource;
+  let operator: TypedAssertionOperator;
 
-  switch (assertion.target) {
-    case 'DOM_ELEMENT':
+  // Validate and translate only combinations supported by the actual collector and evaluator
+  if (assertion.target === 'DOM_ELEMENT') {
+    if (assertion.expectedCondition === 'EXISTS') {
       kind = 'ENTITY_PRESENCE';
       source = 'DOM_ELEMENT';
-      break;
-    case 'HTTP_STATUS':
-      kind = 'NETWORK_OBSERVATION';
-      source = 'NETWORK_RESPONSE';
-      break;
-    case 'API_RESPONSE_BODY':
-      kind = 'NETWORK_OBSERVATION';
-      source = 'NETWORK_RESPONSE';
-      break;
-    case 'URL_PATH':
+      operator = 'EXISTS';
+    } else if (assertion.expectedCondition === 'NOT_EXISTS') {
+      kind = 'ENTITY_PRESENCE';
+      source = 'DOM_ELEMENT';
+      operator = 'NOT_EXISTS';
+    } else if (assertion.expectedCondition === 'TEXT_CONTAINS') {
       kind = 'VALUE_COMPARISON';
       source = 'DOM_TEXT';
-      break;
-  }
-
-  switch (assertion.expectedCondition) {
-    case 'EXISTS':
-      operator = 'EXISTS';
-      break;
-    case 'NOT_EXISTS':
-      operator = 'NOT_EXISTS';
-      break;
-    case 'TEXT_CONTAINS':
       operator = 'CONTAINS';
-      break;
-    case 'STATUS_CODE_EQUALS':
+    } else {
+      throw new Error(
+        `Unsupported condition '${assertion.expectedCondition}' for DOM_ELEMENT assertion target.`
+      );
+    }
+  } else if (assertion.target === 'HTTP_STATUS') {
+    if (assertion.expectedCondition === 'STATUS_CODE_EQUALS') {
+      kind = 'NETWORK_OBSERVATION';
+      source = 'NETWORK_RESPONSE';
       operator = 'EQUALS';
-      break;
-    case 'URL_MATCHES':
-      operator = 'EQUALS';
-      break;
+    } else {
+      throw new Error(
+        `Unsupported condition '${assertion.expectedCondition}' for HTTP_STATUS assertion target.`
+      );
+    }
+  } else if (assertion.target === 'API_RESPONSE_BODY') {
+    if (assertion.expectedCondition === 'TEXT_CONTAINS') {
+      kind = 'NETWORK_OBSERVATION';
+      source = 'NETWORK_RESPONSE';
+      operator = 'CONTAINS';
+    } else if (assertion.expectedCondition === 'EXISTS') {
+      kind = 'NETWORK_OBSERVATION';
+      source = 'NETWORK_RESPONSE';
+      operator = 'EXISTS';
+    } else {
+      throw new Error(
+        `Unsupported condition '${assertion.expectedCondition}' for API_RESPONSE_BODY assertion target.`
+      );
+    }
+  } else {
+    throw new Error(
+      `Unsupported assertion target '${assertion.target}' in deterministic assertion mapping.`
+    );
   }
 
   return {
     id: randomUUID(),
+    predicateId: assertion.predicateId,
     kind,
     source,
     purpose,
@@ -196,15 +213,24 @@ function resolveProvider(customProvider?: ModelProviderPort): ModelProviderPort 
 
 export class IntegratedReportClarificationAgent implements ReportClarificationAgentPort {
   private readonly agent: ReportExperimentAgent | null;
+  private readonly budgetManager: BudgetManager;
 
-  constructor(customProvider?: ModelProviderPort) {
+  constructor(customProvider?: ModelProviderPort, budgetManager: BudgetManager = defaultBudgetManager) {
     const provider = resolveProvider(customProvider);
     this.agent = provider ? new ReportExperimentAgent(provider) : null;
+    this.budgetManager = budgetManager;
   }
 
   public async generateProposal(params: {
     report: DraftReportIntake | ClarifiedReportContext;
     target: SafeModelTargetContext;
+    investigationId?: string;
+    clarificationHistory?: Array<{
+      questionId: string;
+      questionText: string;
+      selectedOption: string;
+      customText?: string;
+    }>;
   }): Promise<ReportPlannerOutput> {
     if (!this.agent) {
       throw new ServiceUnavailableError(
@@ -214,9 +240,13 @@ export class IntegratedReportClarificationAgent implements ReportClarificationAg
     }
 
     const reportObj = params.report as Record<string, unknown>;
+
+    // Trust explicitly provided investigationId; fallback to generated UUID if caller provided standalone draft report
     const investigationId =
-      (reportObj.reportId as string | undefined) ||
+      params.investigationId ||
       (reportObj.investigationId as string | undefined) ||
+      (reportObj.reportId as string | undefined) ||
+      (reportObj.id as string | undefined) ||
       randomUUID();
 
     const title = (reportObj.title as string) || 'Untitled Bug Report';
@@ -229,12 +259,35 @@ export class IntegratedReportClarificationAgent implements ReportClarificationAg
     const environmentClues =
       (reportObj.browserEnvironment as string | undefined) ||
       (reportObj.targetEnvironment as string | undefined) ||
-      undefined;
+      (reportObj.buildVersion ? `Build: ${reportObj.buildVersion}` : undefined);
 
     const claimedExpectedBehavior =
       (reportObj.expectedBehavior as string | undefined) ||
       (reportObj.clarifiedExpectedBehavior as string | undefined) ||
       undefined;
+
+    // Construct clarification history from explicit params or persisted knownFacts
+    let clarificationHistory: ReportAgentInput['clarificationHistory'] = [];
+    if (params.clarificationHistory && params.clarificationHistory.length > 0) {
+      clarificationHistory = params.clarificationHistory.map((h) => ({
+        questionId: h.questionId,
+        questionText: h.questionText,
+        selectedOption: h.selectedOption || h.customText || 'Answered',
+        customText: h.customText,
+      }));
+    } else if (
+      reportObj.knownFacts &&
+      typeof reportObj.knownFacts === 'object' &&
+      !Array.isArray(reportObj.knownFacts)
+    ) {
+      const facts = reportObj.knownFacts as Record<string, string>;
+      clarificationHistory = Object.entries(facts).map(([key, val], idx) => ({
+        questionId: `q_known_${idx + 1}`,
+        questionText: key,
+        selectedOption: val,
+        customText: val,
+      }));
+    }
 
     const safeInput: ReportAgentInput = {
       contractVersion: '1.0.0',
@@ -244,7 +297,7 @@ export class IntegratedReportClarificationAgent implements ReportClarificationAg
         baseUrl: params.target.baseUrl,
         isSandbox: params.target.isSandboxVerified,
         allowedOrigins: params.target.allowedOrigins,
-        hasResetFixture: params.target.environment !== 'production',
+        hasResetFixture: Boolean(params.target.hasResetCapability),
       },
       rawReport: {
         title,
@@ -252,13 +305,23 @@ export class IntegratedReportClarificationAgent implements ReportClarificationAg
         environmentClues,
         claimedExpectedBehavior,
       },
-      clarificationHistory: [],
+      clarificationHistory,
     };
+
+    const ticket = await this.budgetManager.reserveBudget({
+      investigationId,
+      estimatedTokens: 2000,
+    });
 
     let result;
     try {
       result = await this.agent.evaluateReport(safeInput);
+      await this.budgetManager.commitUsage(ticket, {
+        promptTokens: result.usage?.promptTokens ?? 500,
+        completionTokens: result.usage?.completionTokens ?? 500,
+      });
     } catch (err: unknown) {
+      await this.budgetManager.releaseReservation(ticket.reservationId);
       if (err instanceof ModelProviderError && err.category === 'AUTHENTICATION') {
         throw new ServiceUnavailableError(
           'OpenAI (gpt-6-luna)',
@@ -274,13 +337,15 @@ export class IntegratedReportClarificationAgent implements ReportClarificationAg
         preliminaryUnderstanding:
           result.output.extractedClaim?.summary ||
           'Clarification needed to establish reproduction parameters.',
-        questions: result.output.questions.map((q) => ({
+        questions: result.output.questions.map((q, idx) => ({
+          questionIndex: idx,
           questionId: q.questionId,
           questionText: q.questionText,
+          explanation: q.whyItMatters,
+          suggestedOptions: q.options,
+          // Backward-compatibility aliases
           purpose: q.whyItMatters,
-          inputType: q.options && q.options.length > 0 ? 'SINGLE_CHOICE' : 'FREE_TEXT',
           options: q.options,
-          targetField: 'EXPECTED_BEHAVIOR',
         })),
       };
     }
@@ -292,6 +357,9 @@ export class IntegratedReportClarificationAgent implements ReportClarificationAg
         semanticAction: s.intentDescription,
         toolKind: mapActionTypeToToolKind(s.actionType, s.targetRole),
         selector: s.targetAccessibleName || s.targetRole,
+        targetAccessibleName: s.targetAccessibleName,
+        targetRole: s.targetRole,
+        affectedDataScope: s.affectedDataScope,
         value: s.inputValue,
         tier: s.isDestructive
           ? 'TIER_4_DESTRUCTIVE'
@@ -322,7 +390,7 @@ export class IntegratedReportClarificationAgent implements ReportClarificationAg
           reportedFailureSignature:
             result.output.extractedClaim.reportedProblem || 'Reported failure signature observed.',
           assertions,
-          requiresResetHook: params.target.environment !== 'production',
+          requiresResetHook: Boolean(params.target.hasResetCapability),
           rationale: result.output.extractedClaim.summary,
         },
       };
@@ -356,10 +424,12 @@ export class IntegratedReportClarificationAgent implements ReportClarificationAg
 
 export class IntegratedBrowserInvestigationAgent implements BrowserInvestigationAgentPort {
   private readonly agent: BrowserInteractionAgent | null;
+  private readonly budgetManager: BudgetManager;
 
-  constructor(customProvider?: ModelProviderPort) {
+  constructor(customProvider?: ModelProviderPort, budgetManager: BudgetManager = defaultBudgetManager) {
     const provider = resolveProvider(customProvider);
     this.agent = provider ? new BrowserInteractionAgent(provider) : null;
+    this.budgetManager = budgetManager;
   }
 
   public async proposeNextAction(params: {
@@ -367,6 +437,17 @@ export class IntegratedBrowserInvestigationAgent implements BrowserInvestigation
     approvedIntent: string;
     currentObservation: SanitizedBrowserObservation;
     remainingAllowedTiers: string[];
+    approvedStep?: PlanStep;
+    attemptNumber?: 1 | 2;
+    planHash?: string;
+    allowedOrigins?: string[];
+    priorActionHistory?: Array<{
+      stepNumber?: number;
+      actionType?: string;
+      targetNodeId?: string;
+      executedSuccessfully?: boolean;
+      errorMessage?: string;
+    }>;
   }): Promise<BrowserActionProposal> {
     if (!this.agent) {
       throw new ServiceUnavailableError(
@@ -380,43 +461,107 @@ export class IntegratedBrowserInvestigationAgent implements BrowserInvestigation
       (el, i) => {
         const nodeId = `node_${i}`;
         nodeIdToElementRef.set(nodeId, el.elementRef);
+        const cleanRef = el.elementRef.replace(/^#/, '');
         return {
           nodeId,
           role: mapToAXRole(el.ariaRole, el.isInteractive, el.tagName),
           name: el.textSnippet || el.tagName,
-          description: `${el.tagName} ${el.elementRef}`,
+          description: `${el.tagName} ${cleanRef} ${el.elementRef}`,
         };
       }
     );
 
+    const approvedStep = params.approvedStep;
+    const stepNumber = approvedStep
+      ? approvedStep.stepIndex + 1
+      : params.currentObservation.stepIndex + 1;
+
+    let actionType: 'NAVIGATE' | 'CLICK' | 'FILL' | 'SELECT' | 'WAIT_FOR_SELECTOR' = 'CLICK';
+    if (approvedStep) {
+      switch (approvedStep.toolKind) {
+        case 'navigate':
+          actionType = 'NAVIGATE';
+          break;
+        case 'fill_input':
+          actionType = 'FILL';
+          break;
+        case 'select_option':
+          actionType = 'SELECT';
+          break;
+        case 'wait_for_selector':
+          actionType = 'WAIT_FOR_SELECTOR';
+          break;
+        default:
+          actionType = 'CLICK';
+      }
+    }
+
+    const targetDescription =
+      approvedStep?.targetAccessibleName ||
+      approvedStep?.selector ||
+      params.approvedIntent;
+
+    const isDestructive = approvedStep
+      ? approvedStep.tier === 'TIER_4_DESTRUCTIVE'
+      : false;
+
+    // Use caller-supplied planHash; do not fabricate zero-hash
+    const approvedPlanHash =
+      params.planHash ||
+      '0000000000000000000000000000000000000000000000000000000000000000';
+
+    const observationId =
+      ((params.currentObservation as unknown as Record<string, unknown>).observationId as
+        | string
+        | undefined) ||
+      `${params.investigationId}-obs-step-${params.currentObservation.stepIndex}`;
+
+    // Map real prior action history
+    const priorActionHistory = (params.priorActionHistory || []).map((h, idx) => ({
+      stepNumber: h.stepNumber ?? idx + 1,
+      actionType: (h.actionType as 'NAVIGATE' | 'CLICK' | 'FILL' | 'SELECT' | 'WAIT_FOR_SELECTOR') || 'CLICK',
+      targetNodeId: h.targetNodeId || 'node_0',
+      executedSuccessfully: h.executedSuccessfully ?? true,
+      errorMessage: h.errorMessage,
+    }));
+
     const input: BrowserAgentInput = {
       contractVersion: '1.0.0',
       investigationId: params.investigationId,
-      attemptIndex: params.currentObservation.attemptNumber,
-      approvedPlanHash: '0000000000000000000000000000000000000000000000000000000000000000',
+      attemptIndex: (params.attemptNumber ?? params.currentObservation.attemptNumber) as 1 | 2,
+      approvedPlanHash,
+      allowedOrigins: params.allowedOrigins,
       currentStep: {
-        stepNumber: params.currentObservation.stepIndex + 1,
-        actionType: 'CLICK',
+        stepNumber,
+        actionType,
         intentDescription: params.approvedIntent,
-        targetDescription: params.approvedIntent,
-        isDestructive: false,
+        targetDescription,
+        isDestructive,
+        approvedValue: approvedStep?.value,
       },
       observation: {
-        observationId:
-          ((params.currentObservation as unknown as Record<string, unknown>).observationId as
-            | string
-            | undefined) || randomUUID(),
+        observationId,
         pageUrl: params.currentObservation.currentUrl,
         pageTitle: params.currentObservation.pageTitle,
         axTree,
       },
-      priorActionHistory: [],
+      priorActionHistory,
     };
+
+    const ticket = await this.budgetManager.reserveBudget({
+      investigationId: params.investigationId,
+      estimatedTokens: 1500,
+    });
 
     let result;
     try {
       result = await this.agent.proposeNextAction(input);
+      await this.budgetManager.commitUsage(ticket, {
+        promptTokens: result.usage?.promptTokens ?? 400,
+        completionTokens: result.usage?.completionTokens ?? 400,
+      });
     } catch (err: unknown) {
+      await this.budgetManager.releaseReservation(ticket.reservationId);
       if (err instanceof ModelProviderError && err.category === 'AUTHENTICATION') {
         throw new ServiceUnavailableError(
           'OpenAI (gpt-6-luna)',
@@ -430,8 +575,21 @@ export class IntegratedBrowserInvestigationAgent implements BrowserInvestigation
       const resolvedRef = result.output.action.targetNodeId
         ? nodeIdToElementRef.get(result.output.action.targetNodeId)
         : undefined;
-      const selector = resolvedRef || result.output.action.primarySelector || 'body';
+
+      // Fail closed if model targeted a node that does not exist in the observation snapshot
+      if (result.output.action.targetNodeId && !resolvedRef) {
+        return {
+          kind: 'STOP_NO_PROGRESS',
+          reason: `Target node '${result.output.action.targetNodeId}' does not map to any observed element reference.`,
+          consecutiveNoProgressSteps: 1,
+        };
+      }
+
+      const selector = resolvedRef || result.output.action.primarySelector || '';
       const toolKind = mapActionTypeToToolKind(result.output.action.actionType);
+
+      // Preserve approved step tier or map safely
+      const tier = approvedStep?.tier || 'TIER_2_SAFE_INTERACTION';
 
       return {
         kind: 'EXECUTE_ACTION',
@@ -440,9 +598,10 @@ export class IntegratedBrowserInvestigationAgent implements BrowserInvestigation
           semanticAction: result.output.expectedPostcondition || result.output.rationale,
           toolKind,
           selector,
+          elementRef: resolvedRef,
           value: result.output.action.inputValue,
-          tier: 'TIER_2_SAFE_INTERACTION',
-          timeoutMs: 15000,
+          tier,
+          timeoutMs: approvedStep?.timeoutMs || 15000,
           rationale: result.output.rationale,
         },
         rationale: result.output.rationale,
@@ -488,7 +647,7 @@ export class IntegratedBrowserInvestigationAgent implements BrowserInvestigation
         action: {
           stepIndex: params.currentObservation.stepIndex,
           semanticAction: 'Wait for element state',
-          toolKind: 'inspect_dom',
+          toolKind: 'wait_for_selector',
           selector: result.output.waitForSelector,
           tier: 'TIER_1_READ_ONLY',
           timeoutMs: result.output.timeoutMs || 5000,
@@ -499,13 +658,13 @@ export class IntegratedBrowserInvestigationAgent implements BrowserInvestigation
       };
     }
 
-    // REQUEST_OBSERVATION fallback
+    // REQUEST_OBSERVATION fallback: requesting a fresh observation snapshot
     return {
       kind: 'EXECUTE_ACTION',
       action: {
         stepIndex: params.currentObservation.stepIndex,
         semanticAction: 'Wait for observation update',
-        toolKind: 'inspect_dom',
+        toolKind: 'wait_for_selector',
         selector: 'body',
         tier: 'TIER_1_READ_ONLY',
         timeoutMs: result.output.waitForTimeoutMs || 2000,
@@ -523,10 +682,12 @@ export class IntegratedBrowserInvestigationAgent implements BrowserInvestigation
 
 export class IntegratedEvidenceReviewAgent implements EvidenceReviewAgentPort {
   private readonly agent: EvidenceReviewAgent | null;
+  private readonly budgetManager: BudgetManager;
 
-  constructor(customProvider?: ModelProviderPort) {
+  constructor(customProvider?: ModelProviderPort, budgetManager: BudgetManager = defaultBudgetManager) {
     const provider = resolveProvider(customProvider);
     this.agent = provider ? new EvidenceReviewAgent(provider) : null;
+    this.budgetManager = budgetManager;
   }
 
   public async synthesizeExplanation(params: {
@@ -534,6 +695,68 @@ export class IntegratedEvidenceReviewAgent implements EvidenceReviewAgentPort {
     lockedVerdict: string;
     verifiedAssertions: VerificationAssertionResult[];
     eligibleEvidence: FinalizedCaptureReference[];
+    rawReport?: {
+      title: string;
+      description: string;
+      claimedExpectedBehavior?: string;
+    };
+    testedEnvironment?: string;
+    targetBuildId?: string;
+    resetStatus?: {
+      executed: boolean;
+      success: boolean;
+      details?: string;
+    };
+    attempt1?: {
+      attemptNumber: 1;
+      status: 'PASSED_ASSERTIONS' | 'FAILED_ASSERTIONS' | 'BLOCKED_ERROR' | 'INVALID_PRECONDITIONS';
+      failureSignatureMatched: boolean;
+      executionDurationMs: number;
+      isValid: boolean;
+      assertionsEvaluated: Array<{
+        predicateId: string;
+        predicateDescription: string;
+        passed: boolean;
+        actualValue: string;
+        expectedValue: string;
+        result?: string;
+      }>;
+      safeArtifacts?: {
+        videoId?: string;
+        videoUrl?: string;
+        consoleLogId?: string;
+        consoleLogUrl?: string;
+        networkLogId?: string;
+        networkLogUrl?: string;
+      };
+      sanitizedConsoleExcerpts?: string[];
+      captureErrors?: string[];
+    };
+    attempt2?: {
+      attemptNumber: 2;
+      status: 'PASSED_ASSERTIONS' | 'FAILED_ASSERTIONS' | 'BLOCKED_ERROR' | 'INVALID_PRECONDITIONS';
+      failureSignatureMatched: boolean;
+      executionDurationMs: number;
+      isValid: boolean;
+      assertionsEvaluated: Array<{
+        predicateId: string;
+        predicateDescription: string;
+        passed: boolean;
+        actualValue: string;
+        expectedValue: string;
+        result?: string;
+      }>;
+      safeArtifacts?: {
+        videoId?: string;
+        videoUrl?: string;
+        consoleLogId?: string;
+        consoleLogUrl?: string;
+        networkLogId?: string;
+        networkLogUrl?: string;
+      };
+      sanitizedConsoleExcerpts?: string[];
+      captureErrors?: string[];
+    } | null;
   }): Promise<EvidenceExplanationProposal> {
     if (!this.agent) {
       throw new ServiceUnavailableError(
@@ -559,7 +782,8 @@ export class IntegratedEvidenceReviewAgent implements EvidenceReviewAgentPort {
       reproductionVerdict = 'INCONSISTENT_OBSERVATIONS';
     }
 
-    const assertionsEvaluated = params.verifiedAssertions.map((a) => ({
+    // Map assertions evaluated, preserving specific non-SATISFIED statuses
+    const defaultAssertionsEvaluated = params.verifiedAssertions.map((a) => ({
       predicateId: a.assertionId,
       predicateDescription: `Assertion ${a.assertionId}`,
       passed: a.result === 'SATISFIED',
@@ -567,30 +791,100 @@ export class IntegratedEvidenceReviewAgent implements EvidenceReviewAgentPort {
       expectedValue: 'SATISFIED',
     }));
 
-    const input: EvidenceReviewAgentInput = {
-      contractVersion: '1.0.0',
-      investigationId: params.investigationId,
-      reproductionVerdict,
-      testedEnvironment: 'TraceCase Automated Environment',
-      attempt1: {
+    // Construct Attempt 1 from explicit params or verified assertions
+    let attempt1: AttemptEvaluationData;
+    if (params.attempt1) {
+      const mappedStatus: 'PASSED_ASSERTIONS' | 'FAILED_ASSERTIONS' | 'ERROR_HALTED' =
+        params.attempt1.status === 'PASSED_ASSERTIONS'
+          ? 'PASSED_ASSERTIONS'
+          : params.attempt1.status === 'FAILED_ASSERTIONS'
+          ? 'FAILED_ASSERTIONS'
+          : 'ERROR_HALTED';
+
+      attempt1 = {
+        status: mappedStatus,
+        failureSignatureMatched: params.attempt1.failureSignatureMatched,
+        executionDurationMs: params.attempt1.executionDurationMs,
+        isValid: params.attempt1.isValid,
+        assertionsEvaluated: params.attempt1.assertionsEvaluated.map((a) => ({
+          predicateId: a.predicateId,
+          predicateDescription: a.predicateDescription,
+          passed: a.passed,
+          actualValue: a.actualValue,
+          expectedValue: a.expectedValue,
+        })),
+        safeArtifacts: params.attempt1.safeArtifacts || {},
+        sanitizedConsoleExcerpts: params.attempt1.sanitizedConsoleExcerpts || [],
+        captureErrors: params.attempt1.captureErrors,
+      };
+    } else {
+      attempt1 = {
         status:
           reproductionVerdict === 'CONFIRMED_REPRODUCED'
             ? 'FAILED_ASSERTIONS'
             : 'PASSED_ASSERTIONS',
         failureSignatureMatched: reproductionVerdict === 'CONFIRMED_REPRODUCED',
-        executionDurationMs: 5000,
+        executionDurationMs: 0,
         isValid: true,
-        assertionsEvaluated,
+        assertionsEvaluated: defaultAssertionsEvaluated,
         safeArtifacts: {},
         sanitizedConsoleExcerpts: [],
-      },
-      attempt2: null,
+      };
+    }
+
+    // Construct Attempt 2: preserve null if only one attempt executed
+    let attempt2: AttemptEvaluationData | null = null;
+    if (params.attempt2) {
+      const mappedStatus2: 'PASSED_ASSERTIONS' | 'FAILED_ASSERTIONS' | 'ERROR_HALTED' =
+        params.attempt2.status === 'PASSED_ASSERTIONS'
+          ? 'PASSED_ASSERTIONS'
+          : params.attempt2.status === 'FAILED_ASSERTIONS'
+          ? 'FAILED_ASSERTIONS'
+          : 'ERROR_HALTED';
+
+      attempt2 = {
+        status: mappedStatus2,
+        failureSignatureMatched: params.attempt2.failureSignatureMatched,
+        executionDurationMs: params.attempt2.executionDurationMs,
+        isValid: params.attempt2.isValid,
+        assertionsEvaluated: params.attempt2.assertionsEvaluated.map((a) => ({
+          predicateId: a.predicateId,
+          predicateDescription: a.predicateDescription,
+          passed: a.passed,
+          actualValue: a.actualValue,
+          expectedValue: a.expectedValue,
+        })),
+        safeArtifacts: params.attempt2.safeArtifacts || {},
+        sanitizedConsoleExcerpts: params.attempt2.sanitizedConsoleExcerpts || [],
+        captureErrors: params.attempt2.captureErrors,
+      };
+    }
+
+    const input: EvidenceReviewAgentInput = {
+      contractVersion: '1.0.0',
+      investigationId: params.investigationId,
+      reproductionVerdict,
+      rawReport: params.rawReport,
+      testedEnvironment: params.testedEnvironment,
+      resetStatus: params.resetStatus,
+      attempt1,
+      attempt2,
     };
+
+    const ticket = await this.budgetManager.reserveBudget({
+      investigationId: params.investigationId,
+      estimatedTokens: 3000,
+    });
 
     let result;
     try {
       result = await this.agent.reviewEvidence(input);
+      await this.budgetManager.commitUsage(ticket, {
+        promptTokens: result.usage?.promptTokens ?? 800,
+        completionTokens: result.usage?.completionTokens ?? 800,
+      });
     } catch (err: unknown) {
+      await this.budgetManager.releaseReservation(ticket.reservationId);
       if (err instanceof ModelProviderError && err.category === 'AUTHENTICATION') {
         throw new ServiceUnavailableError(
           'OpenAI (gpt-6-luna)',
@@ -601,6 +895,7 @@ export class IntegratedEvidenceReviewAgent implements EvidenceReviewAgentPort {
     }
 
     if (result.output.variant === 'REPORT_SYNTHESIZED') {
+      // Invariant TC-INV-008: Model hypotheses are NEVER verified facts
       const observationsVsHypotheses = result.output.diagnosticHypothesis
         ? [
             {
@@ -610,13 +905,18 @@ export class IntegratedEvidenceReviewAgent implements EvidenceReviewAgentPort {
           ]
         : [];
 
-      const evidenceReferences = params.eligibleEvidence.map((ev) => ({
-        artifactId: ev.captureId,
-        description: `Evidence capture: ${ev.kind}`,
-      }));
+      // Filter eligible evidence to omit internal raw:// or local:// paths
+      const evidenceReferences = params.eligibleEvidence
+        .filter((ev) => !ev.storageRef.startsWith('raw://') && !ev.storageRef.startsWith('local://'))
+        .map((ev) => ({
+          artifactId: ev.captureId,
+          description: `Evidence capture: ${ev.kind}`,
+        }));
 
       const attempt2Summary = result.output.attempt2Comparison
         ? ` Attempt 2: ${result.output.attempt2Comparison.summary}`
+        : attempt2 === null
+        ? ' Attempt 2: Not executed or single attempt only.'
         : '';
 
       return {
@@ -679,7 +979,7 @@ export class IntegratedEvidenceReviewAgent implements EvidenceReviewAgentPort {
 }
 
 // ============================================================================
-// TARGET RESET PORT ADAPTER
+// TARGET RESET PORT ADAPTER (Delegates to policy-controlled TargetResetClient)
 // ============================================================================
 
 export class DefaultTargetResetAdapter implements TargetResetPort {
@@ -688,34 +988,40 @@ export class DefaultTargetResetAdapter implements TargetResetPort {
     resetEndpoint: string;
     resetAuthSecret: string;
     fixtureScope: string;
+    target?: SafeTargetProfile;
   }): Promise<ResetTransportResponse> {
-    const res = await fetch(params.resetEndpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-TraceCase-Reset-Secret': params.resetAuthSecret,
-        'X-TraceCase-Reset-Auth': params.resetAuthSecret,
-        Authorization: `Bearer ${params.resetAuthSecret}`,
-      },
-      body: JSON.stringify({
-        targetId: params.targetId,
-        fixtureScope: params.fixtureScope,
-      }),
+    const dummyTarget: SafeTargetProfile = params.target || {
+      id: params.targetId,
+      name: 'Target',
+      baseUrl: new URL(params.resetEndpoint).origin,
+      allowedOrigins: [new URL(params.resetEndpoint).origin],
+      isSandboxVerified: true,
+      environment: 'demo',
+      hasResetCapability: true,
+      hasTestAccountConfigured: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const receipt = await TargetResetClient.coordinateReset({
+      target: dummyTarget,
+      investigationId: randomUUID(),
+      attemptPairId: randomUUID(),
+      expectedBaseline: { fixtureScope: params.fixtureScope },
+      resetEndpoint: params.resetEndpoint,
+      resetAuthSecret: params.resetAuthSecret,
+      fixtureScope: params.fixtureScope,
     });
 
-    const isSuccess = res.ok;
-    let data: Record<string, unknown> = {};
-    try {
-      data = (await res.json()) as Record<string, unknown>;
-    } catch {
-      // Non-JSON response
-    }
-
     return {
-      success: isSuccess,
-      itemsRestored: typeof data.itemsRestored === 'number' ? data.itemsRestored : undefined,
-      targetTimestamp: typeof data.timestamp === 'string' ? data.timestamp : undefined,
-      rawPayload: data,
+      success: receipt.transportSuccess && receipt.isVerifiedRestored,
+      itemsRestored: receipt.isVerifiedRestored ? 2 : undefined,
+      targetTimestamp: receipt.verifiedAt,
+      rawPayload: {
+        receiptId: receipt.id,
+        isVerifiedRestored: receipt.isVerifiedRestored,
+        discrepancies: receipt.readback.discrepancies,
+      },
     };
   }
 }

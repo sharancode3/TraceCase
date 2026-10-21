@@ -14,6 +14,7 @@ export const SupportedToolKindSchema = z.enum([
   'inspect_dom',
   'get_text',
   'screenshot',
+  'wait_for_selector',
   'delete_element',
   'clear_storage',
 ]);
@@ -24,6 +25,10 @@ export const PlanStepSchema = z.object({
   semanticAction: z.string().min(1).max(200),
   toolKind: SupportedToolKindSchema,
   selector: z.string().max(500).optional(),
+  targetAccessibleName: z.string().max(200).optional(),
+  targetRole: z.string().max(50).optional(),
+  elementRef: z.string().max(100).optional(),
+  affectedDataScope: z.string().max(100).optional(),
   value: z.string().max(1000).optional(),
   tier: ActionTierSchema,
   timeoutMs: z.number().int().positive().max(60000).default(15000),
@@ -85,6 +90,7 @@ export type AssertionEvaluationResult = z.infer<typeof AssertionEvaluationResult
 
 export const TypedAssertionSchema = z.object({
   id: z.string().uuid(),
+  predicateId: z.string().optional(),
   kind: TypedAssertionKindSchema,
   source: ObservationSourceSchema,
   purpose: AssertionPurposeSchema,

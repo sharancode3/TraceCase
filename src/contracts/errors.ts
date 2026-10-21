@@ -45,3 +45,25 @@ export function createSafeError(
     },
   };
 }
+
+export const SafeSuccessEnvelopeSchema = z.object({
+  success: z.literal(true).default(true),
+  data: z.unknown(),
+  timestamp: z.string().datetime(),
+  requestId: z.string().optional(),
+});
+export type SafeSuccessEnvelope = z.infer<typeof SafeSuccessEnvelopeSchema>;
+
+export function createSafeSuccessEnvelope<T>(data: T, requestId?: string): {
+  success: true;
+  data: T;
+  timestamp: string;
+  requestId?: string;
+} {
+  return {
+    success: true,
+    data,
+    timestamp: new Date().toISOString(),
+    requestId: requestId ?? `req_${Date.now().toString(36)}`,
+  };
+}
