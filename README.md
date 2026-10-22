@@ -2,6 +2,17 @@
 
 **Autonomous, Deterministic Web Application Defect Reproduction and Verifiable Evidence Pipeline**
 
+## Start Here — Current Phase 2 Plans
+
+Each contributor should open their plan below and follow its stages in order. These plans define the current sprint's responsibilities; the original three-person assignments further below are historical context.
+
+| Contributor | Open your Phase 2 plan | Work covered |
+|---|---|---|
+| **Person 1** | **[Person 1 — Phase 2 Implementation Plan](implementation-stages/person-1/phase-2-implementation-plan.md)** | TraceCase UI, easier target registration and reuse, report submission, clarification/planning fixes, first-use guide, results and integrated verification. |
+| **Person 2** | **[Person 2 — Phase 2 Implementation Plan](implementation-stages/person-2/phase-2-implementation-plan.md)** | Richer controlled testing site, functional workbench UI, deterministic buggy/fixed builds, fixture reset/readback and integration handoff. |
+
+Both plans include stage-by-stage implementation instructions, concepts, acceptance checks, ownership boundaries and agent restrictions. Read the [shared implementation guide](implementation-stages/README.md) before starting shared work.
+
 ---
 
 ## Document Control and System Metadata
@@ -29,10 +40,13 @@ TraceCase is divided across three distinct ownership boundaries:
 | **Person 3** (Frontend / Evidence) | Next.js UI features/pages, shared evidence sanitizer (`src/server/evidence/evidence-storage.service.ts`), dual-tier S3 artifact storage, and synchronized evidence player | `src/app/` (UI routes), `src/features/`, `src/components/`, evidence storage/sanitization services | [`implementation-stages/person-3/README.md`](implementation-stages/person-3/README.md) |
 
 ### Implementation Plans Index
-- [Shared Coordination Guide & Gate Definitions](implementation-stages/README.md)
-- [Person 1 Implementation Plan](implementation-stages/person-1/person-1-implementation-plan.md) (Phases P1-01 through P1-09)
-- [Person 2 Implementation Plan](implementation-stages/person-2/person-2-implementation-plan.md) (Phases P2-01 through P2-08)
-- [Person 3 Implementation Plan](implementation-stages/person-3/person-3-implementation-plan.md) (Phases P3-01 through P3-08)
+
+- **[Person 1 — Current Phase 2 Plan](implementation-stages/person-1/phase-2-implementation-plan.md)**
+- **[Person 2 — Current Phase 2 Plan](implementation-stages/person-2/phase-2-implementation-plan.md)**
+- [Shared Implementation Guide](implementation-stages/README.md)
+- [Person 1 — Earlier Corrective Plan (Reference)](implementation-stages/person-1/person-1-implementation-plan.md)
+- [Person 2 — Earlier Target Plan (Reference)](implementation-stages/person-2/person-2-implementation-plan.md)
+- [Person 3 — Original Implementation Plan (Historical)](implementation-stages/person-3/person-3-implementation-plan.md)
 
 ---
 
