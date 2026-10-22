@@ -296,28 +296,16 @@ describe('Person 3 Frontend & Evidence Viewer Contract Readiness', () => {
   });
 
   describe('Live HTTP Route Handler Output Contract Conformance', () => {
-    it('verifies GET /api/v1/targets outputs conform to SafeTargetProfileSchema in preview mode', async () => {
+    it('rejects synthetic target fallback even when the preview flag is enabled', async () => {
       const { NextRequest } = await import('next/server');
-      const { GET: getTargetsRoute } = await import('@/app/api/v1/targets/route');
-      const originalPreview = process.env.DEV_PREVIEW_MODE;
+      const { GET } = await import('@/app/api/v1/targets/route');
+      const original = process.env.DEV_PREVIEW_MODE;
       try {
-        process.env.DEV_PREVIEW_MODE = 'true';
-        _resetCachedEnvForTesting();
-        const req = new NextRequest(new Request('http://localhost:3000/api/v1/targets', { method: 'GET' }));
-        const res = await getTargetsRoute(req);
-        expect(res.status).toBe(200);
-        const json = await res.json() as { data: unknown[]; total: number; mode: string };
-        expect(Array.isArray(json.data)).toBe(true);
-        expect(json.total).toBeGreaterThan(0);
-        for (const item of json.data) {
-          const validated = SafeTargetProfileSchema.parse(item);
-          expect(validated.id).toBeDefined();
-          expect((item as Record<string, unknown>).fixtureResetAuthSecretRef).toBeUndefined();
-        }
-      } finally {
-        process.env.DEV_PREVIEW_MODE = originalPreview;
-        _resetCachedEnvForTesting();
-      }
+        process.env.DEV_PREVIEW_MODE = 'true'; _resetCachedEnvForTesting();
+        const res = await GET(new NextRequest('http://localhost:3000/api/v1/targets'));
+        expect(res.status).toBe(401);
+        expect(SafeErrorEnvelopeSchema.parse(await res.json()).success).toBe(false);
+      } finally { process.env.DEV_PREVIEW_MODE = original; _resetCachedEnvForTesting(); }
     });
 
     it('verifies unauthenticated GET /api/v1/targets returns SafeErrorEnvelopeSchema', async () => {

@@ -132,43 +132,20 @@ describe('P1-01: API Scaffold Truthfulness and Safety Boundaries', () => {
       _resetCachedEnvForTesting();
     });
 
-    it('returns explicitly simulated approval in preview mode with simulated metadata', async () => {
-      const investigationId = '33333333-3333-4333-8333-333333333333';
-      const req = new NextRequest(
-        new Request(`http://localhost:3000/api/v1/investigations/${investigationId}/approve`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            investigationId,
-            planVersion: 1,
-            approvedPlanHash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-          }),
-        })
-      );
-
-      const res = await approveRoute(req, { params: Promise.resolve({ id: investigationId }) });
-      expect(res.status).toBe(200);
-
-      const json = await res.json();
-      expect(json.status).toBe('APPROVED');
-      expect(json.data.isSimulatedPreview).toBe(true);
-      expect(json.message).toContain('simulation mode');
+    it('requires authentication for approval even when the retired preview flag is enabled', async () => {
+      const id = '33333333-3333-4333-8333-333333333333';
+      const req = new NextRequest(new Request(`http://localhost:3000/api/v1/investigations/${id}/approve`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ investigationId: id, planVersion: 1, approvedPlanHash: 'a'.repeat(64) }),
+      }));
+      const res = await approveRoute(req, { params: Promise.resolve({ id }) });
+      expect(res.status).toBe(401);
+      expect((await res.json()).error).toBeDefined();
     });
-
-    it('returns sanitized targets in preview mode without leaking any reset secret', async () => {
-      const req = new NextRequest(new Request('http://localhost:3000/api/v1/targets'));
-      const res = await targetsRoute(req);
-      expect(res.status).toBe(200);
-
-      const json = await res.json();
-      expect(json.mode).toBe('preview_synthetic');
-      expect(json.data.length).toBeGreaterThan(0);
-
-      // Verify NO item in preview targets leaks fixtureResetAuthSecret
-      for (const target of json.data) {
-        expect(target.fixtureResetAuthSecret).toBeUndefined();
-        expect(target.hasResetCapability).toBeDefined();
-      }
+    it('never returns dummy targets to an unauthenticated preview request', async () => {
+      const res = await targetsRoute(new NextRequest('http://localhost:3000/api/v1/targets'));
+      expect(res.status).toBe(401);
+      expect((await res.json()).data).toBeUndefined();
     });
 
     it('returns 400 with safe error envelope on malformed JSON payload', async () => {

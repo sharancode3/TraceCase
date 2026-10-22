@@ -42,6 +42,194 @@ export class InvestigationClaimHandler {
     private controller?: TwoAttemptControllerPort
   ) {}
 
+  /** Re-review persisted facts only; never replays browser actions or changes a verdict. */
+  async regenerateExplanation(investigationId: string): Promise<void> {
+    const db = this.dbProvider();
+    const [inv] = await db.select().from(investigationsTable).where(eq(investigationsTable.id, investigationId)).limit(1);
+    if (!inv || !['COMPLETED', 'FINALIZING_EVIDENCE'].includes(inv.lifecycleStatus)) throw new Error('A completed investigation is required for evidence review.');
+    const [target] = await db.select().from(targetsTable).where(eq(targetsTable.id, inv.targetId)).limit(1);
+    if (!target) throw new Error('Investigation target missing');
+    const safeTarget = projectSafeTargetProfile(target);
+    const data = { investigationId };
+    const pipeline = new EvidencePipeline(this.dbProvider);
+    const reviewAgent = getServiceContainer().evidenceReviewAgent;
+    if (!reviewAgent) throw new Error('Evidence reviewer unavailable');
+    const attemptsRepo = new AttemptsRepository(this.dbProvider);
+    const pairAssessment = await attemptsRepo.getPairAssessment(data.investigationId);
+    const rawAssertions = await attemptsRepo.getAssertionEvaluations(data.investigationId);
+    const eligibleEvidence = await pipeline.getEligibleEvidence(data.investigationId);
+
+    // Resolve approved plan assertions to correlate descriptions, selectors, and predicates
+    const planRows = await db
+      .select()
+      .from(experimentPlanRevisionsTable)
+      .where(
+        and(
+          eq(experimentPlanRevisionsTable.investigationId, investigationId),
+          eq(experimentPlanRevisionsTable.version, inv.planVersion ?? 1)
+        )
+      )
+      .limit(1);
+
+    const planPayload = (planRows[0]?.planPayload as Record<string, unknown>) || {};
+    const planAssertions = Array.isArray(planPayload.assertions)
+      ? (planPayload.assertions as Array<{
+          id?: string;
+          predicateId?: string;
+          kind?: string;
+          purpose?: string;
+          targetRole?: string;
+          selector?: string;
+          subjectRef?: string;
+          details?: string;
+          description?: string;
+          expectedOutcome?: string;
+          expectedValue?: string;
+        }>)
+      : [];
+
+    const findPlanAssertion = (assertionId: string) => {
+      return planAssertions.find(
+        (pa) => pa.id === assertionId || pa.predicateId === assertionId
+      );
+    };
+
+    if (pairAssessment) {
+      const attempts = await attemptsRepo.getAttemptsByInvestigationId(data.investigationId);
+      const att1 = attempts.find((a) => a.attemptNumber === 1);
+      const att2 = attempts.find((a) => a.attemptNumber === 2);
+      const reset = await attemptsRepo.getResetReceipt(data.investigationId);
+      const att1Evaluations = await attemptsRepo.getAssertionEvaluations(data.investigationId, 1);
+      const att2Evaluations = await attemptsRepo.getAssertionEvaluations(data.investigationId, 2);
+
+      const mapEvaluation = (a: {
+        assertionId: string;
+        kind?: string | null;
+        purpose?: string | null;
+        result: string;
+        expectedValue?: string | null;
+        observedValue?: string | null;
+        details?: string | null;
+        evaluatedAt: Date;
+      }): AssertionEvaluation => {
+        const res = (a.result === 'PASSED' || a.result === 'SATISFIED')
+          ? 'SATISFIED'
+          : (a.result === 'FAILED' || a.result === 'NOT_SATISFIED')
+          ? 'NOT_SATISFIED'
+          : 'OBSERVATION_UNAVAILABLE';
+
+        const matchedPlanAssertion = findPlanAssertion(a.assertionId);
+        const resolvedKind = (a.kind || matchedPlanAssertion?.kind || 'ENTITY_PRESENCE') as TypedAssertionKind;
+        const resolvedPurpose = (a.purpose || matchedPlanAssertion?.purpose || 'EXPECTED_CORRECT_BEHAVIOR') as AssertionPurpose;
+        const resolvedDescription = matchedPlanAssertion?.description || matchedPlanAssertion?.details || (matchedPlanAssertion?.subjectRef ? `Target: ${matchedPlanAssertion.subjectRef}` : undefined);
+        const resolvedExpected = a.expectedValue || matchedPlanAssertion?.expectedOutcome || matchedPlanAssertion?.expectedValue || undefined;
+
+        return {
+          assertionId: a.assertionId,
+          kind: resolvedKind,
+          purpose: resolvedPurpose,
+          result: res as 'SATISFIED' | 'NOT_SATISFIED' | 'OBSERVATION_UNAVAILABLE',
+          expectedValue: resolvedExpected,
+          observedValue: a.observedValue || undefined,
+          details: resolvedDescription || a.details || undefined,
+          evaluatedAt: a.evaluatedAt.toISOString(),
+        };
+      };
+
+      const verifiedAssertions: VerificationAssertionResult[] = rawAssertions.map((a) => {
+        const matchedPlanAssertion = findPlanAssertion(a.assertionId);
+        return {
+          assertionId: a.assertionId,
+          result: (a.result === 'PASSED' || a.result === 'SATISFIED')
+            ? 'SATISFIED'
+            : (a.result === 'FAILED' || a.result === 'NOT_SATISFIED')
+            ? 'NOT_SATISFIED'
+            : 'OBSERVATION_UNAVAILABLE',
+          expectedValue: a.expectedValue || matchedPlanAssertion?.expectedOutcome || matchedPlanAssertion?.expectedValue || undefined,
+          observedValue: a.observedValue || undefined,
+          details: matchedPlanAssertion?.description || matchedPlanAssertion?.details || a.details || undefined,
+          evaluatedAt: a.evaluatedAt.toISOString(),
+        };
+      });
+
+      const pairAssessmentResult: PairAssessmentResult = {
+        investigationId: data.investigationId,
+        verdict: pairAssessment.verdict as PairAssessmentResult['verdict'],
+        validAttemptCount: pairAssessment.validAttemptCount,
+        matchingAttemptCount: pairAssessment.matchingAttemptCount,
+        isComparable: pairAssessment.isComparable,
+        attempt1Assessment: {
+          attemptNumber: 1,
+          validity: (att1?.validity as 'VALID' | 'INVALID') || 'INVALID',
+          finding: (att1?.finding as AttemptFinding) || 'UNRESOLVED',
+          invalidityReason: att1?.invalidityReason || undefined,
+          preconditionsMet: !(att1?.invalidityReason?.includes('PRECONDITION')),
+          procedureCompleted: att1?.completedCleanly ?? false,
+          scopeAdhered: !(att1?.invalidityReason?.includes('SCOPE')),
+          requiredObservationsAvailable: (att1?.actionsExecuted ?? 0) > 0,
+          evaluations: att1Evaluations.map(mapEvaluation),
+          assessedAt: (att1?.completedAt ? att1.completedAt.toISOString() : undefined) || new Date().toISOString(),
+        },
+        attempt2Assessment: att2 ? {
+          attemptNumber: 2,
+          validity: (att2.validity as 'VALID' | 'INVALID') || 'INVALID',
+          finding: (att2.finding as AttemptFinding) || 'UNRESOLVED',
+          invalidityReason: att2.invalidityReason || undefined,
+          preconditionsMet: !(att2.invalidityReason?.includes('PRECONDITION')),
+          procedureCompleted: att2.completedCleanly ?? false,
+          scopeAdhered: !(att2.invalidityReason?.includes('SCOPE')),
+          requiredObservationsAvailable: (att2.actionsExecuted ?? 0) > 0,
+          evaluations: att2Evaluations.map(mapEvaluation),
+          assessedAt: (att2.completedAt ? att2.completedAt.toISOString() : undefined) || new Date().toISOString(),
+        } : undefined,
+        resetReceipt: reset ? {
+          id: reset.id,
+          targetId: reset.targetId,
+          investigationId: reset.investigationId,
+          attemptNumber: 2 as const,
+          transportSuccess: reset.transportSuccess,
+          baselineEquivalent: reset.baselineEquivalent,
+          isVerifiedRestored: reset.isVerifiedRestored,
+          readback: {
+            targetId: reset.targetId,
+            expectedStateHash: reset.expectedStateHash || 'unknown',
+            observedStateHash: reset.observedStateHash || 'unknown',
+            isEquivalent: reset.baselineEquivalent,
+            discrepancies: (reset.discrepancies as string[]) || [],
+            checkedAt: reset.verifiedAt.toISOString(),
+          },
+          verifiedAt: reset.verifiedAt.toISOString(),
+        } : undefined,
+        summary: pairAssessment.summary,
+        limitations: [],
+        assessedAt: pairAssessment.assessedAt.toISOString(),
+      };
+
+      const att1Duration = att1?.totalDurationMs ?? (
+        (att1?.completedAt && att1?.startedAt)
+          ? att1.completedAt.getTime() - att1.startedAt.getTime()
+          : undefined
+      );
+      const att2Duration = att2?.totalDurationMs ?? (
+        (att2?.completedAt && att2?.startedAt)
+          ? att2.completedAt.getTime() - att2.startedAt.getTime()
+          : undefined
+      );
+
+      await evidenceReviewService.generateExplanation({
+        investigationId: data.investigationId,
+        pairAssessment: pairAssessmentResult,
+        assertions: verifiedAssertions,
+        eligibleEvidence,
+        agent: reviewAgent,
+        testedEnvironment: safeTarget.baseUrl || safeTarget.environment || safeTarget.name,
+        targetBuildId: reset?.observedStateHash || undefined,
+        attempt1DurationMs: att1Duration,
+        attempt2DurationMs: att2Duration,
+      });
+    }
+  }
+
   async handleInvestigationExecution(
     data: InvestigationExecutionJobData,
     workerInstanceId: string
@@ -273,131 +461,7 @@ export class InvestigationClaimHandler {
               const reviewAgent = getServiceContainer().evidenceReviewAgent;
               if (reviewAgent) {
                 try {
-                  const attemptsRepo = new AttemptsRepository(this.dbProvider);
-                  const pairAssessment = await attemptsRepo.getPairAssessment(data.investigationId);
-                  const rawAssertions = await attemptsRepo.getAssertionEvaluations(data.investigationId);
-                  const eligibleEvidence = await pipeline.getEligibleEvidence(data.investigationId);
-
-                  if (pairAssessment) {
-                    const attempts = await attemptsRepo.getAttemptsByInvestigationId(data.investigationId);
-                    const att1 = attempts.find((a) => a.attemptNumber === 1);
-                    const att2 = attempts.find((a) => a.attemptNumber === 2);
-                    const reset = await attemptsRepo.getResetReceipt(data.investigationId);
-                    const att1Evaluations = await attemptsRepo.getAssertionEvaluations(data.investigationId, 1);
-                    const att2Evaluations = await attemptsRepo.getAssertionEvaluations(data.investigationId, 2);
-
-                    const mapEvaluation = (a: {
-                      assertionId: string;
-                      kind?: string | null;
-                      purpose?: string | null;
-                      result: string;
-                      expectedValue?: string | null;
-                      observedValue?: string | null;
-                      details?: string | null;
-                      evaluatedAt: Date;
-                    }): AssertionEvaluation => {
-                      const res = (a.result === 'PASSED' || a.result === 'SATISFIED')
-                        ? 'SATISFIED'
-                        : (a.result === 'FAILED' || a.result === 'NOT_SATISFIED')
-                        ? 'NOT_SATISFIED'
-                        : 'OBSERVATION_UNAVAILABLE';
-                      return {
-                        assertionId: a.assertionId,
-                        kind: (a.kind as TypedAssertionKind) || 'ENTITY_PRESENCE',
-                        purpose: (a.purpose as AssertionPurpose) || 'EXPECTED_CORRECT_BEHAVIOR',
-                        result: res as 'SATISFIED' | 'NOT_SATISFIED' | 'OBSERVATION_UNAVAILABLE',
-                        expectedValue: a.expectedValue || undefined,
-                        observedValue: a.observedValue || undefined,
-                        details: a.details || undefined,
-                        evaluatedAt: a.evaluatedAt.toISOString(),
-                      };
-                    };
-
-                    const verifiedAssertions: VerificationAssertionResult[] = rawAssertions.map((a) => ({
-                      assertionId: a.assertionId,
-                      result: (a.result === 'PASSED' || a.result === 'SATISFIED')
-                        ? 'SATISFIED'
-                        : (a.result === 'FAILED' || a.result === 'NOT_SATISFIED')
-                        ? 'NOT_SATISFIED'
-                        : 'OBSERVATION_UNAVAILABLE',
-                      expectedValue: a.expectedValue || undefined,
-                      observedValue: a.observedValue || undefined,
-                      details: a.details || undefined,
-                      evaluatedAt: a.evaluatedAt.toISOString(),
-                    }));
-
-                    const pairAssessmentResult: PairAssessmentResult = {
-                      investigationId: data.investigationId,
-                      verdict: pairAssessment.verdict as PairAssessmentResult['verdict'],
-                      validAttemptCount: pairAssessment.validAttemptCount,
-                      matchingAttemptCount: pairAssessment.matchingAttemptCount,
-                      isComparable: pairAssessment.isComparable,
-                      attempt1Assessment: {
-                        attemptNumber: 1,
-                        validity: (att1?.validity as 'VALID' | 'INVALID') || 'INVALID',
-                        finding: (att1?.finding as AttemptFinding) || 'UNRESOLVED',
-                        invalidityReason: att1?.invalidityReason || undefined,
-                        preconditionsMet: !(att1?.invalidityReason?.includes('PRECONDITION')),
-                        procedureCompleted: att1?.completedCleanly ?? false,
-                        scopeAdhered: !(att1?.invalidityReason?.includes('SCOPE')),
-                        requiredObservationsAvailable: (att1?.actionsExecuted ?? 0) > 0,
-                        evaluations: att1Evaluations.map(mapEvaluation),
-                        assessedAt: (att1?.completedAt ? att1.completedAt.toISOString() : undefined) || new Date().toISOString(),
-                      },
-                      attempt2Assessment: att2 ? {
-                        attemptNumber: 2,
-                        validity: (att2.validity as 'VALID' | 'INVALID') || 'INVALID',
-                        finding: (att2.finding as AttemptFinding) || 'UNRESOLVED',
-                        invalidityReason: att2.invalidityReason || undefined,
-                        preconditionsMet: !(att2.invalidityReason?.includes('PRECONDITION')),
-                        procedureCompleted: att2.completedCleanly ?? false,
-                        scopeAdhered: !(att2.invalidityReason?.includes('SCOPE')),
-                        requiredObservationsAvailable: (att2.actionsExecuted ?? 0) > 0,
-                        evaluations: att2Evaluations.map(mapEvaluation),
-                        assessedAt: (att2.completedAt ? att2.completedAt.toISOString() : undefined) || new Date().toISOString(),
-                      } : undefined,
-                      resetReceipt: reset ? {
-                        id: reset.id,
-                        targetId: reset.targetId,
-                        investigationId: reset.investigationId,
-                        attemptNumber: 2 as const,
-                        transportSuccess: reset.transportSuccess,
-                        baselineEquivalent: reset.baselineEquivalent,
-                        isVerifiedRestored: reset.isVerifiedRestored,
-                        readback: {
-                          targetId: reset.targetId,
-                          expectedStateHash: reset.expectedStateHash || 'unknown',
-                          observedStateHash: reset.observedStateHash || 'unknown',
-                          isEquivalent: reset.baselineEquivalent,
-                          discrepancies: (reset.discrepancies as string[]) || [],
-                          checkedAt: reset.verifiedAt.toISOString(),
-                        },
-                        verifiedAt: reset.verifiedAt.toISOString(),
-                      } : undefined,
-                      summary: pairAssessment.summary,
-                      limitations: [],
-                      assessedAt: pairAssessment.assessedAt.toISOString(),
-                    };
-
-                    const att1Duration = (att1?.completedAt && att1?.startedAt)
-                      ? att1.completedAt.getTime() - att1.startedAt.getTime()
-                      : undefined;
-                    const att2Duration = (att2?.completedAt && att2?.startedAt)
-                      ? att2.completedAt.getTime() - att2.startedAt.getTime()
-                      : undefined;
-
-                    await evidenceReviewService.generateExplanation({
-                      investigationId: data.investigationId,
-                      pairAssessment: pairAssessmentResult,
-                      assertions: verifiedAssertions,
-                      eligibleEvidence,
-                      agent: reviewAgent,
-                      testedEnvironment: safeTarget.baseUrl || safeTarget.environment || safeTarget.name,
-                      targetBuildId: reset?.observedStateHash || undefined,
-                      attempt1DurationMs: att1Duration,
-                      attempt2DurationMs: att2Duration,
-                    });
-                  }
+                  await this.regenerateExplanation(data.investigationId);
                 } catch {
                   // Post-verification explanation synthesis failure does not invalidate reproduction verdict (TC-INV-007)
                 }

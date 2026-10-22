@@ -3,7 +3,6 @@ import { eq, and } from 'drizzle-orm';
 import { RequestPlanningCommandSchema } from '@/contracts/planning';
 import { requireAuthenticatedPrincipal } from '@/server/auth';
 import { createSafeError } from '@/contracts/errors';
-import { isDevPreviewEnabled } from '@/server/config/env';
 import { getDb } from '@/server/db';
 import { getServiceContainer } from '@/server/services/service-container';
 import { investigationsTable, experimentPlanRevisionsTable } from '@/server/db/schema';
@@ -35,14 +34,7 @@ export async function POST(
       );
     }
 
-    if (isDevPreviewEnabled()) {
-      return NextResponse.json({
-        status: 'PROPOSAL_READY',
-        investigationId: id,
-        message: 'Plan proposed in development preview mode.',
-        isSimulatedPreview: true,
-      });
-    }
+    
 
     const principal = await requireAuthenticatedPrincipal(req);
     const idempotencyKey = extractIdempotencyKey(req, rawBody as Record<string, unknown>);
@@ -81,16 +73,7 @@ export async function GET(
 ) {
   const { id } = await params;
 
-  if (isDevPreviewEnabled()) {
-    return NextResponse.json({
-      data: {
-        investigationId: id,
-        version: 1,
-        message: 'Preview plan details',
-      },
-      mode: 'preview_synthetic',
-    });
-  }
+  
 
   try {
     const principal = await requireAuthenticatedPrincipal(req);

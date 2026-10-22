@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ApprovePlanCommandSchema } from '@/contracts/planning';
 import { requireAuthenticatedPrincipal } from '@/server/auth';
 import { createSafeError } from '@/contracts/errors';
-import { isDevPreviewEnabled } from '@/server/config/env';
 import { investigationWorkflowService } from '@/server/workflow/investigation-workflow.service';
 import {
   handleWorkflowError,
@@ -35,24 +34,7 @@ export async function POST(
     }
 
     // In preview mode, return explicitly simulated approval
-    if (isDevPreviewEnabled()) {
-      const simulatedRecord = {
-        id: crypto.randomUUID(),
-        investigationId: id,
-        planVersion: parsed.data.planVersion,
-        planHash: parsed.data.approvedPlanHash,
-        approvedBy: 'operator-preview-persona',
-        operatorNotes: parsed.data.operatorNotes || null,
-        approvedAt: new Date().toISOString(),
-        isSimulatedPreview: true,
-      };
-
-      return NextResponse.json({
-        data: simulatedRecord,
-        status: 'APPROVED',
-        message: 'Plan approved in development simulation mode. No live browser jobs queued.',
-      });
-    }
+    
 
     // Live mode: requires authenticated principal
     const principal = await requireAuthenticatedPrincipal(req);

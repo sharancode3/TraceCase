@@ -1,23 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { isDevPreviewEnabled } from '@/server/config/env';
-import { SYNTHETIC_INVESTIGATIONS_CATALOG } from '@/dev/fixtures';
 import { requireAuthenticatedPrincipal, AuthenticationError, AuthorizationError } from '@/server/auth';
 import { createSafeError } from '@/contracts/errors';
 import { investigationsRepository } from '@/server/db/repositories/investigations.repository';
+import { investigationWorkflowService } from '@/server/workflow/investigation-workflow.service';
 
 export async function GET(req: NextRequest) {
-  if (isDevPreviewEnabled()) {
-    return NextResponse.json({
-      data: SYNTHETIC_INVESTIGATIONS_CATALOG,
-      total: SYNTHETIC_INVESTIGATIONS_CATALOG.length,
-      mode: 'preview_synthetic',
-    });
-  }
+  
 
   try {
     const principal = await requireAuthenticatedPrincipal(req);
 
-    const investigations = await investigationsRepository.listInvestigations(principal.id);
+    const records = await investigationsRepository.listInvestigations(principal.id);
+    const investigations = await Promise.all(records.map((record) =>
+      investigationWorkflowService.getInvestigationSnapshot(record.id, principal.id)
+    ));
 
     return NextResponse.json({
       data: investigations,

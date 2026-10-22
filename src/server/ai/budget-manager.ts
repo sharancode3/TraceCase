@@ -1,8 +1,21 @@
+import { getServerEnv } from '@/server/config/env';
 import crypto from 'node:crypto';
-import { eq, and, gt } from 'drizzle-orm';
+import { eq, and, gt, sql } from 'drizzle-orm';
 import { getDb, DbClient } from '@/server/db';
 import { investigationsTable, budgetReservationsTable } from '@/server/db/schema';
 
+export class GlobalBudgetExhaustedError extends Error {
+  constructor(
+    public readonly currentTotalCostUsd: number,
+    public readonly requestedCostUsd: number,
+    public readonly globalCeilingUsd: number
+  ) {
+    super(
+      `[BudgetManager] Shared TraceCase global budget limit exceeded. Current: $${currentTotalCostUsd.toFixed(8)}, Requested: $${requestedCostUsd.toFixed(8)}, Ceiling: $${globalCeilingUsd.toFixed(8)}.`
+    );
+    this.name = 'GlobalBudgetExhaustedError';
+  }
+}
 export class BudgetExhaustedError extends Error {
   constructor(
     public readonly investigationId: string,
@@ -11,7 +24,7 @@ export class BudgetExhaustedError extends Error {
     public readonly maxBudgetUsd: number
   ) {
     super(
-      `[BudgetManager] Investigation '${investigationId}' budget limit exceeded. Current: \$${currentCostUsd.toFixed(4)}, Requested: \$${requestedCostUsd.toFixed(4)}, Ceiling: \$${maxBudgetUsd.toFixed(4)}.`
+      `[BudgetManager] Investigation '${investigationId}' budget limit exceeded. Current: \$${currentCostUsd.toFixed(8)}, Requested: \$${requestedCostUsd.toFixed(8)}, Ceiling: \$${maxBudgetUsd.toFixed(8)}.`
     );
     this.name = 'BudgetExhaustedError';
   }
@@ -35,6 +48,7 @@ export interface BudgetLedgerPort {
     ticketId: string;
     estimatedCost: number;
     maxBudget: number;
+    globalCeiling?: number;
     expiresAt: Date;
   }): Promise<void>;
 
@@ -48,6 +62,8 @@ export interface BudgetLedgerPort {
 
   getCommittedCost(investigationId: string): Promise<number>;
   getInFlightReservedCost(investigationId: string): Promise<number>;
+  getGlobalCommittedCost?(): Promise<number>;
+  getGlobalInFlightReservedCost?(): Promise<number>;
 }
 
 /**
@@ -69,6 +85,7 @@ export class InMemoryBudgetLedger implements BudgetLedgerPort {
     ticketId: string;
     estimatedCost: number;
     maxBudget: number;
+    globalCeiling?: number;
     expiresAt: Date;
   }): Promise<void> {
     const committed = this.committedCosts.get(params.investigationId) ?? 0;
@@ -79,6 +96,26 @@ export class InMemoryBudgetLedger implements BudgetLedgerPort {
         inFlight += r.reservedUsd;
       }
     }
+    if (params.globalCeiling !== undefined) {
+      let totalCommitted = 0;
+      for (const val of this.committedCosts.values()) {
+        totalCommitted += val;
+      }
+      let totalInFlight = 0;
+      for (const r of this.reservations.values()) {
+        if (r.status === 'RESERVED' && r.expiresAt > now) {
+          totalInFlight += r.reservedUsd;
+        }
+      }
+      if (totalCommitted + totalInFlight + params.estimatedCost > params.globalCeiling) {
+        throw new GlobalBudgetExhaustedError(
+          totalCommitted + totalInFlight,
+          params.estimatedCost,
+          params.globalCeiling
+        );
+      }
+    }
+
     if (committed + inFlight + params.estimatedCost > params.maxBudget) {
       throw new BudgetExhaustedError(
         params.investigationId,
@@ -107,7 +144,7 @@ export class InMemoryBudgetLedger implements BudgetLedgerPort {
     }
     r.status = 'COMMITTED';
     const current = this.committedCosts.get(params.investigationId) ?? 0;
-    this.committedCosts.set(params.investigationId, Number((current + params.actualCost).toFixed(4)));
+    this.committedCosts.set(params.investigationId, Number((current + params.actualCost).toFixed(8)));
     return params.actualCost;
   }
 
@@ -131,6 +168,25 @@ export class InMemoryBudgetLedger implements BudgetLedgerPort {
       }
     }
     return inFlight;
+  }
+
+  async getGlobalCommittedCost(): Promise<number> {
+    let sum = 0;
+    for (const val of this.committedCosts.values()) {
+      sum += val;
+    }
+    return Number(sum.toFixed(8));
+  }
+
+  async getGlobalInFlightReservedCost(): Promise<number> {
+    let inFlight = 0;
+    const now = new Date();
+    for (const r of this.reservations.values()) {
+      if (r.status === 'RESERVED' && r.expiresAt > now) {
+        inFlight += r.reservedUsd;
+      }
+    }
+    return Number(inFlight.toFixed(8));
   }
 }
 
@@ -157,11 +213,43 @@ export class PostgresBudgetLedger implements BudgetLedgerPort {
     ticketId: string;
     estimatedCost: number;
     maxBudget: number;
+    globalCeiling?: number;
     expiresAt: Date;
   }): Promise<void> {
     const db = this.dbProvider();
 
     const executeReserve = async (client: DbClient) => {
+      // Shared transaction lock serializes budget decisions across investigations/processes.
+      if (typeof client.execute === 'function') await client.execute(sql`SELECT pg_advisory_xact_lock(873246901)`);
+      // 0. Verify global shared ceiling across all investigations if configured
+      if (params.globalCeiling !== undefined) {
+        const allInvs = await client
+          .select({ tokenCostUsd: investigationsTable.tokenCostUsd })
+          .from(investigationsTable);
+        const globalCommitted = allInvs.reduce((sum, inv) => sum + Number(inv.tokenCostUsd ?? 0), 0);
+
+        const allActiveReservations = await client
+          .select({
+            reservedUsd: budgetReservationsTable.reservedUsd,
+            expiresAt: budgetReservationsTable.expiresAt,
+            status: budgetReservationsTable.status,
+          })
+          .from(budgetReservationsTable);
+
+        const now = new Date();
+        const globalInFlight = allActiveReservations
+          .filter((r) => r.status === 'RESERVED' && new Date(r.expiresAt) > now)
+          .reduce((sum, r) => sum + Number(r.reservedUsd ?? 0), 0);
+
+        if (globalCommitted + globalInFlight + params.estimatedCost > params.globalCeiling) {
+          throw new GlobalBudgetExhaustedError(
+            globalCommitted + globalInFlight,
+            params.estimatedCost,
+            params.globalCeiling
+          );
+        }
+      }
+
       // 1. Lock investigation row with FOR UPDATE to serialize all reservation decisions for this investigation
       const query = client
         .select({ tokenCostUsd: investigationsTable.tokenCostUsd })
@@ -203,7 +291,7 @@ export class PostgresBudgetLedger implements BudgetLedgerPort {
       await client.insert(budgetReservationsTable).values({
         investigationId: params.investigationId,
         ticketId: params.ticketId,
-        reservedUsd: params.estimatedCost.toFixed(4),
+        reservedUsd: params.estimatedCost.toFixed(8),
         status: 'RESERVED',
         createdAt: new Date(),
         expiresAt: params.expiresAt,
@@ -227,6 +315,7 @@ export class PostgresBudgetLedger implements BudgetLedgerPort {
     const now = new Date();
 
     const executeCommit = async (client: DbClient) => {
+      if (typeof client.execute === 'function') await client.execute(sql`SELECT pg_advisory_xact_lock(873246901)`);
       // 1. Atomically transition from RESERVED to COMMITTED
       let updated: Array<{ id: string }> = [];
       try {
@@ -234,7 +323,7 @@ export class PostgresBudgetLedger implements BudgetLedgerPort {
           .update(budgetReservationsTable)
           .set({
             status: 'COMMITTED',
-            actualCostUsd: params.actualCost.toFixed(4),
+            actualCostUsd: params.actualCost.toFixed(8),
             settledAt: now,
           })
           .where(
@@ -272,12 +361,12 @@ export class PostgresBudgetLedger implements BudgetLedgerPort {
         : await query.limit(1);
 
       const currentCost = Number(rows?.[0]?.tokenCostUsd ?? 0);
-      const newCost = Number((currentCost + params.actualCost).toFixed(4));
+      const newCost = Number((currentCost + params.actualCost).toFixed(8));
 
       await client
         .update(investigationsTable)
         .set({
-          tokenCostUsd: newCost.toFixed(4),
+          tokenCostUsd: newCost.toFixed(8),
           updatedAt: now,
         })
         .where(eq(investigationsTable.id, params.investigationId));
@@ -335,10 +424,34 @@ export class PostgresBudgetLedger implements BudgetLedgerPort {
 
     return rows.reduce((sum, r) => sum + Number(r.reservedUsd), 0);
   }
+
+  async getGlobalCommittedCost(): Promise<number> {
+    const db = this.dbProvider();
+    const rows = await db
+      .select({ tokenCostUsd: investigationsTable.tokenCostUsd })
+      .from(investigationsTable);
+    return rows.reduce((sum, inv) => sum + Number(inv.tokenCostUsd ?? 0), 0);
+  }
+
+  async getGlobalInFlightReservedCost(): Promise<number> {
+    const db = this.dbProvider();
+    const rows = await db
+      .select({
+        reservedUsd: budgetReservationsTable.reservedUsd,
+        expiresAt: budgetReservationsTable.expiresAt,
+        status: budgetReservationsTable.status,
+      })
+      .from(budgetReservationsTable);
+    const now = new Date();
+    return rows
+      .filter((r) => r.status === 'RESERVED' && new Date(r.expiresAt) > now)
+      .reduce((sum, r) => sum + Number(r.reservedUsd ?? 0), 0);
+  }
 }
 
 export interface BudgetManagerOptions {
   maxBudgetPerInvestigationUsd?: number;
+  globalBudgetCeilingUsd?: number;
   promptPricePer1kTokens?: number;
   completionPricePer1kTokens?: number;
   defaultEstimatedTokens?: number;
@@ -347,6 +460,7 @@ export interface BudgetManagerOptions {
 
 export class BudgetManager {
   private maxBudgetPerInvestigationUsd: number;
+  private globalBudgetCeilingUsd: number;
   private promptPricePer1kTokens: number;
   private completionPricePer1kTokens: number;
   private defaultEstimatedTokens: number;
@@ -359,9 +473,22 @@ export class BudgetManager {
     dbProvider: () => DbClient = getDb,
     options: BudgetManagerOptions = {}
   ) {
-    this.maxBudgetPerInvestigationUsd = options.maxBudgetPerInvestigationUsd ?? 2.0;
-    this.promptPricePer1kTokens = options.promptPricePer1kTokens ?? 0.003;
-    this.completionPricePer1kTokens = options.completionPricePer1kTokens ?? 0.015;
+    let envPerInvestigation = 0.25;
+    let envGlobalCeiling = 10.00;
+    try {
+      const env = getServerEnv();
+      envPerInvestigation = env.OPENAI_PER_INVESTIGATION_CEILING;
+      envGlobalCeiling = env.OPENAI_TOTAL_BUDGET_CEILING;
+    } catch {
+      // Safe defaults
+    }
+    this.maxBudgetPerInvestigationUsd = options.maxBudgetPerInvestigationUsd ?? envPerInvestigation;
+    this.globalBudgetCeilingUsd = options.globalBudgetCeilingUsd ?? envGlobalCeiling;
+    // Calibrated GPT-6 Luna Standard published rates:
+    // Input: $0.10 / 1M = $0.000100 / 1k tokens
+    // Output: $0.50 / 1M = $0.000500 / 1k tokens
+    this.promptPricePer1kTokens = options.promptPricePer1kTokens ?? 0.000100;
+    this.completionPricePer1kTokens = options.completionPricePer1kTokens ?? 0.000500;
     this.defaultEstimatedTokens = options.defaultEstimatedTokens ?? 1500;
     this.ledger = options.customLedger || new PostgresBudgetLedger(dbProvider);
   }
@@ -369,7 +496,7 @@ export class BudgetManager {
   public calculateCost(usage: TokenUsageReport): number {
     const promptCost = (usage.promptTokens / 1000) * this.promptPricePer1kTokens;
     const completionCost = (usage.completionTokens / 1000) * this.completionPricePer1kTokens;
-    return Number((promptCost + completionCost).toFixed(6));
+    return Number((promptCost + completionCost).toFixed(8));
   }
 
   public estimateCost(tokens: number = this.defaultEstimatedTokens): number {
@@ -390,9 +517,12 @@ export class BudgetManager {
     investigationId: string;
     estimatedTokens?: number;
     maxBudgetOverride?: number;
+    globalCeilingOverride?: number;
   }): Promise<BudgetReservationTicket> {
     const maxBudget = params.maxBudgetOverride ?? this.maxBudgetPerInvestigationUsd;
-    const estimatedCost = this.estimateCost(params.estimatedTokens);
+    const globalCeiling = params.globalCeilingOverride ?? this.globalBudgetCeilingUsd;
+    // Conservatively covers the bounded 32KB input, 2048 output and one retry.
+    const estimatedCost = Math.max(0.01, this.estimateCost(params.estimatedTokens));
     const ticketId = crypto.randomUUID();
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 10 * 60 * 1000);
@@ -402,6 +532,7 @@ export class BudgetManager {
       ticketId,
       estimatedCost,
       maxBudget,
+      globalCeiling,
       expiresAt,
     });
 
@@ -439,6 +570,14 @@ export class BudgetManager {
 
   public getActiveReservationCount(): number {
     return this.activeReservations.size;
+  }
+
+  public async getGlobalCommittedCost(): Promise<number> {
+    return (await this.ledger.getGlobalCommittedCost?.()) ?? 0;
+  }
+
+  public async getGlobalInFlightReservedCost(): Promise<number> {
+    return (await this.ledger.getGlobalInFlightReservedCost?.()) ?? 0;
   }
 }
 

@@ -13,14 +13,19 @@ export interface ConsoleLogEntry {
 
 export interface NetworkTraceEntry {
   id: string;
-  timestamp: string;
+  timestamp?: string;
   method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | string;
   url: string;
-  status: number;
-  durationMs: number;
-  mimeType: string;
-  requestHeaders: Record<string, string>;
-  responseHeaders: Record<string, string>;
+  resourceType?: string;
+  status?: number;
+  isTransportFailure?: boolean;
+  failureText?: string;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  mimeType?: string;
+  requestHeaders?: Record<string, string>;
+  responseHeaders?: Record<string, string>;
   responseBody?: unknown;
 }
 
@@ -189,18 +194,20 @@ export function filterNetworkTraces(
   const query = searchQuery.trim().toLowerCase();
   const sanitized = traces.map((trace) => ({
     ...trace,
-    url: sanitizeUrl(trace.url),
-    requestHeaders: sanitizeNetworkHeaders(trace.requestHeaders),
-    responseHeaders: sanitizeNetworkHeaders(trace.responseHeaders),
+    url: trace.url ? sanitizeUrl(trace.url) : '',
+    requestHeaders: trace.requestHeaders ? sanitizeNetworkHeaders(trace.requestHeaders) : undefined,
+    responseHeaders: trace.responseHeaders ? sanitizeNetworkHeaders(trace.responseHeaders) : undefined,
   }));
 
   if (!query) return sanitized;
 
   return sanitized.filter((trace) => {
     return (
-      trace.url.toLowerCase().includes(query) ||
-      trace.method.toLowerCase().includes(query) ||
-      String(trace.status).includes(query)
+      (trace.url && trace.url.toLowerCase().includes(query)) ||
+      (trace.method && trace.method.toLowerCase().includes(query)) ||
+      (trace.status !== undefined && String(trace.status).includes(query)) ||
+      (trace.failureText && trace.failureText.toLowerCase().includes(query)) ||
+      (trace.resourceType && trace.resourceType.toLowerCase().includes(query))
     );
   });
 }
@@ -327,8 +334,8 @@ export function buildReproductionPackage(params: {
       verificationCriteria: (plan && 'verificationCriteria' in plan)
         ? plan.verificationCriteria
         : (plan && 'assertions' in plan)
-        ? (plan.assertions as Array<{ kind?: string; targetRole?: string; predicateId?: string; details?: string }>).map(
-            (a) => `${a.kind || 'ASSERTION'}: ${a.targetRole || a.predicateId || a.details || ''}`
+        ? (plan.assertions as Array<{ kind?: string; targetRole?: string; predicateId?: string; details?: string; description?: string }>).map(
+            (a) => `${a.kind || 'ASSERTION'}: ${a.description || a.targetRole || a.predicateId || a.details || ''}`
           )
         : undefined,
     },

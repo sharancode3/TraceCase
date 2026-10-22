@@ -22,9 +22,11 @@ import { getServiceContainer } from '@/server/services/service-container';
 export async function bootstrapWorker(
   customQueue?: QueueAdapter,
   customBrowserWorker?: BrowserWorkerPort,
-  customBrowserAgent?: BrowserInvestigationAgentPort
+  customBrowserAgent?: BrowserInvestigationAgentPort,
+  options?: { port?: number }
 ) {
   const config = getWorkerConfig();
+  const listenPort = options?.port ?? (customQueue || process.env.NODE_ENV === 'test' || process.env.VITEST ? 0 : config.port);
   console.log('[TraceCase Worker] Initializing daemon process...');
   console.log(`[TraceCase Worker] Worker ID: ${config.workerId}`);
   console.log(`[TraceCase Worker] Global Execution Lease Slot: Concurrency-1 singleton`);
@@ -81,8 +83,10 @@ export async function bootstrapWorker(
     res.end();
   });
 
-  server.listen(config.port, () => {
-    console.log(`[TraceCase Worker] Health probe listening on port ${config.port} (/health)`);
+  server.listen(listenPort, () => {
+    const address = server.address();
+    const actualPort = typeof address === 'object' && address ? address.port : listenPort;
+    console.log(`[TraceCase Worker] Health probe listening on port ${actualPort} (/health)`);
   });
 
   try {

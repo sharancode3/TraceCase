@@ -3,7 +3,6 @@ import { requireAuthenticatedPrincipal } from '@/server/auth';
 import { eventsRepository } from '@/server/db/repositories/events.repository';
 import { investigationWorkflowService } from '@/server/workflow/investigation-workflow.service';
 import { handleWorkflowError } from '@/server/workflow/workflow-http';
-import { isDevPreviewEnabled } from '@/server/config/env';
 
 export async function GET(
   req: NextRequest,
@@ -11,14 +10,7 @@ export async function GET(
 ) {
   const { id } = await params;
 
-  if (isDevPreviewEnabled()) {
-    return NextResponse.json({
-      investigationId: id,
-      currentWatermark: 0,
-      events: [],
-      isSimulatedPreview: true,
-    });
-  }
+  
 
   try {
     const principal = await requireAuthenticatedPrincipal(req);

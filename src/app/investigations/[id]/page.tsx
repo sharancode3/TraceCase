@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import {
   Video,
   Terminal,
@@ -35,17 +35,10 @@ import {
 import type { InvestigationSnapshot } from '@/contracts/investigations';
 import type { EvidenceManifest, ArtifactKind, StorageTier } from '@/contracts/evidence';
 import {
-  SYNTHETIC_INVESTIGATIONS_CATALOG,
-  SYNTHETIC_PLAN_V1,
-  SYNTHETIC_EVIDENCE_MANIFEST_TC1,
-} from '@/dev/fixtures';
-import {
   buildReproductionPackage,
   filterConsoleLogs,
   filterNetworkTraces,
   getEvidenceAvailability,
-  CANONICAL_TC1_CONSOLE_LOGS,
-  CANONICAL_TC1_NETWORK_TRACES,
   type ConsoleLogEntry,
   type NetworkTraceEntry,
 } from '@/features/investigations/evidence-presentation';
@@ -53,6 +46,7 @@ import {
   fetchInvestigation,
   fetchPlan,
   fetchArtifacts,
+  requestPlanning,
   type ArtifactItem,
 } from '@/features/investigations/api-client';
 import type { AuthoritativeExperimentPlan } from '@/contracts/planning';
@@ -60,7 +54,33 @@ import type { AuthoritativeExperimentPlan } from '@/contracts/planning';
 export default function InvestigationDetailPage() {
   const params = useParams();
   const id = params?.id as string;
-  const isPreviewId = Boolean(id?.includes('preview') || SYNTHETIC_INVESTIGATIONS_CATALOG.some((inv) => inv.id === id));
+  const router = useRouter();
+  const [planning, setPlanning] = React.useState(false);
+  const [planningError, setPlanningError] = React.useState<string | null>(null);
+  const [explanation, setExplanation] = React.useState<{summary: string; verifiedFacts: string; limitations: unknown; observationsVsHypotheses: unknown} | null>(null);
+  const [restrictedRecordingCount, setRestrictedRecordingCount] = React.useState(0);
+  const [reviewing, setReviewing] = React.useState(false);
+  const retryExplanation = async () => {
+    setReviewing(true);
+    try {
+      const response = await fetch(`/api/v1/investigations/${encodeURIComponent(id)}/explanation`, { method: 'POST' });
+      const body = await response.json();
+      if (response.ok) setExplanation(body.data);
+      else setPlanningError(body.error?.message || 'Evidence explanation could not be generated.');
+    } catch { setPlanningError('Evidence review service unavailable.'); }
+    finally { setReviewing(false); }
+  };
+  const generatePlan = async () => {
+    setPlanning(true);
+    setPlanningError(null);
+    try {
+      const result = await requestPlanning(id);
+      if (!result.success) { setPlanningError(result.error.message); return; }
+      if (result.data.status === 'UNABLE_TO_PROCEED') { setPlanningError(result.data.reason || 'Unable to plan this report.'); return; }
+      router.push(`/investigations/${id}/${result.data.status === 'CLARIFICATION_NEEDED' ? 'clarify' : 'approve'}`);
+    } finally { setPlanning(false); }
+  };
+
 
   const [activeTab, setActiveTab] = React.useState<'video' | 'console' | 'network'>('video');
   const [consoleSearch, setConsoleSearch] = React.useState('');
@@ -76,7 +96,7 @@ export default function InvestigationDetailPage() {
   const [realArtifacts, setRealArtifacts] = React.useState<ArtifactItem[]>([]);
   const [realConsoleLogs, setRealConsoleLogs] = React.useState<ConsoleLogEntry[]>([]);
   const [realNetworkTraces, setRealNetworkTraces] = React.useState<NetworkTraceEntry[]>([]);
-  const [selectedAttemptForVideo, setSelectedAttemptForVideo] = React.useState<number>(1);
+  const [selectedAttempt, setSelectedAttempt] = React.useState<number>(1);
   const [isLoading, setIsLoading] = React.useState(true);
   const [notFound, setNotFound] = React.useState(false);
 
@@ -93,13 +113,10 @@ export default function InvestigationDetailPage() {
 
       if (invRes.success && invRes.data) {
         setInvestigation(invRes.data);
-      } else if (isPreviewId || (invRes.success && invRes.mode === 'preview_synthetic')) {
-        const found = SYNTHETIC_INVESTIGATIONS_CATALOG.find((inv) => inv.id === id) || null;
-        if (found) {
-          setInvestigation(found);
-        } else {
-          setNotFound(true);
-        }
+        try {
+          const response = await fetch(`/api/v1/investigations/${encodeURIComponent(id)}/explanation`);
+          if (response.ok && isMounted) setExplanation((await response.json()).data);
+        } catch { /* Explanation availability never blocks factual results. */ }
       } else {
         setNotFound(true);
       }
@@ -109,83 +126,8 @@ export default function InvestigationDetailPage() {
       }
 
       if (artRes.success && artRes.data?.artifacts) {
-        const artifactsList = artRes.data.artifacts;
-        setRealArtifacts(artifactsList);
-
-        // Fetch real console log content if available
-        const consoleArtifact = artifactsList.find((a) => a.kind === 'CONSOLE_LOG');
-        if (consoleArtifact?.url) {
-          try {
-            const resp = await fetch(consoleArtifact.url, { credentials: 'include' });
-            if (resp.ok) {
-              const text = await resp.text();
-              try {
-                const parsed = JSON.parse(text);
-                if (Array.isArray(parsed)) {
-                  const entries: ConsoleLogEntry[] = parsed.map((item: Record<string, unknown>, idx: number) => ({
-                    id: (item.id as string) || `log-${idx}`,
-                    timestamp: (item.timestamp as string) || new Date().toISOString(),
-                    level: ((item.level as string) || 'INFO').toUpperCase() as ConsoleLogEntry['level'],
-                    category: (item.category as string) || 'console',
-                    message: (item.message as string) || JSON.stringify(item),
-                  }));
-                  setRealConsoleLogs(entries);
-                }
-              } catch {
-                // Parse plain text logs line-by-line
-                const lines = text.split('\n').filter((l) => l.trim().length > 0);
-                const entries: ConsoleLogEntry[] = lines.map((line, idx) => {
-                  const isErr = line.includes('ERROR') || line.includes('ERR');
-                  const isWarn = line.includes('WARN');
-                  return {
-                    id: `log-${idx}`,
-                    timestamp: new Date().toISOString(),
-                    level: isErr ? 'ERROR' : isWarn ? 'WARN' : 'INFO',
-                    category: 'console',
-                    message: line,
-                  };
-                });
-                setRealConsoleLogs(entries);
-              }
-            }
-          } catch {
-            // Best effort
-          }
-        }
-
-        // Fetch real network trace content if available
-        const networkArtifact = artifactsList.find((a) => a.kind === 'NETWORK_TRACE');
-        if (networkArtifact?.url) {
-          try {
-            const resp = await fetch(networkArtifact.url, { credentials: 'include' });
-            if (resp.ok) {
-              const text = await resp.text();
-              const parsed = JSON.parse(text);
-              const rawList = Array.isArray(parsed)
-                ? parsed
-                : Array.isArray(parsed?.entries)
-                ? parsed.entries
-                : Array.isArray(parsed?.requests)
-                ? parsed.requests
-                : [];
-              const entries: NetworkTraceEntry[] = rawList.map((item: Record<string, unknown>, idx: number) => ({
-                id: (item.id as string) || `net-${idx}`,
-                timestamp: (item.timestamp as string) || new Date().toISOString(),
-                method: ((item.method as string) || 'GET').toUpperCase(),
-                url: (item.url as string) || '/',
-                status: typeof item.status === 'number' ? item.status : 200,
-                durationMs: typeof item.durationMs === 'number' ? item.durationMs : 0,
-                mimeType: (item.mimeType as string) || 'application/json',
-                requestHeaders: (item.requestHeaders || item.headers || {}) as Record<string, string>,
-                responseHeaders: (item.responseHeaders || {}) as Record<string, string>,
-                responseBody: item.responseBody,
-              }));
-              setRealNetworkTraces(entries);
-            }
-          } catch {
-            // Best effort
-          }
-        }
+        setRestrictedRecordingCount(artRes.data.restrictedRecordingCount || 0);
+        setRealArtifacts(artRes.data.artifacts);
       }
 
       setIsLoading(false);
@@ -194,12 +136,123 @@ export default function InvestigationDetailPage() {
     return () => {
       isMounted = false;
     };
-  }, [id, isPreviewId]);
+  }, [id]);
+
+  // Load attempt-specific console and network artifacts whenever selectedAttempt or realArtifacts updates
+  React.useEffect(() => {
+    if (realArtifacts.length === 0) return;
+    let isCancelled = false;
+
+    async function loadAttemptEvidence() {
+      // 1. Console log artifact for selected attempt (or fallback to any matching CONSOLE_LOG)
+      const consoleArtifact =
+        realArtifacts.find((a) => a.kind === 'CONSOLE_LOG' && a.attemptNumber === selectedAttempt) ||
+        realArtifacts.find((a) => a.kind === 'CONSOLE_LOG');
+
+      if (consoleArtifact?.url) {
+        try {
+          const resp = await fetch(consoleArtifact.url, { credentials: 'include' });
+          if (resp.ok && !isCancelled) {
+            const text = await resp.text();
+            try {
+              const parsed = JSON.parse(text);
+              const targetData = parsed?.safeContent !== undefined ? parsed.safeContent : parsed;
+              if (Array.isArray(targetData)) {
+                const entries: ConsoleLogEntry[] = targetData.map((item: Record<string, unknown>, idx: number) => ({
+                  id: (item.id as string) || `log-${idx}`,
+                  timestamp: (item.timestamp as string) || '',
+                  level: ((item.level as string) || 'INFO').toUpperCase() as ConsoleLogEntry['level'],
+                  category: (item.category as string) || (item.pageId as string) || 'console',
+                  message: (item.text as string) || (item.message as string) || JSON.stringify(item),
+                }));
+                setRealConsoleLogs(entries);
+              } else if (typeof targetData === 'string') {
+                const lines = targetData.split('\n').filter((l) => l.trim().length > 0);
+                setRealConsoleLogs(
+                  lines.map((line, idx) => ({
+                    id: `log-${idx}`,
+                    timestamp: '',
+                    level: line.includes('ERROR') ? 'ERROR' : line.includes('WARN') ? 'WARN' : 'INFO',
+                    category: 'console',
+                    message: line,
+                  }))
+                );
+              } else {
+                setRealConsoleLogs([]);
+              }
+            } catch {
+              const lines = text.split('\n').filter((l) => l.trim().length > 0);
+              const entries: ConsoleLogEntry[] = lines.map((line, idx) => ({
+                id: `log-${idx}`,
+                timestamp: '',
+                level: line.includes('ERROR') || line.includes('ERR') ? 'ERROR' : line.includes('WARN') ? 'WARN' : 'INFO',
+                category: 'console',
+                message: line,
+              }));
+              setRealConsoleLogs(entries);
+            }
+          }
+        } catch {
+          if (!isCancelled) setRealConsoleLogs([]);
+        }
+      } else {
+        setRealConsoleLogs([]);
+      }
+
+      // 2. Network trace artifact for selected attempt (or fallback to any matching NETWORK_TRACE)
+      const networkArtifact =
+        realArtifacts.find((a) => a.kind === 'NETWORK_TRACE' && a.attemptNumber === selectedAttempt) ||
+        realArtifacts.find((a) => a.kind === 'NETWORK_TRACE');
+
+      if (networkArtifact?.url) {
+        try {
+          const resp = await fetch(networkArtifact.url, { credentials: 'include' });
+          if (resp.ok && !isCancelled) {
+            const text = await resp.text();
+            const parsed = JSON.parse(text);
+            const targetData = parsed?.safeContent !== undefined ? parsed.safeContent : parsed;
+            const rawList = Array.isArray(targetData)
+              ? targetData
+              : Array.isArray(targetData?.entries)
+              ? targetData.entries
+              : Array.isArray(targetData?.requests)
+              ? targetData.requests
+              : [];
+            const entries: NetworkTraceEntry[] = rawList.map((item: Record<string, unknown>, idx: number) => ({
+              id: (item.requestId as string) || (item.id as string) || `net-${idx}`,
+              timestamp: (item.startedAt as string) || (item.timestamp as string) || undefined,
+              method: ((item.method as string) || 'GET').toUpperCase(),
+              url: (item.url as string) || '/',
+              resourceType: item.resourceType as string | undefined,
+              status: typeof item.status === 'number' ? item.status : undefined,
+              isTransportFailure: Boolean(item.isTransportFailure),
+              failureText: item.failureText as string | undefined,
+              startedAt: item.startedAt as string | undefined,
+              completedAt: item.completedAt as string | undefined,
+              durationMs: typeof item.durationMs === 'number' ? item.durationMs : undefined,
+              mimeType: item.mimeType as string | undefined,
+              requestHeaders: (item.requestHeaders || item.headers || undefined) as Record<string, string> | undefined,
+              responseHeaders: (item.responseHeaders || undefined) as Record<string, string> | undefined,
+              responseBody: item.responseBody,
+            }));
+            setRealNetworkTraces(entries);
+          }
+        } catch {
+          if (!isCancelled) setRealNetworkTraces([]);
+        }
+      } else {
+        setRealNetworkTraces([]);
+      }
+    }
+
+    loadAttemptEvidence();
+    return () => {
+      isCancelled = true;
+    };
+  }, [realArtifacts, selectedAttempt]);
 
   // Telemetry and manifests
-  const isTC1 = investigation?.id === SYNTHETIC_EVIDENCE_MANIFEST_TC1.investigationId;
-  const manifest = isTC1 ? SYNTHETIC_EVIDENCE_MANIFEST_TC1 : null;
-  const syntheticVideoArtifact = manifest?.artifacts.find((a) => a.kind === 'VIDEO_RECORDING');
+  const manifest: EvidenceManifest | null = null;
 
   const videoArtifacts = React.useMemo(() => {
     return realArtifacts.filter((a) => a.kind === 'VIDEO_RECORDING');
@@ -207,9 +260,9 @@ export default function InvestigationDetailPage() {
 
   const activeRealVideo = React.useMemo(() => {
     if (videoArtifacts.length === 0) return null;
-    const match = videoArtifacts.find((a) => a.attemptNumber === selectedAttemptForVideo);
+    const match = videoArtifacts.find((a) => a.attemptNumber === selectedAttempt);
     return match || videoArtifacts[0];
-  }, [videoArtifacts, selectedAttemptForVideo]);
+  }, [videoArtifacts, selectedAttempt]);
 
   const videoArtifact = activeRealVideo
     ? {
@@ -222,8 +275,8 @@ export default function InvestigationDetailPage() {
         sha256Checksum: activeRealVideo.sha256Checksum,
         isEligibleForSharing: activeRealVideo.isEligibleForSharing,
       }
-    : syntheticVideoArtifact;
-  const hasAnyVideo = videoArtifacts.length > 0 || Boolean(manifest?.hasVideo);
+    : undefined;
+  const hasAnyVideo = videoArtifacts.length > 0;
 
   const isQuarantined = investigation?.evidenceReadiness === 'QUARANTINED_LEAK_DETECTED';
   const hasPlayableVideo = Boolean(
@@ -237,15 +290,13 @@ export default function InvestigationDetailPage() {
 
   const consoleLogs: ConsoleLogEntry[] = React.useMemo(() => {
     if (realConsoleLogs.length > 0) return realConsoleLogs;
-    if (isTC1) return CANONICAL_TC1_CONSOLE_LOGS;
     return [];
-  }, [realConsoleLogs, isTC1]);
+  }, [realConsoleLogs]);
 
   const networkTraces: NetworkTraceEntry[] = React.useMemo(() => {
     if (realNetworkTraces.length > 0) return realNetworkTraces;
-    if (isTC1) return CANONICAL_TC1_NETWORK_TRACES;
     return [];
-  }, [realNetworkTraces, isTC1]);
+  }, [realNetworkTraces]);
 
   const filteredLogs = React.useMemo(
     () => filterConsoleLogs(consoleLogs, consoleSearch),
@@ -262,7 +313,7 @@ export default function InvestigationDetailPage() {
     if (!investigation) return;
     setIsExporting(true);
     try {
-      const planToUse = realPlan || (isTC1 ? SYNTHETIC_PLAN_V1 : null);
+      const planToUse = realPlan;
       const manifestToUse: EvidenceManifest | null = realArtifacts.length > 0 ? {
         investigationId: id,
         readinessStatus: (investigation.evidenceReadiness || 'PUBLIC_SAFE_READY') as EvidenceReadinessStatus,
@@ -388,11 +439,6 @@ export default function InvestigationDetailPage() {
               </span>
               <span>•</span>
               <span className="text-xs text-brand-muted">{investigation.targetName}</span>
-              {isTC1 && (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-lavender-surface text-brand-deepPurple border border-cobalt-action/30">
-                  Canonical TC1 Demo
-                </span>
-              )}
             </div>
             <h2 className="text-2xl font-bold text-brand-navy tracking-tight">
               {investigation.title}
@@ -403,6 +449,11 @@ export default function InvestigationDetailPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {!realPlan && investigation.lifecycleStatus === 'DRAFT' && (
+              <Button size="sm" onClick={generatePlan} disabled={planning}>
+                {planning ? 'Generating Plan...' : 'Generate Plan'}
+              </Button>
+            )}
             <Link href={`/investigations/${investigation.id}/approve`}>
               <Button size="sm" variant="outline">
                 <span>View Plan</span>
@@ -428,6 +479,7 @@ export default function InvestigationDetailPage() {
           </div>
         </div>
 
+        {planningError && <p role="alert" className="mt-4 text-sm text-red-700">{planningError}</p>}
         {exportNotice && (
           <div
             role="status"
@@ -475,12 +527,92 @@ export default function InvestigationDetailPage() {
         </div>
       </Card>
 
+      {explanation ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center justify-between">
+              <span>Evidence Explanation</span>
+              <Badge variant="outline">AI Synthesized</Badge>
+            </CardTitle>
+            <CardDescription>
+              Generated from recorded findings. Suggested causes remain hypotheses (TC-INV-008).
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm text-brand-navy">
+            <div className="p-3 bg-lavender-surface rounded-control border border-lavender-accent/50 text-xs leading-relaxed">
+              <span className="font-semibold text-brand-deepPurple block mb-1">Executive Summary:</span>
+              <p>{explanation.summary}</p>
+            </div>
+            {explanation.verifiedFacts && (
+              <div className="space-y-1">
+                <span className="font-semibold text-xs text-brand-navy">Verified Execution Facts:</span>
+                <div className="p-3 bg-white rounded border border-neutral-divider text-xs whitespace-pre-wrap font-mono text-neutral-800 leading-relaxed">
+                  {explanation.verifiedFacts}
+                </div>
+              </div>
+            )}
+            {Array.isArray(explanation.observationsVsHypotheses) && explanation.observationsVsHypotheses.length > 0 && (
+              <div className="space-y-2 pt-1">
+                <span className="font-semibold text-xs text-brand-navy">Observations vs Hypotheses:</span>
+                <div className="grid grid-cols-1 gap-2">
+                  {explanation.observationsVsHypotheses.map((entry: {observation?: string; hypothesis?: string}, i: number) => (
+                    <div key={i} className="p-2.5 rounded bg-white border border-neutral-divider text-xs space-y-1">
+                      <p><span className="font-semibold text-brand-navy">Observation:</span> {entry.observation}</p>
+                      <p><span className="font-semibold text-brand-deepPurple">Hypothesis:</span> {entry.hypothesis}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {Array.isArray(explanation.limitations) && explanation.limitations.length > 0 && (
+              <div className="space-y-1 pt-1 text-xs text-brand-muted">
+                <span className="font-semibold text-brand-navy">Recorded Limitations and Gaps:</span>
+                <ul className="list-disc pl-4 space-y-0.5">
+                  {explanation.limitations.map((gap: string, i: number) => (
+                    <li key={i}>{gap}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <div className="pt-2 flex items-center space-x-3">
+              <Button size="sm" variant="outline" onClick={retryExplanation} disabled={reviewing}>
+                {reviewing ? 'Reviewing Evidence...' : 'Review Evidence Again'}
+              </Button>
+              <span className="text-[11px] text-brand-muted">
+                Synthesizes factual observations through Evidence Review Agent.
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      ) : investigation?.lifecycleStatus === 'COMPLETED' ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Evidence Explanation</CardTitle>
+            <CardDescription>
+              Synthesize a natural language review from recorded verification facts.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm text-brand-navy">
+            <p className="text-xs text-brand-muted">
+              Factual results are locked. You can synthesize a narrative explanation analyzing the recorded attempt observations.
+            </p>
+            <Button size="sm" onClick={retryExplanation} disabled={reviewing}>
+              {reviewing ? 'Reviewing Evidence...' : 'Generate Evidence Explanation'}
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
+      {restrictedRecordingCount > 0 && (
+        <div role="status" className="p-4 rounded-card border border-neutral-divider bg-lavender-surface text-sm text-brand-navy">
+          {restrictedRecordingCount} browser recordings captured. Playback and sharing are withheld pending privacy review. Sanitized logs are available separately below.
+        </div>
+      )}
       {/* Two-Run Attempt Comparison Section (TC-INV-002) */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base flex items-center justify-between">
             <span>Two-Run Deterministic Confirmation Record (TC-INV-002)</span>
-            <Badge variant="outline">Target Baseline Restored</Badge>
+            <Badge variant="outline">Reset validation required for confirmation</Badge>
           </CardTitle>
           <CardDescription>
             A defect is confirmed only when two independent runs yield matching failure signatures under restored conditions.
@@ -494,7 +626,7 @@ export default function InvestigationDetailPage() {
                 <span className="font-bold text-sm text-brand-navy">Attempt 1 (Initial Run)</span>
                 {investigation.attempt1 ? (
                   <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-semibold border border-emerald-200">
-                    Defect Detected
+                    {investigation.attempt1.validity === 'VALID_DEFECT_DETECTED' ? 'Defect Detected' : investigation.attempt1.validity === 'VALID_CLEAN_RUN' ? 'Clean Run' : investigation.attempt1.validity}
                   </span>
                 ) : (
                   <span className="text-xs text-brand-muted">Not Executed</span>
@@ -513,7 +645,7 @@ export default function InvestigationDetailPage() {
                 <span className="font-bold text-sm text-brand-navy">Attempt 2 (Confirmation Run)</span>
                 {investigation.attempt2 ? (
                   <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-semibold border border-emerald-200">
-                    Defect Detected (Signature Matched)
+                    {investigation.attempt2.validity === 'VALID_DEFECT_DETECTED' ? 'Defect Detected' : investigation.attempt2.validity === 'VALID_CLEAN_RUN' ? 'Clean Run' : investigation.attempt2.validity}
                   </span>
                 ) : (
                   <span className="text-xs text-brand-muted">Awaiting Attempt 1 / Reset</span>
@@ -539,7 +671,7 @@ export default function InvestigationDetailPage() {
                 <span>Evidence Triad (Video, Console, Network Trace)</span>
               </CardTitle>
               <CardDescription>
-                Synchronized artifact bundle stored in S3 object storage (TC-INV-009, TC-INV-012).
+            Captured artifacts from this investigation. Availability and sharing eligibility are shown separately.
               </CardDescription>
             </div>
             <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${
@@ -554,6 +686,37 @@ export default function InvestigationDetailPage() {
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
+          {/* Attempt Selector for Evidence Triad */}
+          {(investigation?.attempt1 || investigation?.attempt2) && (
+            <div className="flex items-center space-x-2 pb-1 border-b border-neutral-divider pb-3">
+              <span className="text-xs font-semibold text-brand-navy">Inspect Attempt:</span>
+              <button
+                type="button"
+                onClick={() => setSelectedAttempt(1)}
+                className={`px-3 py-1 rounded-control text-xs font-semibold transition-all ${
+                  selectedAttempt === 1
+                    ? 'bg-brand-deepPurple text-white shadow-subtle'
+                    : 'bg-white text-brand-navy hover:bg-neutral-surface border border-neutral-divider'
+                }`}
+              >
+                Attempt 1 (Initial Run)
+              </button>
+              {investigation?.attempt2 && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedAttempt(2)}
+                  className={`px-3 py-1 rounded-control text-xs font-semibold transition-all ${
+                    selectedAttempt === 2
+                      ? 'bg-brand-deepPurple text-white shadow-subtle'
+                      : 'bg-white text-brand-navy hover:bg-neutral-surface border border-neutral-divider'
+                  }`}
+                >
+                  Attempt 2 (Confirmation Run)
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Security & Pixel Boundary Notice */}
           <div className="p-3.5 rounded-control bg-lavender-surface/50 border border-lavender-accent/60 text-xs text-brand-navy flex items-start space-x-2.5">
             <ShieldCheck className="w-4 h-4 text-cobalt-action shrink-0 mt-0.5" />
@@ -709,19 +872,19 @@ export default function InvestigationDetailPage() {
                     <span className="text-[11px] font-semibold text-brand-muted">Select Run:</span>
                     {videoArtifacts.map((va) => {
                       const attNum = va.attemptNumber || 1;
-                      const isSelected = selectedAttemptForVideo === attNum;
+                      const isSelected = selectedAttempt === attNum;
                       return (
                         <button
                           key={va.id}
                           type="button"
-                          onClick={() => setSelectedAttemptForVideo(attNum)}
+                          onClick={() => setSelectedAttempt(attNum)}
                           className={`px-2.5 py-1 rounded text-xs font-semibold transition-all ${
                             isSelected
                               ? 'bg-brand-deepPurple text-white shadow-sm'
                               : 'bg-neutral-surface text-brand-navy hover:bg-neutral-divider/40 border border-neutral-divider'
                           }`}
                         >
-                          Attempt ${attNum} Recording
+                          Attempt {attNum} Recording
                         </button>
                       );
                     })}
@@ -747,12 +910,16 @@ export default function InvestigationDetailPage() {
                   <div className="p-8 text-center space-y-2.5 border border-dashed border-neutral-divider rounded-control bg-neutral-surface/30">
                     {isQuarantined ? (
                       <Lock className="w-8 h-8 mx-auto text-amber-700" />
+                    ) : restrictedRecordingCount > 0 ? (
+                      <Lock className="w-8 h-8 mx-auto text-brand-deepPurple" />
                     ) : (
                       <Video className="w-8 h-8 mx-auto text-brand-muted" />
                     )}
                     <div className="text-xs font-semibold text-brand-navy">
                       {isQuarantined
                         ? 'Video Quarantined in RESTRICTED_RAW Storage'
+                        : restrictedRecordingCount > 0
+                        ? 'Browser Recording Captured (RESTRICTED_RAW)'
                         : videoLoadError
                         ? 'Local Media Storage Offline'
                         : 'No Playable Video Available'}
@@ -760,6 +927,8 @@ export default function InvestigationDetailPage() {
                     <p className="text-[11px] text-brand-muted max-w-md mx-auto">
                       {isQuarantined
                         ? 'This investigation triggered an in-stream secret leak alert. Raw media is isolated in restricted storage and cannot be played or downloaded through the client (TC-INV-009).'
+                        : restrictedRecordingCount > 0
+                        ? `Attempt ${selectedAttempt} viewport recording was captured and secured in restricted raw storage. Video playback and sharing are withheld pending privacy review (TC-INV-009 / VES-EVD-001). Sanitized console logs and network traces are available below.`
                         : videoLoadError
                         ? `Configured media endpoint (${videoArtifact?.publicUrl}) is not currently responding. Local video playback requires a running MinIO instance on port 9000.`
                         : 'Video recording was not finalized for this investigation, or telemetry generation is pending.'}
@@ -795,7 +964,7 @@ export default function InvestigationDetailPage() {
                       Showing {filteredLogs.length} of {consoleLogs.length} lines
                     </span>
                     <span className="px-2 py-0.5 rounded-full bg-neutral-surface border border-neutral-divider text-[10px] font-semibold text-brand-deepPurple">
-                      {realConsoleLogs.length > 0 ? 'Live Captured Logs' : isTC1 ? 'Synthetic Preview' : 'No Logs'}
+                      {realConsoleLogs.length > 0 ? 'Live Captured Logs' : 'No Logs'}
                     </span>
                   </div>
                 </div>
@@ -833,7 +1002,7 @@ export default function InvestigationDetailPage() {
                   </div>
                 ) : (
                   <div className="p-8 text-center text-xs text-brand-muted border border-dashed border-neutral-divider rounded-control bg-neutral-surface/30">
-                    {consoleSearch ? `No log entries match search "${consoleSearch}".` : 'No console log events recorded for this investigation.'}
+                    {consoleSearch ? `No log entries match search "${consoleSearch}".` : 'No console entries captured for this run.'}
                   </div>
                 )}
                 <div className="text-[11px] text-brand-muted flex items-center justify-between">
@@ -876,7 +1045,7 @@ export default function InvestigationDetailPage() {
                       Showing {filteredTraces.length} of {networkTraces.length} requests
                     </span>
                     <span className="px-2 py-0.5 rounded-full bg-neutral-surface border border-neutral-divider text-[10px] font-semibold text-brand-deepPurple">
-                      {realNetworkTraces.length > 0 ? 'Live Telemetry HAR' : isTC1 ? 'Sanitized HAR' : 'No Traces'}
+                      {realNetworkTraces.length > 0 ? 'Live Telemetry HAR' : 'No Traces'}
                     </span>
                   </div>
                 </div>
@@ -913,13 +1082,38 @@ export default function InvestigationDetailPage() {
                               >
                                 {trace.method}
                               </span>
+                              {trace.resourceType && (
+                                <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-neutral-surface text-brand-muted border border-neutral-divider shrink-0">
+                                  {trace.resourceType}
+                                </span>
+                              )}
                               <span className="font-mono text-[11px] text-brand-navy truncate">
                                 {trace.url}
                               </span>
                             </div>
                             <div className="flex items-center space-x-3 shrink-0 text-brand-muted text-[11px]">
-                              <span className="font-semibold text-emerald-700">{trace.status} OK</span>
-                              <span>{trace.durationMs}ms</span>
+                              {trace.isTransportFailure ? (
+                                <span className="font-semibold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
+                                  {trace.failureText || 'Transport Failure'}
+                                </span>
+                              ) : typeof trace.status === 'number' ? (
+                                <span
+                                  className={`font-semibold ${
+                                    trace.status >= 400
+                                      ? 'text-rose-700'
+                                      : trace.status >= 300
+                                      ? 'text-amber-700'
+                                      : 'text-emerald-700'
+                                  }`}
+                                >
+                                  {trace.status} {trace.status >= 400 ? 'Error' : trace.status >= 300 ? 'Redirect' : 'OK'}
+                                </span>
+                              ) : (
+                                <span className="font-semibold text-brand-muted">Unknown</span>
+                              )}
+                              {trace.durationMs !== undefined && (
+                                <span>{trace.durationMs}ms</span>
+                              )}
                             </div>
                           </button>
 
@@ -929,21 +1123,52 @@ export default function InvestigationDetailPage() {
                               id={`trace-details-${trace.id}`}
                               className="p-3 bg-neutral-surface/50 border-t border-neutral-divider space-y-2.5 text-[11px]"
                             >
-                              <div>
-                                <span className="font-semibold text-brand-navy block mb-1">
-                                  Scrubbed Request Headers (Sensitive keys masked):
-                                </span>
-                                <div className="bg-white p-2.5 rounded border border-neutral-divider font-mono space-y-1">
-                                  {Object.entries(trace.requestHeaders).map(([k, v]) => (
-                                    <div key={k} className="truncate">
-                                      <span className="text-brand-deepPurple font-semibold">{k}:</span>{' '}
-                                      <span className={v.includes('REDACTED') ? 'text-amber-800 font-bold' : 'text-neutral-700'}>
-                                        {v}
-                                      </span>
-                                    </div>
-                                  ))}
+                              {trace.requestHeaders && Object.keys(trace.requestHeaders).length > 0 && (
+                                <div>
+                                  <span className="font-semibold text-brand-navy block mb-1">
+                                    Scrubbed Request Headers (Sensitive keys masked):
+                                  </span>
+                                  <div className="bg-white p-2.5 rounded border border-neutral-divider font-mono space-y-1">
+                                    {Object.entries(trace.requestHeaders).map(([k, v]) => (
+                                      <div key={k} className="truncate">
+                                        <span className="text-brand-deepPurple font-semibold">{k}:</span>{' '}
+                                        <span className={v.includes('REDACTED') ? 'text-amber-800 font-bold' : 'text-neutral-700'}>
+                                          {v}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
                                 </div>
-                              </div>
+                              )}
+
+                              {trace.responseHeaders && Object.keys(trace.responseHeaders).length > 0 && (
+                                <div>
+                                  <span className="font-semibold text-brand-navy block mb-1">
+                                    Response Headers:
+                                  </span>
+                                  <div className="bg-white p-2.5 rounded border border-neutral-divider font-mono space-y-1">
+                                    {Object.entries(trace.responseHeaders).map(([k, v]) => (
+                                      <div key={k} className="truncate">
+                                        <span className="text-brand-deepPurple font-semibold">{k}:</span>{' '}
+                                        <span className={v.includes('REDACTED') ? 'text-amber-800 font-bold' : 'text-neutral-700'}>
+                                          {v}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+
+                              {trace.isTransportFailure && trace.failureText && (
+                                <div>
+                                  <span className="font-semibold text-rose-700 block mb-1">
+                                    Transport Failure Detail:
+                                  </span>
+                                  <div className="bg-rose-50 text-rose-800 p-2.5 rounded border border-rose-200 font-mono text-[10px]">
+                                    {trace.failureText}
+                                  </div>
+                                </div>
+                              )}
 
                               {trace.responseBody !== undefined && (
                                 <div>
@@ -963,7 +1188,7 @@ export default function InvestigationDetailPage() {
                   </div>
                 ) : (
                   <div className="p-8 text-center text-xs text-brand-muted border border-dashed border-neutral-divider rounded-control bg-neutral-surface/30">
-                    {networkSearch ? `No requests match search "${networkSearch}".` : 'No network traces recorded.'}
+                    {networkSearch ? `No requests match search "${networkSearch}".` : 'No network traces recorded for this run.'}
                   </div>
                 )}
                 <div className="text-[11px] text-brand-muted flex items-center justify-between">

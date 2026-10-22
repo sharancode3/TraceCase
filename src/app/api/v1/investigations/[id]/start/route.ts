@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { StartInvestigationCommandSchema } from '@/contracts/planning';
 import { requireAuthenticatedPrincipal } from '@/server/auth';
 import { createSafeError } from '@/contracts/errors';
-import { isDevPreviewEnabled } from '@/server/config/env';
 import { getServiceContainer } from '@/server/services/service-container';
 import { investigationWorkflowService } from '@/server/workflow/investigation-workflow.service';
 import {
@@ -35,16 +34,7 @@ export async function POST(
       );
     }
 
-    if (isDevPreviewEnabled()) {
-      return NextResponse.json({
-        status: 'QUEUED',
-        investigationId: id,
-        planVersion: parsed.data.planVersion,
-        jobId: `sim-${crypto.randomUUID()}`,
-        message: 'Investigation queued in development preview simulation mode.',
-        isSimulatedPreview: true,
-      });
-    }
+    
 
     const principal = await requireAuthenticatedPrincipal(req);
     const idempotencyKey = extractIdempotencyKey(req, rawBody as Record<string, unknown>);

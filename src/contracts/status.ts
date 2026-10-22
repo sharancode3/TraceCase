@@ -140,7 +140,7 @@ export function getEvidencePresentation(status: EvidenceReadinessStatus): Status
     case 'PENDING_GENERATION':
       return { label: 'Evidence Pending', description: 'Artifacts not yet captured', badgeClass: 'bg-neutral-surface text-brand-muted border-neutral-divider' };
     case 'PACKAGING_IN_PROGRESS':
-      return { label: 'Packaging Evidence', description: 'Transcoding video and indexing logs', badgeClass: 'bg-lavender-surface text-cobalt-action border-lavender-accent' };
+      return { label: 'Evidence Review Pending', description: 'Some artifacts are still processing or awaiting sharing clearance', badgeClass: 'bg-lavender-surface text-cobalt-action border-lavender-accent' };
     case 'PUBLIC_SAFE_READY':
       return { label: 'Public Safe Evidence Ready', description: 'Sanitized video, console, and network logs ready for download', badgeClass: 'bg-status-notReproducedBg text-status-notReproduced border-emerald-300' };
     case 'QUARANTINED_LEAK_DETECTED':

@@ -1,4 +1,4 @@
-import { eq, and } from 'drizzle-orm';
+import { eq, and, isNull } from 'drizzle-orm';
 import { getDb, DbClient } from '@/server/db';
 import { investigationsTable, evidenceArtifactsTable } from '@/server/db/schema';
 import { eventsRepository } from '@/server/db/repositories/events.repository';
@@ -36,7 +36,7 @@ export class EvidencePipeline {
     const rawArtifacts = await db
       .select()
       .from(evidenceArtifactsTable)
-      .where(eq(evidenceArtifactsTable.investigationId, params.investigationId));
+      .where(and(eq(evidenceArtifactsTable.investigationId, params.investigationId), isNull(evidenceArtifactsTable.rawArtifactId)));
 
     if (rawArtifacts.length === 0) {
       await db

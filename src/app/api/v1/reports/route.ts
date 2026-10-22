@@ -7,7 +7,6 @@ import {
 } from '@/contracts/reports';
 import { requireAuthenticatedPrincipal, AuthenticationError, AuthorizationError } from '@/server/auth';
 import { createSafeError } from '@/contracts/errors';
-import { isDevPreviewEnabled } from '@/server/config/env';
 import { reportsRepository } from '@/server/db/repositories/reports.repository';
 
 export async function POST(req: NextRequest) {
@@ -41,35 +40,7 @@ export async function POST(req: NextRequest) {
     const rawDescription = 'rawDescription' in payload ? payload.rawDescription : undefined;
 
     // In preview mode, return explicitly simulated report creation
-    if (isDevPreviewEnabled()) {
-      const now = new Date().toISOString();
-      const simulatedReport = {
-        id: crypto.randomUUID(),
-        investigationId: crypto.randomUUID(),
-        targetId: payload.targetId,
-        title: payload.title,
-        bugDescription,
-        expectedBehavior: payload.expectedBehavior || null,
-        observedBehavior: payload.observedBehavior || null,
-        suspectedSteps: payload.suspectedSteps || null,
-        browserEnvironment: payload.browserEnvironment || null,
-        buildVersion: payload.buildVersion || null,
-        createdBy: 'operator-preview-persona',
-        createdAt: now,
-        updatedAt: now,
-        isSimulatedPreview: true,
-      };
-
-      return NextResponse.json(
-        {
-          data: simulatedReport,
-          created: true,
-          mode: 'preview_synthetic',
-          message: 'Report created in development simulation mode. Database write deferred to Stage 1.',
-        },
-        { status: 201 }
-      );
-    }
+    
 
     // Live mode: requires authenticated principal
     const principal = await requireAuthenticatedPrincipal(req);

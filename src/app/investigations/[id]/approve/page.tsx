@@ -6,7 +6,6 @@ import { useRouter, useParams } from 'next/navigation';
 import { ShieldCheck, ShieldAlert, CheckCircle2, Play, Hash, AlertTriangle, ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { SYNTHETIC_PLAN_V1 } from '@/dev/fixtures';
 import type { AuthoritativeExperimentPlan } from '@/contracts/planning';
 import {
   approveInvestigationPlan,
@@ -19,7 +18,6 @@ export default function PlanApprovalPage() {
   const router = useRouter();
   const params = useParams();
   const id = params?.id as string;
-  const isPreviewId = id?.startsWith('0') || id?.includes('preview');
 
   const [plan, setPlan] = React.useState<AuthoritativeExperimentPlan | null>(null);
   const [isPlanLoading, setIsPlanLoading] = React.useState(true);
@@ -59,8 +57,6 @@ export default function PlanApprovalPage() {
 
       if (planRes.success && planRes.data?.data) {
         setPlan(planRes.data.data);
-      } else if (isPreviewId || (planRes.success && planRes.mode === 'preview_synthetic')) {
-        setPlan(SYNTHETIC_PLAN_V1 as unknown as AuthoritativeExperimentPlan);
       } else {
         setPlanLoadError(
           planRes.success ? 'No experiment plan found.' : planRes.error.message
@@ -72,7 +68,7 @@ export default function PlanApprovalPage() {
     return () => {
       isMounted = false;
     };
-  }, [id, isPreviewId]);
+  }, [id]);
 
   const handleApprove = async () => {
     if (!plan) return;

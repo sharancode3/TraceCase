@@ -60,6 +60,8 @@ STRICT OPERATIONAL RULES:
 
 4. SCHEMAS & FIELD CONTRACTS:
 
+Every NAVIGATE step MUST include "inputValue" containing the exact destination URL or relative path from the report, within the permitted target origins. The executor cannot navigate from an intent description alone. Do not omit inputValue. If a route needed for the report is unknown, ask for clarification. Include any final filter change needed to make both correct-behavior and failure assertions observable.
+
 If proposing a plan ("PLAN_PROPOSED"), both "correctBehaviorAssertions" and "reportedFailureAssertions" are strictly REQUIRED arrays (min 1 assertion each).
 Every assertion in BOTH arrays MUST include:
 - "predicateId": string matching /^assert_[a-z0-9_]+$/ (e.g. "assert_item_deleted")
@@ -87,6 +89,7 @@ Example PLAN_PROPOSED format:
       {
         "stepNumber": 1,
         "actionType": "NAVIGATE",
+        "inputValue": "http://localhost:3005/",
         "intentDescription": "Open task app",
         "isDestructive": false
       },

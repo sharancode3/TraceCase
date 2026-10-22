@@ -2,20 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { CreateTargetCommandSchema, projectSafeTargetProfile } from '@/contracts/targets';
 import { requireAuthenticatedPrincipal, AuthenticationError, AuthorizationError } from '@/server/auth';
 import { createSafeError } from '@/contracts/errors';
-import { SYNTHETIC_TARGETS } from '@/dev/fixtures';
-import { isDevPreviewEnabled } from '@/server/config/env';
 import { targetsRepository } from '@/server/db/repositories/targets.repository';
 
 export async function GET(req: NextRequest) {
   // If preview is active, return sanitized synthetic catalog (F-03: zero secrets leaked)
-  if (isDevPreviewEnabled()) {
-    const safeTargets = SYNTHETIC_TARGETS.map((t) => projectSafeTargetProfile(t as unknown as Record<string, unknown>));
-    return NextResponse.json({
-      data: safeTargets,
-      total: safeTargets.length,
-      mode: 'preview_synthetic',
-    });
-  }
+  
 
   try {
     const principal = await requireAuthenticatedPrincipal(req);
@@ -54,42 +45,32 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (isDevPreviewEnabled()) {
-      const now = new Date().toISOString();
-      const simulatedTarget = projectSafeTargetProfile({
-        id: crypto.randomUUID(),
-        name: parsed.data.name,
-        baseUrl: parsed.data.baseUrl,
-        allowedOrigins: parsed.data.allowedOrigins,
-        isSandboxVerified: false, // Server controls sandbox classification, never client command
-        environment: parsed.data.environment,
-        createdAt: now,
-        updatedAt: now,
-      });
-
-      return NextResponse.json(
-        {
-          data: simulatedTarget,
-          created: true,
-          mode: 'preview_synthetic',
-          message: 'Target created in development simulation mode. Database write deferred to Stage 1.',
-        },
-        { status: 201 }
-      );
-    }
+    
 
     // Live mode: requires authenticated principal and real persistence
     const principal = await requireAuthenticatedPrincipal(req);
+
+    // In local development, non-production sandbox requests are verified
+    const isLocalDev = process.env.NODE_ENV === 'development' || process.env.DEV_PREVIEW_MODE === 'true';
+    const isProduction = parsed.data.environment === 'production';
+    const isSandboxRequested = Boolean(parsed.data.isSandboxRequested);
+    const isSandboxVerified = isSandboxRequested && !isProduction && isLocalDev;
+
+    // For local targets on localhost / port 3005, auto-link reset endpoint and secret if not explicitly provided
+    const isLocalDemo = parsed.data.baseUrl.includes('3005') || parsed.data.baseUrl.includes('localhost');
+    const defaultResetEndpoint = isLocalDemo ? `${parsed.data.baseUrl.replace(/\/+$/, '')}/api/test/reset-fixture` : null;
+    const defaultSecretRef = isLocalDemo ? 'env:TARGET_RESET_SECRET' : null;
 
     const created = await targetsRepository.createTarget({
       ownerId: principal.id,
       name: parsed.data.name,
       baseUrl: parsed.data.baseUrl,
       allowedOrigins: parsed.data.allowedOrigins,
-      isSandbox: parsed.data.isSandboxRequested,
-      isSandboxVerified: false, // Server authoritative verification
+      isSandbox: isSandboxRequested,
+      isSandboxVerified,
       testAccountRef: parsed.data.testAccountRef,
-      fixtureResetEndpoint: parsed.data.fixtureResetEndpoint,
+      fixtureResetEndpoint: parsed.data.fixtureResetEndpoint || defaultResetEndpoint,
+      fixtureResetAuthSecretRef: defaultSecretRef,
       environment: parsed.data.environment,
       createdBy: principal.id,
     });

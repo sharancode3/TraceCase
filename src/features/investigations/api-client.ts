@@ -969,7 +969,7 @@ export async function fetchPlan(
 export async function fetchArtifacts(
   id: string,
   options?: { headers?: Record<string, string>; fetchFn?: typeof fetch; signal?: AbortSignal }
-): Promise<ApiResponse<{ artifacts: ArtifactItem[]; total: number; mode: string }>> {
+): Promise<ApiResponse<{ artifacts: ArtifactItem[]; total: number; mode: string; restrictedRecordingCount?: number }>> {
   const fetcher = options?.fetchFn || fetch;
   try {
     const res = await fetcher(`/api/v1/investigations/${encodeURIComponent(id)}/artifacts`, {
@@ -997,6 +997,7 @@ export async function fetchArtifacts(
       success: true,
       data: {
         artifacts: Array.isArray(json?.data?.artifacts) ? json.data.artifacts : [],
+        restrictedRecordingCount: json?.data?.restrictedRecordingCount || 0,
         total: typeof json?.data?.total === 'number' ? json.data.total : (json?.data?.artifacts?.length || 0),
         mode: json?.mode || 'live',
       },

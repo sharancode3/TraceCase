@@ -6,12 +6,11 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter }
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import type { ClientSafeTargetProfile, SafeTargetProfile, CreateTargetCommand } from '@/contracts/targets';
-import { SYNTHETIC_TARGETS } from '@/dev/fixtures';
 import { fetchTargets, submitTarget } from '@/features/investigations/api-client';
 
 export default function TargetsPage() {
-  const [targets, setTargets] = React.useState<ClientSafeTargetProfile[]>(SYNTHETIC_TARGETS);
-  const [catalogMode, setCatalogMode] = React.useState<string>('preview_synthetic');
+  const [targets, setTargets] = React.useState<ClientSafeTargetProfile[]>([]);
+  const [catalogMode, setCatalogMode] = React.useState<string>('loading');
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [successNotice, setSuccessNotice] = React.useState<string | null>(null);
@@ -48,17 +47,17 @@ export default function TargetsPage() {
           // Live mode with 0 targets: truthfully report empty catalog
           setTargets([]);
         } else {
-          setTargets(SYNTHETIC_TARGETS);
+          setTargets([]);
         }
         setCatalogMode(res.data.mode);
       } else {
         // Safe fallback with informative error
-        setTargets(SYNTHETIC_TARGETS);
-        setCatalogMode('preview_synthetic');
+        setTargets([]);
+        setCatalogMode('unavailable');
         if (res.status === 401) {
-          setErrorNotice('Live database query requires authentication. Displaying synthetic preview catalog.');
+          setErrorNotice('Sign in using the button above to load your targets.');
         } else {
-          setErrorNotice(`Live API unavailable (${res.error.message}). Displaying synthetic preview catalog.`);
+          setErrorNotice(`Live API unavailable (${res.error.message}). No sample targets are displayed.`);
         }
       }
       setIsLoading(false);
@@ -138,7 +137,7 @@ export default function TargetsPage() {
         </div>
 
         <div className="shrink-0 flex items-center space-x-2">
-          {catalogMode === 'live_database' ? (
+          {catalogMode === 'live' ? (
             <span className="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-300 flex items-center space-x-1.5">
               <Database className="w-3.5 h-3.5 text-emerald-600" />
               <span>Live Database Mode</span>
@@ -146,7 +145,7 @@ export default function TargetsPage() {
           ) : (
             <span className="px-3 py-1 rounded-full text-xs font-semibold bg-lavender-surface text-brand-deepPurple border border-cobalt-action/30 flex items-center space-x-1.5">
               <Sparkles className="w-3.5 h-3.5 text-cobalt-action" />
-              <span>Synthetic Preview Catalog</span>
+              <span>{catalogMode === 'loading' ? 'Loading targets' : 'Targets unavailable'}</span>
             </span>
           )}
         </div>

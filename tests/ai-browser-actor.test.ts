@@ -69,6 +69,22 @@ describe('Person 2: Observation-Grounded Browser Next-Action Proposals (P2-05)',
     ],
   };
 
+  it('accepts an exact approved accessible name despite unrelated reference metadata', async () => {
+    const provider = new MockTestDoubleModelProvider();
+    const input: BrowserAgentInput = {
+      ...baseInput,
+      currentStep: { stepNumber: 2, actionType: 'CLICK', intentDescription: 'Select Active filter', targetDescription: 'Active', isDestructive: false },
+      observation: { ...baseInput.observation, axTree: [{ nodeId: 'node_1', role: 'button', name: 'Active', description: 'button ref-current-1 ref-current-1' }] },
+    };
+    provider.queueResponse({ variant: 'PROPOSE_ACTION', echoedStepNumber: 2,
+      echoedObservationId: input.observation.observationId,
+      action: { actionType: 'CLICK', targetNodeId: 'node_1', primarySelector: 'node_1' },
+      expectedPostcondition: 'Active filter selected', rationale: 'Exact approved visible control',
+    });
+    const { output } = await new BrowserInteractionAgent(provider).proposeNextAction(input);
+    expect(output.variant).toBe('PROPOSE_ACTION');
+  });
+
   describe('Observation Pruning Unit Tests', () => {
     it('distinguishes two Delete buttons using parent/entity description context', () => {
       const result = pruneObservationAXTree(baseInput.observation.axTree, {

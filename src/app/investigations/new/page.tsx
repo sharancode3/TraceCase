@@ -9,18 +9,16 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import type { ClientSafeTargetProfile, SafeTargetProfile } from '@/contracts/targets';
 import type { DraftReportIntake } from '@/contracts/reports';
-import { SYNTHETIC_TARGETS } from '@/dev/fixtures';
 import { fetchTargets, submitBugReport, requestPlanning } from '@/features/investigations/api-client';
 
 export default function NewReportPage() {
   const router = useRouter();
 
-  const [targets, setTargets] = React.useState<ClientSafeTargetProfile[]>(SYNTHETIC_TARGETS);
-  const [targetLoadStatus, setTargetLoadStatus] = React.useState<string>('preview');
+  const [targets, setTargets] = React.useState<ClientSafeTargetProfile[]>([]);
+  const [targetLoadStatus, setTargetLoadStatus] = React.useState<string>('loading');
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [validationError, setValidationError] = React.useState<string | null>(null);
   const [submissionError, setSubmissionError] = React.useState<string | null>(null);
-  const [attachedFileName, setAttachedFileName] = React.useState<string | null>(null);
   const [savedInvestigationId, setSavedInvestigationId] = React.useState<string | null>(null);
 
   const [formData, setFormData] = React.useState({
@@ -56,12 +54,9 @@ export default function NewReportPage() {
         setTargets([]);
         setTargetLoadStatus('live');
       } else {
-        setTargets(SYNTHETIC_TARGETS);
-        setTargetLoadStatus('preview');
-        setFormData((prev) => ({
-          ...prev,
-          targetId: prev.targetId || SYNTHETIC_TARGETS[0].id,
-        }));
+        setTargets([]);
+        setTargetLoadStatus('unavailable');
+        setValidationError(res.success ? 'No registered targets. Register a target first.' : `Cannot load targets: ${res.error.message}. Sign in and check the database connection.`);
       }
     }
     load();
@@ -150,10 +145,6 @@ export default function NewReportPage() {
     }
   };
 
-  const handleContinuePreview = () => {
-    // Explicit, user-triggered fallback to canonical sample investigation review
-    router.push('/investigations/03-await-approval-uuid-00000000003/approve');
-  };
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
@@ -163,14 +154,14 @@ export default function NewReportPage() {
             Submit Bug Report for Autonomous Reproduction
           </h2>
           <p className="text-sm text-brand-muted mt-1">
-            Provide reported defect symptoms. GPT-6 Luna (Role 1) will normalize intent and extract deterministic plan steps.
+            Provide reported defect symptoms. The configured AI provider will interpret the report and propose a bounded experiment plan.
           </p>
         </div>
 
         <div className="shrink-0">
           <span className="px-3 py-1 rounded-full text-xs font-semibold bg-lavender-surface text-brand-deepPurple border border-cobalt-action/30 flex items-center space-x-1.5">
             <Sparkles className="w-3.5 h-3.5 text-cobalt-action" />
-            <span>Target Catalog: {targetLoadStatus === 'live_database' ? 'Live Database' : 'Synthetic Preview'}</span>
+            <span>Target Catalog: {targetLoadStatus === 'live' ? 'Live Database' : targetLoadStatus === 'loading' ? 'Loading' : 'Unavailable'}</span>
           </span>
         </div>
       </div>
@@ -231,16 +222,8 @@ export default function NewReportPage() {
           ) : (
             <div className="pt-2 border-t border-red-200 flex items-center justify-between text-neutral-800">
               <span className="text-[11px]">
-                Live database insertion requires an authenticated session. You can explore the workflow using the sample preview persona.
+                Sign in, register a target, and check service availability before submitting. No sample result will replace a failed submission.
               </span>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleContinuePreview}
-                className="text-xs shrink-0 ml-3"
-              >
-                Explore Sample Approval Review
-              </Button>
             </div>
           )}
         </div>
@@ -270,9 +253,10 @@ export default function NewReportPage() {
                 disabled={isSubmitting}
                 className="w-full h-11 rounded-control border border-neutral-divider bg-white px-3.5 py-2 text-sm text-brand-navy focus:outline-none focus:ring-2 focus:ring-cobalt-action"
               >
+                <option value="">Select a registered target</option>
                 {targets.map((t) => (
                   <option key={t.id} value={t.id}>
-                    {t.name} ({t.baseUrl}) — {t.isSandbox ? 'Sandbox' : 'Protected Production'}
+                    {t.name} ({t.baseUrl}) â€” {t.isSandbox ? 'Sandbox' : 'Protected Production'}
                   </option>
                 ))}
               </select>
@@ -381,31 +365,11 @@ export default function NewReportPage() {
             <div className="border border-dashed border-neutral-divider rounded-control p-4 text-center space-y-2 bg-neutral-surface/20">
               <Paperclip className="w-5 h-5 mx-auto text-brand-muted" />
               <div className="text-xs text-brand-navy font-medium">
-                {attachedFileName ? (
-                  <span className="text-cobalt-action">Selected: {attachedFileName}</span>
-                ) : (
-                  <span>Attach Screenshot or Log File</span>
-                )}
+                Attachments are not supported yet
               </div>
               <p className="text-[11px] text-brand-muted">
-                Attachment persistence is currently unavailable (object storage upload API pending P1-03). Selected files will NOT be persisted.
+                Paste relevant diagnostic text into the report description. File selection and upload are unavailable.
               </p>
-              <input
-                type="file"
-                id="file-upload"
-                className="hidden"
-                disabled={isSubmitting}
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) setAttachedFileName(`${file.name} (${Math.round(file.size / 1024)} KB)`);
-                }}
-              />
-              <label
-                htmlFor="file-upload"
-                className="inline-block px-3 py-1.5 rounded-control text-xs font-medium bg-white border border-neutral-divider text-brand-navy cursor-pointer hover:bg-neutral-surface"
-              >
-                Choose Local File
-              </label>
             </div>
           </CardContent>
 
@@ -418,7 +382,7 @@ export default function NewReportPage() {
               type="submit"
               variant="primary"
               className="space-x-1.5"
-              disabled={isSubmitting}
+              disabled={isSubmitting || targets.length === 0}
             >
               {isSubmitting ? (
                 <>

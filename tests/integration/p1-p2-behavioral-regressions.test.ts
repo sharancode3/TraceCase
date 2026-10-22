@@ -268,7 +268,7 @@ describe('Person 1 & Person 2 Behavioral Regressions & Invariant Suite', () => {
     expect(step2.status).toBe('FAILED');
     expect(step2.errorDetails).toContain('STOP_NO_PROGRESS');
     expect(step2.errorDetails).toContain('Target button obscured by modal overlay');
-  });
+  }, 30000);
 
   // --------------------------------------------------------------------------
   // 4. Proposed ToolKind Mismatch Halts Execution

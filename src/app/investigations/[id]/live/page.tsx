@@ -4,26 +4,17 @@ import * as React from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import {
-  Play,
   ArrowRight,
-  Terminal,
-  RotateCcw,
-  Activity,
   AlertCircle,
   CheckCircle2,
   Info,
-  Radio,
   XCircle,
   Loader2,
   ArrowLeft,
+  Terminal,
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import {
-  createInitialProgressState,
-  reduceProgressEvent,
-} from '@/features/investigations/event-reducer';
 import {
   createInvestigationPoller,
   isTerminalLifecycleStatus,
@@ -36,109 +27,14 @@ import {
 import type { InvestigationSnapshot } from '@/contracts/investigations';
 import {
   cancelInvestigationExecution,
-  fetchInvestigationEvents,
 } from '@/features/investigations/api-client';
-
-const SIMULATED_STAGES = [
-  {
-    name: 'Attempt 1: Launch Browser & Execute Steps',
-    event: {
-      eventId: 'evt-01',
-      schemaVersion: 1 as const,
-      investigationId: 'b22ac10b-58cc-4372-a567-0e02b2c3d402',
-      sequenceIndex: 0,
-      eventType: 'ATTEMPT_STARTED' as const,
-      timestamp: '2026-10-20T08:22:00.000Z',
-      payload: { attemptNumber: 1 },
-    },
-    log: '[Attempt 1] Isolated Chromium context launched with CDP tracing enabled.',
-  },
-  {
-    name: 'Attempt 1: Defect Signature Detected',
-    event: {
-      eventId: 'evt-02',
-      schemaVersion: 1 as const,
-      investigationId: 'b22ac10b-58cc-4372-a567-0e02b2c3d402',
-      sequenceIndex: 1,
-      eventType: 'ASSERTION_EVALUATED' as const,
-      timestamp: '2026-10-20T08:22:05.000Z',
-      payload: { stepIndex: 2, defectDetected: true, assertion: 'task-001 deleted instead of task-002' },
-    },
-    log: '[Attempt 1] Assertion PASSED: Defect signature observed (task-001 deleted).',
-  },
-  {
-    name: 'Target Reset: POST /api/test/reset-fixture (TC-INV-006)',
-    event: {
-      eventId: 'evt-03',
-      schemaVersion: 1 as const,
-      investigationId: 'b22ac10b-58cc-4372-a567-0e02b2c3d402',
-      sequenceIndex: 2,
-      eventType: 'RESET_STARTED' as const,
-      timestamp: '2026-10-20T08:22:07.000Z',
-      payload: { endpoint: 'http://localhost:3005/api/test/reset-fixture' },
-    },
-    log: '[Reset Hook] Invoking POST /api/test/reset-fixture. Response: HTTP 200 OK (4 items restored).',
-  },
-  {
-    name: 'Attempt 2: Confirmation Run under Fresh Context',
-    event: {
-      eventId: 'evt-04',
-      schemaVersion: 1 as const,
-      investigationId: 'b22ac10b-58cc-4372-a567-0e02b2c3d402',
-      sequenceIndex: 3,
-      eventType: 'ATTEMPT_STARTED' as const,
-      timestamp: '2026-10-20T08:22:09.000Z',
-      payload: { attemptNumber: 2 },
-    },
-    log: '[Attempt 2] Fresh browser context launched. Re-executing approved plan steps.',
-  },
-  {
-    name: 'Attempt 2: Identical Defect Signature Confirmed (TC-INV-002)',
-    event: {
-      eventId: 'evt-05',
-      schemaVersion: 1 as const,
-      investigationId: 'b22ac10b-58cc-4372-a567-0e02b2c3d402',
-      sequenceIndex: 4,
-      eventType: 'ASSERTION_EVALUATED' as const,
-      timestamp: '2026-10-20T08:22:14.000Z',
-      payload: { stepIndex: 2, defectDetected: true, signatureMatch: true },
-    },
-    log: '[Attempt 2] Assertion PASSED: Identical defect signature confirmed on second run.',
-  },
-  {
-    name: 'Evidence Finalization & In-Stream Scrubbing (TC-INV-009)',
-    event: {
-      eventId: 'evt-06',
-      schemaVersion: 1 as const,
-      investigationId: 'b22ac10b-58cc-4372-a567-0e02b2c3d402',
-      sequenceIndex: 5,
-      eventType: 'ARTIFACT_STORED' as const,
-      timestamp: '2026-10-20T08:22:16.000Z',
-      payload: { triadComplete: true, video: 'run1.webm', console: 'run1.log', network: 'run1.json' },
-    },
-    log: '[Evidence] 0 plaintext credentials found. Public safe triad published to S3.',
-  },
-  {
-    name: 'Investigation Completed: CONFIRMED_REPRODUCED',
-    event: {
-      eventId: 'evt-07',
-      schemaVersion: 1 as const,
-      investigationId: 'b22ac10b-58cc-4372-a567-0e02b2c3d402',
-      sequenceIndex: 6,
-      eventType: 'INVESTIGATION_COMPLETED' as const,
-      timestamp: '2026-10-20T08:22:18.000Z',
-      payload: { verdict: 'CONFIRMED_REPRODUCED' },
-    },
-    log: '[Verdict] State updated: CONFIRMED_REPRODUCED. Two-run confirmation successful.',
-  },
-];
 
 export default function LiveInvestigationProgressPage() {
   const params = useParams();
   const id = params?.id as string;
 
   // View Mode: 'poller' for live snapshot polling; 'simulation' for reducer stepper
-  const [activeTab, setActiveTab] = React.useState<'poller' | 'simulation'>('poller');
+  const activeTab = 'poller';
 
   // Live Snapshot Polling State
   const [liveSnapshot, setLiveSnapshot] = React.useState<InvestigationSnapshot | null>(null);
@@ -146,6 +42,16 @@ export default function LiveInvestigationProgressPage() {
   const [pollCount, setPollCount] = React.useState(0);
   const [pollerError, setPollerError] = React.useState<string | null>(null);
   const [isTerminal, setIsTerminal] = React.useState(false);
+
+  // Live Execution Events State
+  interface LiveEventItem {
+    id: string;
+    sequenceIndex: number;
+    eventType: string;
+    payload: Record<string, unknown>;
+    emittedAt: string;
+  }
+  const [events, setEvents] = React.useState<LiveEventItem[]>([]);
 
   // Cancellation State
   const [isCancelling, setIsCancelling] = React.useState(false);
@@ -174,18 +80,26 @@ export default function LiveInvestigationProgressPage() {
     }
   };
 
-  // Reducer Simulation State
-  const [currentStep, setCurrentStep] = React.useState(0);
-  const [progressState, setProgressState] = React.useState(() =>
-    createInitialProgressState('APPROVED')
-  );
-  const [simLogs, setSimLogs] = React.useState<string[]>([
-    '[System] Ready for simulated execution. Click "Advance Next Stage" to step through state machine transitions.',
-  ]);
-
-  // Setup bounded snapshot poller
+  // Setup bounded snapshot and event poller
   React.useEffect(() => {
     if (!id) return;
+
+    let isSubscribed = true;
+    const fetchEvents = async () => {
+      try {
+        const res = await fetch(`/api/v1/investigations/${encodeURIComponent(id)}/events?limit=50`);
+        if (res.ok && isSubscribed) {
+          const json = await res.json();
+          if (Array.isArray(json.events)) {
+            setEvents(json.events);
+          }
+        }
+      } catch {
+        // Non-blocking
+      }
+    };
+
+    fetchEvents();
 
     const poller = createInvestigationPoller({
       investigationId: id,
@@ -195,9 +109,11 @@ export default function LiveInvestigationProgressPage() {
         setLiveSnapshot(snapshot);
         setPollCount(count);
         setPollerError(null);
+        fetchEvents();
         if (isTerminalLifecycleStatus(snapshot.lifecycleStatus)) {
           setIsTerminal(true);
           setIsPollerActive(false);
+          fetchEvents();
         }
       },
       onError: (errMsg) => {
@@ -206,54 +122,23 @@ export default function LiveInvestigationProgressPage() {
       onTerminal: () => {
         setIsTerminal(true);
         setIsPollerActive(false);
+        fetchEvents();
       },
       onMaxPollsReached: () => {
         setIsPollerActive(false);
+        fetchEvents();
       },
     });
 
     poller.start();
     setIsPollerActive(true);
 
-    let lastEventId: string | undefined;
-    const eventInterval = setInterval(async () => {
-      try {
-        const evRes = await fetchInvestigationEvents(id, lastEventId);
-        if (evRes.success && evRes.data.events.length > 0) {
-          for (const ev of evRes.data.events) {
-            lastEventId = ev.eventId;
-            setProgressState((prev) => reduceProgressEvent(prev, ev));
-          }
-        }
-      } catch {
-        // Event stream poll fallback
-      }
-    }, 2500);
-
     return () => {
+      isSubscribed = false;
       poller.stop();
-      clearInterval(eventInterval);
       setIsPollerActive(false);
     };
   }, [id]);
-
-  // Reducer simulation handlers
-  const handleNextStep = () => {
-    if (currentStep < SIMULATED_STAGES.length) {
-      const stage = SIMULATED_STAGES[currentStep];
-      setProgressState((prev) => reduceProgressEvent(prev, stage.event));
-      setSimLogs((prev) => [...prev, stage.log]);
-      setCurrentStep((prev) => prev + 1);
-    }
-  };
-
-  const handleResetSim = () => {
-    setCurrentStep(0);
-    setProgressState(createInitialProgressState('APPROVED'));
-    setSimLogs(['[System] Simulation reset to initial approved state.']);
-  };
-
-  const isSimCompleted = currentStep >= SIMULATED_STAGES.length;
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
@@ -344,36 +229,6 @@ export default function LiveInvestigationProgressPage() {
         </div>
       )}
 
-      {/* Mode Navigation Tabs */}
-      <div className="flex items-center border-b border-neutral-divider space-x-4 text-xs font-medium">
-        <button
-          onClick={() => setActiveTab('poller')}
-          className={`pb-2.5 flex items-center space-x-2 transition-colors border-b-2 ${
-            activeTab === 'poller'
-              ? 'border-cobalt-action text-cobalt-action font-semibold'
-              : 'border-transparent text-brand-muted hover:text-brand-navy'
-          }`}
-        >
-          <Radio className="w-4 h-4" />
-          <span>Live Snapshot Poller</span>
-          {isPollerActive && (
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          )}
-        </button>
-
-        <button
-          onClick={() => setActiveTab('simulation')}
-          className={`pb-2.5 flex items-center space-x-2 transition-colors border-b-2 ${
-            activeTab === 'simulation'
-              ? 'border-cobalt-action text-cobalt-action font-semibold'
-              : 'border-transparent text-brand-muted hover:text-brand-navy'
-          }`}
-        >
-          <Activity className="w-4 h-4" />
-          <span>Event Reducer Simulator (Stage 0)</span>
-        </button>
-      </div>
-
       {/* TAB 1: Live Snapshot Poller */}
       {activeTab === 'poller' && (
         <div className="space-y-5">
@@ -381,10 +236,10 @@ export default function LiveInvestigationProgressPage() {
           <div className="p-4 rounded-control bg-lavender-surface border border-cobalt-action/30 text-xs text-brand-deepPurple space-y-1.5">
             <div className="font-semibold flex items-center space-x-1.5 text-cobalt-action">
               <Info className="w-4 h-4 shrink-0" />
-              <span>Real-Time Stream Notice (P1-05 Worker Bus Pending)</span>
+              <span>Live progress</span>
             </div>
             <p className="text-[11px] leading-relaxed text-brand-navy/80">
-              The continuous Server-Sent Events (SSE) stream endpoint (<code className="font-mono bg-white/70 px-1 py-0.5 rounded">GET /api/v1/investigations/[id]/events</code>) is pending Person 1 implementation. The UI is currently monitoring progress via bounded snapshot polling from <code className="font-mono bg-white/70 px-1 py-0.5 rounded">GET /api/v1/investigations/{id}</code> every 2.5s.
+              This page checks the actual investigation status every 2.5 seconds. Browser runs continue in the background.
             </p>
           </div>
 
@@ -521,114 +376,119 @@ export default function LiveInvestigationProgressPage() {
               <div>Fetching initial snapshot for investigation {id}...</div>
             </Card>
           )}
-        </div>
-      )}
 
-      {/* TAB 2: Reducer Event Simulator */}
-      {activeTab === 'simulation' && (
-        <div className="space-y-5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-brand-muted">
-              Advance through deterministic event reducer stages to verify sequence ordering and invariant enforcement.
-            </span>
-            <div className="flex items-center space-x-2">
-              <Button size="sm" variant="outline" onClick={handleResetSim} className="space-x-1.5 text-xs">
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Reset Reducer</span>
-              </Button>
-              {!isSimCompleted ? (
-                <Button size="sm" variant="primary" onClick={handleNextStep} className="space-x-1.5 text-xs">
-                  <Play className="w-3.5 h-3.5" />
-                  <span>Advance Stage ({currentStep + 1}/{SIMULATED_STAGES.length})</span>
-                </Button>
-              ) : (
-                <Badge variant="confirmed">All Stages Reduced</Badge>
-              )}
+          {/* Terminal Guidance Callout */}
+          {isTerminal && liveSnapshot && (
+            <div className="space-y-3">
+              {liveSnapshot.lifecycleStatus === 'COMPLETED' ? (
+                <div className="p-4 rounded-control bg-emerald-50 border border-emerald-300 text-xs text-emerald-900 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="font-bold flex items-center space-x-1.5 text-emerald-800">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>Reproduction Run Complete</span>
+                    </div>
+                    <p className="text-[11px] text-emerald-700 leading-relaxed">
+                      Two-attempt execution has finished. The defect reproduction verdict, telemetry, and evidence triads are ready for review.
+                    </p>
+                  </div>
+                  <div className="shrink-0 flex items-center space-x-2">
+                    <Link href={`/investigations/${id}`}>
+                      <Button size="sm" variant="primary" className="space-x-1.5 bg-emerald-700 hover:bg-emerald-800 text-white">
+                        <span>View Evidence Triad & Report</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </Button>
+                    </Link>
+                  </div>
+                </div>
+              ) : liveSnapshot.lifecycleStatus === 'FAILED' ? (
+                <div className="p-4 rounded-control bg-amber-50 border border-amber-300 text-xs text-amber-900 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="font-bold flex items-center space-x-1.5 text-amber-800">
+                      <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>Execution Inconclusive</span>
+                    </div>
+                    <p className="text-[11px] text-amber-900/90 leading-relaxed">
+                      {(events.find((e) => e.eventType === 'TARGET_RESET_FAILED')?.payload?.message as string) ||
+                       'Execution did not confirm reproduction: target baseline reset or runner error occurred.'}
+                    </p>
+                  </div>
+                  <div className="shrink-0 flex items-center space-x-2">
+                    <Link href={`/investigations/${id}`}>
+                      <Button size="sm" variant="outline" className="border-amber-300 hover:bg-amber-100 text-amber-900">
+                        <span>View Telemetry</span>
+                      </Button>
+                    </Link>
+                    <Link href="/investigations/new">
+                      <Button size="sm" variant="primary" className="space-x-1 bg-brand-navy hover:bg-brand-navy/90 text-white">
+                        <span>New Report</span>
+                        <ArrowRight className="w-3 h-3" />
+                      </Button>
+                    </Link>
+                  </div>
+                </div>
+              ) : null}
             </div>
-          </div>
+          )}
 
-          {/* Stepper Card */}
+          {/* Real-time Playwright Activity & Event Timeline */}
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base flex items-center justify-between">
-                <span>Deterministic Event Transitions</span>
-                <Badge variant={isSimCompleted ? 'confirmed' : 'default'}>
-                  Reduced Lifecycle: {progressState.currentStatus}
-                </Badge>
-              </CardTitle>
-              <CardDescription>
-                Exercising <code className="font-mono text-xs">reduceProgressEvent</code> with sequence gap tracking.
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm font-bold flex items-center space-x-2">
+                  <Terminal className="w-4 h-4 text-cobalt-action" />
+                  <span>Playwright Execution Activity & Events</span>
+                </CardTitle>
+                <span className="text-[11px] text-brand-muted">
+                  {events.length} {events.length === 1 ? 'event' : 'events'} recorded
+                </span>
+              </div>
+              <CardDescription className="text-xs">
+                Real-time factual log of browser automation steps, baseline resets, and verifier evaluations.
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {SIMULATED_STAGES.map((s, idx) => {
-                  const isPast = idx < currentStep;
-                  const isCurrent = idx === currentStep;
-
-                  return (
-                    <div
-                      key={idx}
-                      className={`p-3.5 rounded-control border flex items-center justify-between text-xs transition-colors ${
-                        isPast
-                          ? 'bg-emerald-50/60 border-emerald-300 text-emerald-900'
-                          : isCurrent
-                          ? 'bg-lavender-surface border-cobalt-action text-brand-navy font-semibold ring-1 ring-cobalt-action'
-                          : 'bg-neutral-surface/40 border-neutral-divider/80 text-brand-muted'
-                      }`}
-                    >
-                      <div className="flex items-center space-x-3">
-                        <span
-                          className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[11px] ${
-                            isPast
-                              ? 'bg-emerald-600 text-white'
-                              : isCurrent
-                              ? 'bg-cobalt-action text-white'
-                              : 'bg-neutral-divider text-brand-muted'
-                          }`}
-                        >
-                          {idx + 1}
+            <CardContent className="space-y-2">
+              {events.length === 0 ? (
+                <p className="text-xs text-brand-muted py-4 text-center">Waiting for browser worker to emit execution events...</p>
+              ) : (
+                <div className="divide-y divide-neutral-divider/60 font-sans text-xs">
+                  {events.map((evt) => {
+                    const msg = (evt.payload?.message as string) || evt.eventType;
+                    const isError = evt.eventType.includes('FAIL') || evt.eventType.includes('ERROR');
+                    const isSuccess = evt.eventType.includes('COMPLETED') || evt.eventType.includes('APPROVED');
+                    return (
+                      <div key={evt.id} className="py-2.5 flex items-start space-x-3">
+                        <span className="shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded bg-neutral-surface border border-neutral-divider text-brand-muted">
+                          #{evt.sequenceIndex}
                         </span>
-                        <span>{s.name}</span>
+                        <div className="flex-1 min-w-0 space-y-0.5">
+                          <div className="flex items-center space-x-2">
+                            <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                              isError
+                                ? 'bg-red-50 text-red-700 border border-red-200'
+                                : isSuccess
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : 'bg-lavender-surface text-brand-deepPurple border border-cobalt-action/20'
+                            }`}>
+                              {evt.eventType.replace(/_/g, ' ')}
+                            </span>
+                            <span className="text-[10px] text-brand-muted">
+                              {new Date(evt.emittedAt).toLocaleTimeString()}
+                            </span>
+                          </div>
+                          <p className="text-xs text-brand-navy leading-relaxed break-words font-medium">
+                            {msg}
+                          </p>
+                        </div>
                       </div>
-
-                      <div>
-                        {isPast ? (
-                          <span className="text-emerald-700 font-medium">Applied</span>
-                        ) : isCurrent ? (
-                          <span className="text-cobalt-action font-semibold animate-pulse">Ready to Apply...</span>
-                        ) : (
-                          <span className="text-brand-muted">Queued</span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Diagnostic Console */}
-          <Card className="bg-brand-navy text-white font-mono text-xs border-none shadow-card">
-            <CardHeader className="border-b border-white/10 pb-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2 text-lavender-accent">
-                  <Terminal className="w-4 h-4" />
-                  <span className="font-semibold text-xs">Diagnostic Event Bus Stream</span>
+                    );
+                  })}
                 </div>
-                <span className="text-[10px] text-white/50">{simLogs.length} events logged</span>
-              </div>
-            </CardHeader>
-            <CardContent className="p-4 space-y-1.5 max-h-56 overflow-y-auto">
-              {simLogs.map((log, i) => (
-                <div key={i} className="text-[11px] text-white/90 leading-relaxed font-mono">
-                  {log}
-                </div>
-              ))}
+              )}
             </CardContent>
           </Card>
         </div>
       )}
+
     </div>
   );
 }

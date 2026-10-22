@@ -16,6 +16,12 @@ const ServerEnvSchema = z.object({
   OPENAI_MODEL_ID: z.literal('gpt-6-luna').default('gpt-6-luna'),
   OPENAI_BASE_URL: z.string().url().default('https://api.openai.com/v1'),
 
+  // Budget & Spending Ceilings (USD)
+  OPENAI_TOTAL_BUDGET_CEILING: z.coerce.number().positive().default(10.00),
+  OPENAI_PER_INVESTIGATION_CEILING: z.coerce.number().positive().default(0.25),
+  OPENAI_SESSION_VERIFICATION_CEILING: z.coerce.number().positive().default(1.00),
+  OPENAI_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(2048),
+
   // Object Storage (MinIO / S3)
   S3_ENDPOINT: z.string().default('http://localhost:9000'),
   S3_ACCESS_KEY: z.string().default('tracecase_admin'),

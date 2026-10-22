@@ -11,11 +11,10 @@ import {
   getEvidencePresentation,
 } from '@/contracts/status';
 import type { InvestigationSnapshot } from '@/contracts/investigations';
-import { SYNTHETIC_INVESTIGATIONS_CATALOG } from '@/dev/fixtures';
 import { fetchInvestigations } from '@/features/investigations/api-client';
 
 export default function DashboardPage() {
-  const [investigations, setInvestigations] = React.useState<InvestigationSnapshot[]>(SYNTHETIC_INVESTIGATIONS_CATALOG);
+  const [investigations, setInvestigations] = React.useState<InvestigationSnapshot[]>([]);
   const [filter, setFilter] = React.useState<string>('ALL');
   const [search, setSearch] = React.useState<string>('');
   const [isLoading, setIsLoading] = React.useState(true);
@@ -29,23 +28,15 @@ export default function DashboardPage() {
       const res = await fetchInvestigations();
       if (!isMounted) return;
 
-      if (res.success) {
-        if (res.data.investigations.length > 0) {
-          setInvestigations(res.data.investigations);
-        } else if (res.data.mode === 'live') {
-          // Live mode with 0 records: truthfully render empty catalog
-          setInvestigations([]);
-        } else {
-          setInvestigations(SYNTHETIC_INVESTIGATIONS_CATALOG);
-        }
+      if (res.success && res.data.mode === 'live') {
+        setInvestigations(res.data.investigations);
       } else {
-        if (res.status === 401) {
-          setErrorNotice('Live session unauthenticated. Showing preview catalog.');
-          setInvestigations(SYNTHETIC_INVESTIGATIONS_CATALOG);
-        } else {
-          setErrorNotice(`Live API unavailable (${res.error.message}). Showing preview catalog.`);
-          setInvestigations(SYNTHETIC_INVESTIGATIONS_CATALOG);
-        }
+        setInvestigations([]);
+        setErrorNotice(res.success
+          ? 'Sample mode is disabled here. Set DEV_PREVIEW_MODE=false to use real investigations.'
+          : res.status === 401
+            ? 'Sign in using the button above to load your investigations.'
+            : `Investigations could not be loaded: ${res.error.message}`);
       }
       setIsLoading(false);
     }
@@ -80,7 +71,7 @@ export default function DashboardPage() {
             Investigations Dashboard
           </h2>
           <p className="text-sm text-brand-muted mt-1">
-            Deterministic two-run reproduction tracking with synchronized evidence audits.
+            Register a test target, submit a bug report, review and approve the plan, then start the browser investigation.
           </p>
         </div>
         <Link href="/investigations/new">

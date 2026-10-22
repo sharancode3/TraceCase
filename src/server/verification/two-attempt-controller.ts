@@ -252,6 +252,24 @@ export class TwoAttemptController {
 
       if (safeTarget.hasResetCapability) {
         try {
+          // If reset capability is configured, restore target baseline before Attempt 1
+          // so Attempt 1 executes against the clean baseline rather than leftover dirty state.
+          if (targetEndpoint && resolvedSecret) {
+            try {
+              await TargetResetClient.coordinateReset({
+                target: safeTarget,
+                investigationId: params.investigationId,
+                attemptPairId: `${params.executionRequestId}-initial-restore`,
+                expectedBaseline: Object.keys(baselineForComparison).length > 0 ? baselineForComparison : {},
+                resetEndpoint: targetEndpoint,
+                resetAuthSecret: resolvedSecret,
+                fixtureScope: (plan as unknown as { fixtureScope?: string }).fixtureScope || 'default',
+              });
+            } catch {
+              // Best-effort pre-attempt restoration; readback verification confirms status below
+            }
+          }
+
           const preflight = await TargetResetClient.verifyBaselineReadback({
             target: safeTarget,
             expectedBaseline: baselineForComparison,

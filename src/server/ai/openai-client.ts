@@ -78,6 +78,8 @@ export class OpenAiClient {
       ],
       temperature: params.options?.temperature ?? 0.1,
       response_format: { type: 'json_object' },
+      max_completion_tokens: params.options?.maxTokens ?? 2048,
+      reasoning_effort: 'none',
     };
 
     let response: Response;
@@ -124,7 +126,7 @@ export class OpenAiClient {
       parsedJson = JSON.parse(rawContent);
     } catch (err: unknown) {
       if (ticket) {
-        budgetMgr.releaseReservation(ticket.reservationId);
+        await budgetMgr.commitUsage(ticket, usage);
       }
       throw new Error(`[OpenAiClient] Failed to parse model output as JSON: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -132,7 +134,7 @@ export class OpenAiClient {
     const parseResult = params.schema.safeParse(parsedJson);
     if (!parseResult.success) {
       if (ticket) {
-        budgetMgr.releaseReservation(ticket.reservationId);
+        await budgetMgr.commitUsage(ticket, usage);
       }
       throw new Error(
         `[OpenAiClient] Model output violated schema constraints: ${parseResult.error.message}`

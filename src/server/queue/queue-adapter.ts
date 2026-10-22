@@ -162,6 +162,9 @@ export class PgBossAdapter implements QueueAdapter {
       sendOptions.expireInSeconds = options.expireInSeconds;
     }
 
+    // pg-boss v10 requires explicit queue creation; otherwise send can return
+    // null even though no existing singleton job was actually enqueued.
+    await this.boss.createQueue(name);
     const jobId = await this.boss.send(name, data as object, sendOptions);
     return jobId || null;
   }
@@ -171,6 +174,7 @@ export class PgBossAdapter implements QueueAdapter {
       throw new Error('[PgBossAdapter] Cannot register worker: pg-boss queue is not started.');
     }
 
+    await this.boss.createQueue(name);
     const bossWorkerClient = this.boss as unknown as {
       work: (queueName: string, cb: (jobOrJobs: PgBossRawJob | PgBossRawJob[]) => Promise<void>) => Promise<void>;
     };

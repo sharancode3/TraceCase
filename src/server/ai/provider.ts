@@ -126,6 +126,7 @@ export class ModelProviderError extends Error {
   public readonly isRetryable: boolean;
   public readonly correlationId?: string;
   public readonly category: ProviderErrorCategory;
+  public usage?: AiUsageReport;
 
   constructor(
     code: string,
@@ -172,7 +173,8 @@ export class ModelConnectionError extends ModelProviderError {
 
 export class ModelSchemaValidationError extends ModelProviderError {
   public readonly zodErrors: z.ZodError;
-  constructor(zodErrors: z.ZodError, correlationId?: string) {
+  public readonly usage?: AiUsageReport;
+  constructor(zodErrors: z.ZodError, correlationId?: string, usage?: AiUsageReport) {
     super(
       'MODEL_SCHEMA_VIOLATION',
       `Model completion failed schema validation: ${zodErrors.message}`,
@@ -181,6 +183,7 @@ export class ModelSchemaValidationError extends ModelProviderError {
       'SCHEMA_VIOLATION'
     );
     this.zodErrors = zodErrors;
+    this.usage = usage;
   }
 }
 
@@ -526,6 +529,21 @@ export function normalizeLocalModelOutput(parsedRaw: unknown): unknown {
       // Invariant TC-INV-008: Model hypotheses are NEVER verified facts
       (rawObj.diagnosticHypothesis as Record<string, unknown>).isVerifiedFact = false;
     }
+    if (Array.isArray(rawObj.evidenceCitations)) {
+      rawObj.evidenceCitations = (rawObj.evidenceCitations as unknown[]).filter((c) => {
+        if (!c || typeof c !== 'object') return false;
+        const rec = c as Record<string, unknown>;
+        const allowedTypes = ['VIDEO', 'CONSOLE_LOG', 'NETWORK_LOG'];
+        if (!allowedTypes.includes(String(rec.artifactType))) return false;
+        if (typeof rec.safeUrl !== 'string' || !rec.safeUrl.trim()) return false;
+        try {
+          new URL(rec.safeUrl);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+    }
   }
 
   return rawObj;
@@ -610,6 +628,14 @@ export function zodToJsonSchemaObject(schema: z.ZodTypeAny): Record<string, unkn
       return zodToJsonSchemaObject(def.innerType);
     }
 
+    if (def.typeName === 'ZodDefault') {
+      return zodToJsonSchemaObject(def.innerType);
+    }
+
+    if (def.typeName === 'ZodEffects') {
+      return zodToJsonSchemaObject(def.schema);
+    }
+
     if (def.typeName === 'ZodNullable') {
       return zodToJsonSchemaObject(def.innerType);
     }
@@ -650,7 +676,7 @@ export class OllamaLocalModelProvider implements ModelProviderPort {
         'qwen3:4b-instruct-2507-q4_K_M',
       timeoutMs: options?.timeoutMs || 45000,
       temperature: options?.temperature ?? 0.1,
-      maxRetries: options?.maxRetries ?? 2,
+      maxRetries: options?.maxRetries ?? 1,
     };
   }
 
@@ -1002,7 +1028,16 @@ export interface ModelPricingConfig {
   modelIdentifier: string;
   promptCostPerMillion: number;
   completionCostPerMillion: number;
+  cachedPromptCostPerMillion?: number;
 }
+
+export const GPT_6_LUNA_STANDARD_PRICING: ModelPricingConfig = {
+  version: '2026-04-standard',
+  modelIdentifier: 'gpt-6-luna',
+  promptCostPerMillion: 0.10,
+  completionCostPerMillion: 0.50,
+  cachedPromptCostPerMillion: 0.01,
+};
 
 export interface OpenAiProviderOptions {
   apiKey?: string;
@@ -1024,7 +1059,7 @@ export class OpenAiLunaProvider implements ModelProviderPort {
   constructor(options?: OpenAiProviderOptions) {
     this.apiKey = options?.apiKey || process.env.OPENAI_API_KEY || '';
     this.customFetch = options?.fetchFn;
-    this.pricingConfig = options?.pricingConfig;
+    this.pricingConfig = options?.pricingConfig ?? GPT_6_LUNA_STANDARD_PRICING;
 
     const model =
       options?.modelIdentifier ||
@@ -1066,6 +1101,10 @@ export class OpenAiLunaProvider implements ModelProviderPort {
         correlationId,
         'CANCELLED'
       );
+    }
+
+    if (Buffer.byteLength(request.systemPrompt + request.userPrompt, 'utf8') > 32000) {
+      throw new ModelProviderError('PROMPT_TOO_LARGE', 'Paid model input exceeds the 32KB verification bound.', false, correlationId, 'INVALID_REQUEST');
     }
 
     if (!this.apiKey && !this.customFetch) {
@@ -1122,7 +1161,8 @@ export class OpenAiLunaProvider implements ModelProviderPort {
             ],
             response_format: { type: 'json_object' },
             temperature: request.temperature ?? this.config.temperature,
-            max_tokens: validatedMaxTokens,
+            max_completion_tokens: validatedMaxTokens,
+            reasoning_effort: 'none',
           }),
         });
 
@@ -1147,6 +1187,9 @@ export class OpenAiLunaProvider implements ModelProviderPort {
             prompt_tokens?: number;
             completion_tokens?: number;
             total_tokens?: number;
+            prompt_tokens_details?: {
+              cached_tokens?: number;
+            };
           };
         };
 
@@ -1158,37 +1201,15 @@ export class OpenAiLunaProvider implements ModelProviderPort {
 
         const cleanJsonStr = extractJsonFromResponse(rawText, correlationId);
 
-        let parsedRaw: unknown;
-        try {
-          parsedRaw = JSON.parse(cleanJsonStr);
-        } catch {
-          throw new ModelProviderError(
-            'INVALID_JSON',
-            'Model output could not be parsed as valid JSON.',
-            false,
-            correlationId,
-            'INVALID_JSON'
-          );
-        }
-
-        // Strip any model-injected authority fields
-        if (typeof parsedRaw === 'object' && parsedRaw !== null) {
-          parsedRaw = stripModelAuthorityFields(parsedRaw as Record<string, unknown>);
-          parsedRaw = normalizeLocalModelOutput(parsedRaw);
-        }
-
-        // Strictly validate against requested Zod schema
-        const parseResult = outputSchema.safeParse(parsedRaw);
-        if (!parseResult.success) {
-          throw new ModelSchemaValidationError(parseResult.error, correlationId);
-        }
-
         const durationMs = Date.now() - startTime;
         const promptTokens = body.usage?.prompt_tokens ?? Math.ceil((request.systemPrompt.length + request.userPrompt.length) / 4);
         const completionTokens = body.usage?.completion_tokens ?? Math.ceil(cleanJsonStr.length / 4);
         const totalTokens = body.usage?.total_tokens ?? (promptTokens + completionTokens);
 
-        // Report cost as unavailable unless a model-specific, versioned pricing configuration is supplied
+        // Report cost using model-specific, versioned pricing configuration
+        const cachedTokens = body.usage?.prompt_tokens_details?.cached_tokens ?? 0;
+        const uncachedPromptTokens = Math.max(0, promptTokens - cachedTokens);
+
         let tokenCostUsd = 'unavailable';
         if (
           this.pricingConfig &&
@@ -1196,9 +1217,11 @@ export class OpenAiLunaProvider implements ModelProviderPort {
           typeof this.pricingConfig.promptCostPerMillion === 'number' &&
           typeof this.pricingConfig.completionCostPerMillion === 'number'
         ) {
-          const promptCost = (promptTokens / 1_000_000) * this.pricingConfig.promptCostPerMillion;
+          const cachedRate = this.pricingConfig.cachedPromptCostPerMillion ?? 0.01;
+          const promptCost = (uncachedPromptTokens / 1_000_000) * this.pricingConfig.promptCostPerMillion +
+            (cachedTokens / 1_000_000) * cachedRate;
           const completionCost = (completionTokens / 1_000_000) * this.pricingConfig.completionCostPerMillion;
-          tokenCostUsd = (promptCost + completionCost).toFixed(4);
+          tokenCostUsd = (promptCost + completionCost).toFixed(8);
         }
 
         const usage: AiUsageReport = {
@@ -1215,6 +1238,33 @@ export class OpenAiLunaProvider implements ModelProviderPort {
           usageSource: body.usage ? 'provider_reported' : 'estimated',
           isFallback: false,
         };
+
+        let parsedRaw: unknown;
+        try {
+          parsedRaw = JSON.parse(cleanJsonStr);
+        } catch {
+          const jsonErr = new ModelProviderError(
+            'INVALID_JSON',
+            'Model output could not be parsed as valid JSON.',
+            false,
+            correlationId,
+            'INVALID_JSON'
+          );
+          jsonErr.usage = usage;
+          throw jsonErr;
+        }
+
+        // Strip any model-injected authority fields
+        if (typeof parsedRaw === 'object' && parsedRaw !== null) {
+          parsedRaw = stripModelAuthorityFields(parsedRaw as Record<string, unknown>);
+          parsedRaw = normalizeLocalModelOutput(parsedRaw);
+        }
+
+        // Strictly validate against requested Zod schema
+        const parseResult = outputSchema.safeParse(parsedRaw);
+        if (!parseResult.success) {
+          throw new ModelSchemaValidationError(parseResult.error, correlationId, usage);
+        }
 
         return {
           data: parseResult.data,

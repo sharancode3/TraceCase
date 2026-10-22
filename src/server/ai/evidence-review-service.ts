@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { getDb, DbClient } from '@/server/db';
-import { investigationsTable, targetsTable, synthesisExplanationsTable } from '@/server/db/schema';
+import { investigationsTable, targetsTable, synthesisExplanationsTable, bugReportsTable } from '@/server/db/schema';
 import type { PairAssessmentResult } from '@/server/verification/types';
 import type { FinalizedCaptureReference } from '@/contracts/evidence';
 import type { VerificationAssertionResult } from '@/contracts/observations';
@@ -45,6 +45,47 @@ export class EvidenceReviewService {
       throw new Error(`Investigation '${params.investigationId}' not found.`);
     }
 
+    // Extract safe artifact references by attempt for the review agent
+    const appBaseUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const baseUrl = appBaseUrl.replace(/\/+$/, '');
+    const att1Evidence = (params.eligibleEvidence || []).filter((e) => e.attemptNumber === 1);
+    const att1Console = att1Evidence.find((e) => e.kind === 'CONSOLE_LOG');
+    const att1Network = att1Evidence.find((e) => e.kind === 'NETWORK_TRACE');
+    const att1Video = att1Evidence.find((e) => e.kind === 'VIDEO_RECORDING');
+    const att1SafeArtifacts = {
+      ...(att1Console ? {
+        consoleLogId: att1Console.captureId,
+        consoleLogUrl: `${baseUrl}/api/v1/investigations/${params.investigationId}/artifacts/${att1Console.captureId}`,
+      } : {}),
+      ...(att1Network ? {
+        networkLogId: att1Network.captureId,
+        networkLogUrl: `${baseUrl}/api/v1/investigations/${params.investigationId}/artifacts/${att1Network.captureId}`,
+      } : {}),
+      ...(att1Video ? {
+        videoId: att1Video.captureId,
+        videoUrl: `${baseUrl}/api/v1/investigations/${params.investigationId}/artifacts/${att1Video.captureId}`,
+      } : {}),
+    };
+
+    const att2Evidence = (params.eligibleEvidence || []).filter((e) => e.attemptNumber === 2);
+    const att2Console = att2Evidence.find((e) => e.kind === 'CONSOLE_LOG');
+    const att2Network = att2Evidence.find((e) => e.kind === 'NETWORK_TRACE');
+    const att2Video = att2Evidence.find((e) => e.kind === 'VIDEO_RECORDING');
+    const att2SafeArtifacts = {
+      ...(att2Console ? {
+        consoleLogId: att2Console.captureId,
+        consoleLogUrl: `${baseUrl}/api/v1/investigations/${params.investigationId}/artifacts/${att2Console.captureId}`,
+      } : {}),
+      ...(att2Network ? {
+        networkLogId: att2Network.captureId,
+        networkLogUrl: `${baseUrl}/api/v1/investigations/${params.investigationId}/artifacts/${att2Network.captureId}`,
+      } : {}),
+      ...(att2Video ? {
+        videoId: att2Video.captureId,
+        videoUrl: `${baseUrl}/api/v1/investigations/${params.investigationId}/artifacts/${att2Video.captureId}`,
+      } : {}),
+    };
+
     // Map attempt 1 factual assessment
     const att1 = params.pairAssessment?.attempt1Assessment;
     const mappedAttempt1 = att1
@@ -68,7 +109,7 @@ export class EvidenceReviewService {
             expectedValue: e.expectedValue || 'SATISFIED',
             result: e.result,
           })),
-          safeArtifacts: {},
+          safeArtifacts: att1SafeArtifacts,
           sanitizedConsoleExcerpts: [],
         }
       : {
@@ -79,13 +120,13 @@ export class EvidenceReviewService {
           isValid: false,
           assertionsEvaluated: (params.assertions || []).map((a) => ({
             predicateId: a.assertionId,
-            predicateDescription: `Assertion ${a.assertionId}`,
+            predicateDescription: a.details || `Assertion ${a.assertionId}`,
             passed: a.result === 'SATISFIED',
             actualValue: a.observedValue || (a.result === 'SATISFIED' ? 'SATISFIED' : 'NOT_SATISFIED'),
-            expectedValue: 'SATISFIED',
+            expectedValue: a.expectedValue || 'SATISFIED',
             result: a.result,
           })),
-          safeArtifacts: {},
+          safeArtifacts: att1SafeArtifacts,
           sanitizedConsoleExcerpts: [],
         };
 
@@ -132,7 +173,7 @@ export class EvidenceReviewService {
           expectedValue: e.expectedValue || 'SATISFIED',
           result: e.result,
         })),
-        safeArtifacts: {},
+        safeArtifacts: att2SafeArtifacts,
         sanitizedConsoleExcerpts: [],
       };
     }
@@ -158,6 +199,7 @@ export class EvidenceReviewService {
       testedEnvironment = target?.baseUrl || target?.name || inv.targetId;
     }
     const targetBuildId = params.targetBuildId || resetReceipt?.readback?.targetBuildId;
+    const [report] = await db.select().from(bugReportsTable).where(eq(bugReportsTable.id, inv.reportId)).limit(1);
 
     // 2. Delegate synthesis to EvidenceReviewAgentPort
     const explanation = await params.agent.synthesizeExplanation({
@@ -165,6 +207,7 @@ export class EvidenceReviewService {
       lockedVerdict: params.pairAssessment.verdict,
       verifiedAssertions: params.assertions,
       eligibleEvidence: params.eligibleEvidence,
+      rawReport: report ? { title: report.title, description: report.rawDescription || report.bugDescription, claimedExpectedBehavior: report.expectedBehavior || undefined } : undefined,
       testedEnvironment,
       targetBuildId,
       resetStatus,

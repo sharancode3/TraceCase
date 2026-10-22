@@ -94,6 +94,23 @@ describe('Evidence Presentation & Developer Export (P3-06)', () => {
       expect(taskTraces.length).toBe(2);
     });
 
+    it('filters by failure text and handles transport failures without throwing', () => {
+      const traceWithFailure = [
+        ...CANONICAL_TC1_NETWORK_TRACES,
+        {
+          id: 'net-err',
+          method: 'DELETE',
+          url: 'http://localhost:3005/api/tasks/task-b',
+          isTransportFailure: true,
+          failureText: 'net::ERR_ABORTED',
+        },
+      ];
+      const result = filterNetworkTraces(traceWithFailure, 'ERR_ABORTED');
+      expect(result.length).toBe(1);
+      expect(result[0].isTransportFailure).toBe(true);
+      expect(result[0].failureText).toBe('net::ERR_ABORTED');
+    });
+
     it('returns empty array when no traces match', () => {
       const filtered = filterNetworkTraces(CANONICAL_TC1_NETWORK_TRACES, 'POST');
       expect(filtered).toEqual([]);

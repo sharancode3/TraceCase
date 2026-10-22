@@ -5,7 +5,6 @@ import {
 } from '@/contracts/clarification';
 import { requireAuthenticatedPrincipal } from '@/server/auth';
 import { createSafeError } from '@/contracts/errors';
-import { isDevPreviewEnabled } from '@/server/config/env';
 import { investigationWorkflowService } from '@/server/workflow/investigation-workflow.service';
 import {
   handleWorkflowError,
@@ -48,13 +47,7 @@ export async function POST(
       }
     }
 
-    if (isDevPreviewEnabled()) {
-      return NextResponse.json({
-        data: answers.map((a) => ({ ...a, isAnswered: true, answeredAt: new Date().toISOString() })),
-        status: 'ANSWERED',
-        isSimulatedPreview: true,
-      });
-    }
+    
 
     const principal = await requireAuthenticatedPrincipal(req);
     const idempotencyKey = extractIdempotencyKey(req, rawBody as Record<string, unknown>);

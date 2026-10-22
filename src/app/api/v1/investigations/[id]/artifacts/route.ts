@@ -4,7 +4,6 @@ import { getDb, isDbConfigured } from '@/server/db';
 import { evidenceArtifactsTable, investigationsTable } from '@/server/db/schema';
 import { resolvePrincipal } from '@/server/auth';
 import { createSafeError } from '@/contracts/errors';
-import { isDevPreviewEnabled } from '@/server/config/env';
 
 const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
@@ -21,15 +20,7 @@ export async function GET(
     );
   }
 
-  if (isDevPreviewEnabled()) {
-    return NextResponse.json({
-      data: {
-        artifacts: [],
-        total: 0,
-      },
-      mode: 'preview_synthetic',
-    });
-  }
+  
 
   const principal = await resolvePrincipal(req);
   if (!principal) {
@@ -98,10 +89,18 @@ export async function GET(
       createdAt: r.createdAt.toISOString(),
     }));
 
+    const restrictedRecordings = await db.select({ id: evidenceArtifactsTable.id })
+      .from(evidenceArtifactsTable).where(and(
+        eq(evidenceArtifactsTable.investigationId, id),
+        eq(evidenceArtifactsTable.kind, 'VIDEO_RECORDING'),
+        eq(evidenceArtifactsTable.storageTier, 'RESTRICTED_RAW'),
+      ));
+
     return NextResponse.json({
       data: {
         artifacts,
         total: artifacts.length,
+        restrictedRecordingCount: restrictedRecordings.length,
       },
       mode: 'live',
     });

@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { eq, and } from 'drizzle-orm';
 import { requireAuthenticatedPrincipal } from '@/server/auth';
 import { createSafeError } from '@/contracts/errors';
-import { isDevPreviewEnabled } from '@/server/config/env';
 import { getDb } from '@/server/db';
 import { investigationsTable } from '@/server/db/schema';
 import { clarificationsRepository } from '@/server/db/repositories/clarifications.repository';
@@ -14,13 +13,7 @@ export async function GET(
 ) {
   const { id } = await params;
 
-  if (isDevPreviewEnabled()) {
-    return NextResponse.json({
-      data: [],
-      total: 0,
-      mode: 'preview_synthetic',
-    });
-  }
+  
 
   try {
     const principal = await requireAuthenticatedPrincipal(req);

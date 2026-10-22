@@ -3,14 +3,13 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Target, PlusCircle, ShieldCheck, Eye } from 'lucide-react';
+import { LayoutDashboard, Target, PlusCircle, ShieldCheck } from 'lucide-react';
 import { cn } from '../ui/button';
 
 const NAV_ITEMS = [
   { label: 'Investigations', href: '/', icon: LayoutDashboard },
   { label: 'Target Environments', href: '/targets', icon: Target },
   { label: 'Submit Bug Report', href: '/investigations/new', icon: PlusCircle },
-  { label: 'Workflow Previews', href: '/preview/gallery', icon: Eye },
 ];
 
 export function Sidebar() {
@@ -59,14 +58,14 @@ export function Sidebar() {
       <div className="p-4 m-4 rounded-card bg-lavender-surface/60 border border-lavender-accent/40 space-y-2">
         <div className="flex items-center space-x-2 text-xs font-semibold text-brand-deepPurple">
           <ShieldCheck className="w-3.5 h-3.5 text-cobalt-action" />
-          <span>Stage 0 Foundation</span>
+          <span>Approved browser investigations</span>
         </div>
         <p className="text-[11px] text-brand-muted leading-relaxed">
-          14 System Invariants Enforced. No live target mutation permitted.
+          Review each experiment plan before starting. Destructive tests require a verified sandbox.
         </p>
         <div className="pt-1 flex items-center justify-between text-[10px] text-brand-muted">
-          <span>Worker: Idle</span>
-          <span className="text-cobalt-action font-medium">pnpm 9</span>
+          <span>Two attempts required</span>
+          <span className="text-cobalt-action font-medium">Evidence captured</span>
         </div>
       </div>
     </aside>

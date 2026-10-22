@@ -7,7 +7,6 @@ import { HelpCircle, Check, ArrowRight, ArrowLeft, AlertCircle, Info, Sparkles, 
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { SYNTHETIC_CLARIFICATION_QUESTIONS } from '@/dev/fixtures';
 import { AnswerClarificationCommandSchema } from '@/contracts/clarification';
 import {
   fetchClarifications,
@@ -20,7 +19,6 @@ export default function ClarificationPage() {
   const params = useParams();
   const router = useRouter();
   const id = params?.id as string;
-  const isPreviewId = id?.startsWith('0') || id?.includes('preview');
 
   const [questions, setQuestions] = React.useState<ClarificationQuestionItem[]>([]);
   const [selectedAnswers, setSelectedAnswers] = React.useState<Record<string, string>>({});
@@ -39,8 +37,6 @@ export default function ClarificationPage() {
 
       if (res.success && res.data.questions.length > 0) {
         setQuestions(res.data.questions);
-      } else if (isPreviewId || (res.success && res.mode === 'preview_synthetic')) {
-        setQuestions(SYNTHETIC_CLARIFICATION_QUESTIONS as unknown as ClarificationQuestionItem[]);
       } else {
         setQuestions([]);
       }
@@ -50,7 +46,7 @@ export default function ClarificationPage() {
     return () => {
       isMounted = false;
     };
-  }, [id, isPreviewId]);
+  }, [id]);
 
   const handleSelectOption = (questionId: string, option: string) => {
     setSelectedAnswers((prev) => ({ ...prev, [questionId]: option }));

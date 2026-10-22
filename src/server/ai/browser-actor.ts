@@ -518,7 +518,8 @@ export class BrowserInteractionAgent {
         // Generic entity phrase check against approved current step target description
         const stepPhrases = extractEntityPhrases(input.currentStep.targetDescription || '');
         const nodePhrases = extractEntityPhrases(`${matchedNode.name} ${matchedNode.description || ''}`);
-        if (stepPhrases.length > 0 && nodePhrases.length > 0) {
+        const exactAccessibleName = input.currentStep.targetDescription?.trim().toLowerCase() === matchedNode.name.trim().toLowerCase();
+        if (!exactAccessibleName && stepPhrases.length > 0 && nodePhrases.length > 0) {
           const hasMatchingPhrase = stepPhrases.some((sp) => nodePhrases.includes(sp));
           if (!hasMatchingPhrase) {
             return {

@@ -5,8 +5,8 @@
   "description": "Autonomous, deterministic web defect reproduction and verifiable evidence pipeline",
   "scripts": {
     "dev": "next dev --port 3000",
-    "dev:worker": "tsx worker/index.ts",
-    "dev:target": "tsx demo-target/server.ts",
+    "dev:worker": "tsx --env-file=.env.local worker/index.ts",
+    "dev:target": "tsx --env-file=.env.local demo-target/server.ts",
     "build": "pnpm build:web && pnpm build:worker",
     "build:web": "next build",
     "build:worker": "tsup worker/index.ts --format esm --out-dir dist/worker",

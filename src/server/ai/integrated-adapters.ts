@@ -28,7 +28,7 @@ import type {
   TypedAssertionOperator,
 } from '@/contracts/planning';
 import type { ModelProviderPort, SupportedLocalModel } from './provider';
-import { OpenAiLunaProvider, OllamaLocalModelProvider, ModelProviderError, MockTestDoubleModelProvider } from './provider';
+import { OpenAiLunaProvider, OllamaLocalModelProvider, ModelProviderError, MockTestDoubleModelProvider, GPT_6_LUNA_STANDARD_PRICING } from './provider';
 import { getServerEnv } from '@/server/config/env';
 import { ReportExperimentAgent } from './planner';
 import { BrowserInteractionAgent } from './browser-actor';
@@ -218,7 +218,10 @@ function resolveProvider(customProvider?: ModelProviderPort): ModelProviderPort 
       try {
         return new OpenAiLunaProvider({
           apiKey: key,
+          endpointUrl: env.OPENAI_BASE_URL,
           modelIdentifier: 'gpt-6-luna',
+          pricingConfig: GPT_6_LUNA_STANDARD_PRICING,
+          maxRetries: 1,
         });
       } catch {
         return null;
@@ -348,7 +351,14 @@ export class IntegratedReportClarificationAgent implements ReportClarificationAg
         completionTokens: result.usage?.completionTokens ?? 500,
       });
     } catch (err: unknown) {
-      await this.budgetManager.releaseReservation(ticket.reservationId);
+      if (err instanceof ModelProviderError && err.usage) {
+        await this.budgetManager.commitUsage(ticket, {
+          promptTokens: err.usage.promptTokens,
+          completionTokens: err.usage.completionTokens,
+        });
+      } else {
+        await this.budgetManager.releaseReservation(ticket.reservationId);
+      }
       if (err instanceof ModelProviderError && err.category === 'AUTHENTICATION') {
         throw new ServiceUnavailableError(
           'OpenAI (gpt-6-luna)',
@@ -604,7 +614,14 @@ export class IntegratedBrowserInvestigationAgent implements BrowserInvestigation
         completionTokens: result.usage?.completionTokens ?? 400,
       });
     } catch (err: unknown) {
-      await this.budgetManager.releaseReservation(ticket.reservationId);
+      if (err instanceof ModelProviderError && err.usage) {
+        await this.budgetManager.commitUsage(ticket, {
+          promptTokens: err.usage.promptTokens,
+          completionTokens: err.usage.completionTokens,
+        });
+      } else {
+        await this.budgetManager.releaseReservation(ticket.reservationId);
+      }
       if (err instanceof ModelProviderError && err.category === 'AUTHENTICATION') {
         throw new ServiceUnavailableError(
           'OpenAI (gpt-6-luna)',
@@ -934,7 +951,14 @@ export class IntegratedEvidenceReviewAgent implements EvidenceReviewAgentPort {
         completionTokens: result.usage?.completionTokens ?? 800,
       });
     } catch (err: unknown) {
-      await this.budgetManager.releaseReservation(ticket.reservationId);
+      if (err instanceof ModelProviderError && err.usage) {
+        await this.budgetManager.commitUsage(ticket, {
+          promptTokens: err.usage.promptTokens,
+          completionTokens: err.usage.completionTokens,
+        });
+      } else {
+        await this.budgetManager.releaseReservation(ticket.reservationId);
+      }
       if (err instanceof ModelProviderError && err.category === 'AUTHENTICATION') {
         throw new ServiceUnavailableError(
           'OpenAI (gpt-6-luna)',

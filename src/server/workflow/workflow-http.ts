@@ -50,12 +50,16 @@ export function handleWorkflowError(error: unknown): NextResponse {
 
   if (
     errorCode === 'ECONNREFUSED' ||
+    errorCode === '28P01' ||
+    errorCode === '28000' ||
+    errRecord?.name === 'PostgresError' ||
     errRecord?.name === 'AggregateError' ||
     message.includes('ECONNREFUSED') ||
     message.includes('connect') ||
     message.includes('database') ||
     message.includes('Connection') ||
-    message.includes('Failed to connect')
+    message.includes('Failed to connect') ||
+    message.includes('password authentication failed')
   ) {
     return NextResponse.json(
       createSafeError('SERVICE_NOT_CONFIGURED', 'DATABASE_UNAVAILABLE', message || 'Database connection unavailable'),

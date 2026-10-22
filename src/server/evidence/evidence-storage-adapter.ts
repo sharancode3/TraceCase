@@ -353,13 +353,15 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
         let isJsonParsed = false;
         let safeNetworkText = '';
         let redactionsApplied = false;
+        let redactionCount = 0;
 
         try {
           const parsed = JSON.parse(rawText);
           isJsonParsed = true;
           const scrubbed = sanitizeStructuredData(parsed);
-          safeNetworkText = JSON.stringify(scrubbed);
-          redactionsApplied = true;
+          safeNetworkText = JSON.stringify(scrubbed.safeContent);
+          redactionsApplied = scrubbed.redactionsApplied;
+          redactionCount = scrubbed.redactionCount;
         } catch {
           isJsonParsed = false;
         }
@@ -431,6 +433,10 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
             originalTier: 'RESTRICTED_RAW',
             publishedTier: 'PUBLIC_SAFE',
             redactionApplied: redactionsApplied,
+            redactionDetails: {
+              tokensMasked: redactionCount,
+              piiMasked: 0,
+            },
             isEligibleForSharing: true,
           });
         } else {

@@ -129,6 +129,24 @@ export function setServiceContainerForTesting(container: ServiceContainer | null
  * Probes all system ports and runtime environments to generate a truthful,
  * fact-based readiness report. Does not pretend missing modules are functional.
  */
+let cachedOpenAiProbe: {
+  status: 'AVAILABLE' | 'UNAVAILABLE';
+  details?: string;
+  reachability: string;
+  timestamp: number;
+} | null = null;
+
+let inferenceCapabilityVerified = false;
+
+export function markOpenAiInferenceVerified(): void {
+  inferenceCapabilityVerified = true;
+}
+
+export function resetOpenAiProbeCacheForTesting(): void {
+  cachedOpenAiProbe = null;
+  inferenceCapabilityVerified = false;
+}
+
 export async function getSystemReadiness(): Promise<SystemReadinessReport> {
   const timestamp = new Date().toISOString();
   let isPreview = false;
@@ -141,15 +159,94 @@ export async function getSystemReadiness(): Promise<SystemReadinessReport> {
 
   // 1. Probe configured AI Providers (OpenAI Luna and Local Ollama)
   const openAiConfigured = defaultOpenAiClient.isConfigured();
-  const openAiStatus: ComponentReadiness = openAiConfigured
-    ? {
-        status: 'AVAILABLE',
-        metadata: { provider: 'openai_luna', model: 'gpt-6-luna', role: 'ADVISOR_ONLY' },
-      }
-    : {
-        status: 'UNAVAILABLE',
-        details: 'OPENAI_API_KEY environment variable is not configured.',
+  let openAiStatus: ComponentReadiness;
+
+  if (!openAiConfigured) {
+    openAiStatus = {
+      status: 'UNAVAILABLE',
+      details: 'OPENAI_API_KEY environment variable is not configured.',
+    };
+  } else {
+    // Distinguish configured from verified reachable via lightweight, non-generating cached probe (zero generation tokens)
+    const now = Date.now();
+    if (cachedOpenAiProbe && now - cachedOpenAiProbe.timestamp < 60_000) {
+      openAiStatus = {
+        status: cachedOpenAiProbe.status,
+        details: cachedOpenAiProbe.details,
+        metadata: {
+          provider: 'openai_luna',
+          model: 'gpt-6-luna',
+          role: 'ADVISOR_ONLY',
+          reachability: cachedOpenAiProbe.reachability,
+          inferenceCapability: inferenceCapabilityVerified ? 'verified_active' : 'untested',
+        },
       };
+    } else {
+      try {
+        const env = getServerEnv();
+        const probeRes = await fetch(`${env.OPENAI_BASE_URL.replace(/\/$/, '')}/models/${env.OPENAI_MODEL_ID}`, {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${env.OPENAI_API_KEY}`,
+          },
+          signal: AbortSignal.timeout(3000),
+        });
+
+        if (probeRes.ok) {
+          cachedOpenAiProbe = {
+            status: 'AVAILABLE',
+            reachability: 'verified_reachable',
+            timestamp: now,
+          };
+          openAiStatus = {
+            status: 'AVAILABLE',
+            metadata: {
+              provider: 'openai_luna',
+              model: 'gpt-6-luna',
+              role: 'ADVISOR_ONLY',
+              reachability: 'verified_reachable',
+              inferenceCapability: inferenceCapabilityVerified ? 'verified_active' : 'untested',
+            },
+          };
+        } else if (probeRes.status === 401) {
+          cachedOpenAiProbe = {
+            status: 'UNAVAILABLE',
+            details: 'OpenAI API key authentication failed (HTTP 401).',
+            reachability: 'unauthorized',
+            timestamp: now,
+          };
+          openAiStatus = {
+            status: 'UNAVAILABLE',
+            details: 'OpenAI API key authentication failed (HTTP 401). Check OPENAI_API_KEY in .env.local.',
+          };
+        } else {
+          cachedOpenAiProbe = {
+            status: 'UNAVAILABLE',
+            details: `OpenAI model probe returned HTTP ${probeRes.status}.`,
+            reachability: 'permission_denied_or_missing',
+            timestamp: now,
+          };
+          openAiStatus = {
+            status: 'UNAVAILABLE',
+            details: `OpenAI model probe returned HTTP ${probeRes.status}.`,
+          };
+        }
+      } catch (probeErr: unknown) {
+        // Fall back to configured but mark unreachable
+        openAiStatus = {
+          status: 'UNAVAILABLE',
+          details: `OpenAI endpoint unreachable: ${probeErr instanceof Error ? probeErr.message : String(probeErr)}`,
+          metadata: {
+            provider: 'openai_luna',
+            model: 'gpt-6-luna',
+            role: 'ADVISOR_ONLY',
+            reachability: 'unreachable',
+            inferenceCapability: 'untested',
+          },
+        };
+      }
+    }
+  }
 
   let localAiStatus: ComponentReadiness | undefined;
   let localAiAvailable = false;

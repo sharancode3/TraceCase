@@ -1,6 +1,7 @@
 import type { EvidenceReviewAgentInput, EvidenceReviewOutput } from './contracts';
 import { EvidenceReviewOutputSchema, stripModelAuthorityFields } from './contracts';
 import type { ModelProviderPort, AiUsageReport } from './provider';
+import { ModelProviderError } from './provider';
 import {
   REVIEWER_SYSTEM_PROMPT,
   assembleReviewerUserPrompt,
@@ -93,7 +94,7 @@ export class EvidenceReviewAgent {
 
       return {
         output: fallbackOutput,
-        usage: emptyUsage,
+        usage: err instanceof ModelProviderError && err.usage ? { ...err.usage, isFallback: true } : emptyUsage,
       };
     }
   }

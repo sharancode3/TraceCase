@@ -61,6 +61,10 @@ export class ObservationManager {
         const tagName = el.tagName.toLowerCase();
         const ariaRole = el.getAttribute('role') || undefined;
         const textContent = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 150);
+        const ariaLabel = el.getAttribute('aria-label')?.trim();
+        const labelledBy = (el.getAttribute('aria-labelledby') || '').split(/\s+/)
+          .map((id) => document.getElementById(id)?.textContent || '').join(' ').trim();
+        const accessibleName = (ariaLabel || labelledBy || textContent).replace(/\s+/g, ' ').slice(0, 150);
         const nameAttr = el.getAttribute('name') || '';
         const idAttr = el.id ? `#${el.id}` : '';
         const testId = el.getAttribute('data-testid') ? `[data-testid="${el.getAttribute('data-testid')}"]` : '';
@@ -69,6 +73,7 @@ export class ObservationManager {
         let selector = '';
         if (testId) selector = testId;
         else if (idAttr) selector = idAttr;
+        else if (ariaLabel) selector = `${tagName}[aria-label=${JSON.stringify(ariaLabel)}]`;
         else if (nameAttr) selector = `${tagName}[name="${nameAttr}"]`;
         else if (textContent) selector = `${tagName}:has-text("${textContent.slice(0, 30)}")`;
         else selector = `${tagName}:nth-of-type(${idx + 1})`;
@@ -76,7 +81,7 @@ export class ObservationManager {
         return {
           tagName,
           ariaRole,
-          textSnippet: textContent || undefined,
+          textSnippet: accessibleName || undefined,
           isInteractive: isVisible,
           selector,
         };

@@ -3,14 +3,13 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Plus, UserCheck, LogIn, LogOut, Menu, X, LayoutDashboard, Target, PlusCircle, Eye } from 'lucide-react';
+import { Plus, UserCheck, LogIn, LogOut, Menu, X, LayoutDashboard, Target, PlusCircle } from 'lucide-react';
 import { Button, cn } from '../ui/button';
 
 const MOBILE_NAV_ITEMS = [
   { label: 'Investigations', href: '/', icon: LayoutDashboard },
   { label: 'Target Environments', href: '/targets', icon: Target },
   { label: 'Submit Bug Report', href: '/investigations/new', icon: PlusCircle },
-  { label: 'Workflow Previews', href: '/preview/gallery', icon: Eye },
 ];
 
 export function Header() {
@@ -27,8 +26,8 @@ export function Header() {
         return null;
       })
       .then((data) => {
-        if (isMounted && data?.data?.authenticated && data?.data?.email) {
-          setOperator(data.data.email);
+        if (isMounted && data?.authenticated && data?.principal?.email) {
+          setOperator(data.principal.email);
         }
       })
       .catch(() => {
@@ -50,7 +49,8 @@ export function Header() {
       });
       if (res.ok) {
         const json = await res.json();
-        setOperator(json.data?.email || 'operator@tracecase.local');
+        setOperator(json.principal?.email || 'operator@tracecase.local');
+        window.location.reload();
       }
     } catch {
       // Best-effort dev login
@@ -63,6 +63,7 @@ export function Header() {
     try {
       await fetch('/api/dev/session', { method: 'DELETE' });
       setOperator(null);
+      window.location.reload();
     } catch {
       // Best-effort dev logout
     }

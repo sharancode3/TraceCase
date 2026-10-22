@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { CancelInvestigationCommandSchema } from '@/contracts/planning';
 import { requireAuthenticatedPrincipal } from '@/server/auth';
 import { createSafeError } from '@/contracts/errors';
-import { isDevPreviewEnabled } from '@/server/config/env';
 import { investigationWorkflowService } from '@/server/workflow/investigation-workflow.service';
 import {
   handleWorkflowError,
@@ -34,14 +33,7 @@ export async function POST(
       );
     }
 
-    if (isDevPreviewEnabled()) {
-      return NextResponse.json({
-        status: 'CANCELLED',
-        investigationId: id,
-        cancellationReason: parsed.data.cancellationReason,
-        isSimulatedPreview: true,
-      });
-    }
+    
 
     const principal = await requireAuthenticatedPrincipal(req);
     const idempotencyKey = extractIdempotencyKey(req, rawBody as Record<string, unknown>);

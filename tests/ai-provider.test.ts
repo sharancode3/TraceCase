@@ -488,8 +488,8 @@ describe('Person 2: AI Provider Adapter & Bounded Request Handling (P2-03)', () 
         { roleId: 'AT-ROLE-001', systemPrompt: 'Sys', userPrompt: 'User' },
         SimpleSchema
       );
-      // Cost: 100 * (2.50 / 1M) + 50 * (10.00 / 1M) = 0.00025 + 0.0005 = 0.00075 -> rounded to 4 decimals = '0.0008'
-      expect(resPricing.usage.tokenCostUsd).toBe('0.0008');
+      // Preserve sub-cent precision rather than rounding tiny calls to zero.
+      expect(resPricing.usage.tokenCostUsd).toBe('0.00075000');
 
       // With mismatched modelIdentifier in pricing config, cost remains 'unavailable'
       const providerMismatched = new OpenAiLunaProvider({
@@ -741,7 +741,8 @@ describe('Person 2: AI Provider Adapter & Bounded Request Handling (P2-03)', () 
       ]);
       expect(body.response_format).toEqual({ type: 'json_object' });
       expect(body.temperature).toBe(0.2);
-      expect(body.max_tokens).toBe(500);
+      expect(body.max_completion_tokens).toBe(500);
+      expect(body.reasoning_effort).toBe('none');
     });
 
     it('detects explicit refusal from OpenAI provider and throws ModelRefusalError', async () => {
