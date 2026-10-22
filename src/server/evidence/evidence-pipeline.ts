@@ -89,16 +89,47 @@ export class EvidencePipeline {
           quarantinedCount++;
         }
 
-        await db
-          .update(evidenceArtifactsTable)
-          .set({
-            storageTier: res.publishedTier,
-            redactionApplied: res.redactionApplied,
-            isEligibleForSharing: res.isEligibleForSharing,
-            quarantineReason: res.quarantineReason || null,
-            updatedAt: new Date(),
-          })
-          .where(eq(evidenceArtifactsTable.id, res.artifactId));
+        // Check if dual-bucket derivative lineage is already persisted for this raw artifact
+        let hasPersistedDerivative = false;
+        try {
+          const existingDerivative = await db
+            .select()
+            .from(evidenceArtifactsTable)
+            .where(
+              and(
+                eq(evidenceArtifactsTable.investigationId, params.investigationId),
+                eq(evidenceArtifactsTable.rawArtifactId, res.artifactId)
+              )
+            )
+            .limit(1);
+          hasPersistedDerivative = existingDerivative.length > 0;
+        } catch {
+          hasPersistedDerivative = false;
+        }
+
+        if (hasPersistedDerivative) {
+          // Dual-bucket derivative lineage is already active.
+          // Retain raw capture in RESTRICTED_RAW and avoid overwriting it to PUBLIC_SAFE.
+          await db
+            .update(evidenceArtifactsTable)
+            .set({
+              quarantineReason: res.quarantineReason || null,
+              updatedAt: new Date(),
+            })
+            .where(eq(evidenceArtifactsTable.id, res.artifactId));
+        } else {
+          // Fallback for mock storage ports / unit tests where raw artifact is updated in place
+          await db
+            .update(evidenceArtifactsTable)
+            .set({
+              storageTier: res.publishedTier,
+              redactionApplied: res.redactionApplied,
+              isEligibleForSharing: res.isEligibleForSharing,
+              quarantineReason: res.quarantineReason || null,
+              updatedAt: new Date(),
+            })
+            .where(eq(evidenceArtifactsTable.id, res.artifactId));
+        }
 
         const matchedRaw = rawArtifacts.find((r) => r.id === res.artifactId);
         await eventsRepository.appendEvent({

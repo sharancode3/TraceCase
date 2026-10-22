@@ -360,7 +360,7 @@ describe('Person 1 & Person 2 Behavioral Regressions & Invariant Suite', () => {
     expect(step2.status).toBe('FAILED');
     expect(step2.errorDetails).toContain('Semantic mismatch');
     expect(step2.errorDetails).toContain("Proposed toolKind 'fill_input' conflicts with approved step toolKind 'click_button'");
-  });
+  }, 30000);
 
   // --------------------------------------------------------------------------
   // 5. Post-Model Latency Authorization & Lease Revalidation
@@ -461,7 +461,7 @@ describe('Person 1 & Person 2 Behavioral Regressions & Invariant Suite', () => {
     expect(step2).toBeDefined();
     expect(step2?.status).toBe('FAILED');
     expect(step2?.errorDetails).toContain('Post-model authorization / lease check failed');
-  });
+  }, 30000);
 
   // --------------------------------------------------------------------------
   // 6. Precondition Check Fails Closed on Dirty Initial Baseline

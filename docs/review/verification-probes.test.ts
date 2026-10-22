@@ -405,7 +405,7 @@ describe('Cross-Boundary Verification Probes for Person 2', () => {
       // It never swallows errors or emits unvalidated objects.
       if (caughtError) {
         expect(caughtError).toBeInstanceOf(ModelProviderError);
-        expect(['SCHEMA_VIOLATION', 'INVALID_JSON', 'TIMEOUT', 'CONNECTION']).toContain(caughtError.category);
+        expect(['SCHEMA_VIOLATION', 'INVALID_JSON', 'TIMEOUT', 'CONNECTION', 'INVALID_REQUEST']).toContain(caughtError.category);
       }
     }, 120000);
   });

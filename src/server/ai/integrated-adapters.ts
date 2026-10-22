@@ -27,8 +27,9 @@ import type {
   ObservationSource,
   TypedAssertionOperator,
 } from '@/contracts/planning';
-import type { ModelProviderPort } from './provider';
-import { OpenAiLunaProvider, ModelProviderError, MockTestDoubleModelProvider } from './provider';
+import type { ModelProviderPort, SupportedLocalModel } from './provider';
+import { OpenAiLunaProvider, OllamaLocalModelProvider, ModelProviderError, MockTestDoubleModelProvider } from './provider';
+import { getServerEnv } from '@/server/config/env';
 import { ReportExperimentAgent } from './planner';
 import { BrowserInteractionAgent } from './browser-actor';
 import { EvidenceReviewAgent } from './reviewer';
@@ -193,17 +194,39 @@ function resolveProvider(customProvider?: ModelProviderPort): ModelProviderPort 
   if (customProvider) {
     return customProvider;
   }
-  const key = process.env.OPENAI_API_KEY;
-  if (key && key.trim().length > 0) {
-    try {
-      return new OpenAiLunaProvider({
-        apiKey: key,
-        modelIdentifier: 'gpt-6-luna',
-      });
-    } catch {
-      return null;
-    }
+
+  let env;
+  try {
+    env = getServerEnv();
+  } catch {
+    return null;
   }
+
+  if (env.AI_PROVIDER === 'local_ollama') {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('[Security] local_ollama provider is strictly forbidden in production.');
+    }
+    return new OllamaLocalModelProvider({
+      endpointUrl: env.LOCAL_AI_ENDPOINT,
+      modelIdentifier: env.LOCAL_AI_MODEL as SupportedLocalModel,
+    });
+  }
+
+  if (env.AI_PROVIDER === 'openai_luna') {
+    const key = env.OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+    if (key && key.trim().length > 0) {
+      try {
+        return new OpenAiLunaProvider({
+          apiKey: key,
+          modelIdentifier: 'gpt-6-luna',
+        });
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+
   return null;
 }
 

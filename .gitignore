@@ -48,3 +48,4 @@ Thumbs.db
 # Scratch and temporary scripts
 scratch/
 .tmp/
+.tracecase-storage/

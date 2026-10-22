@@ -1,6 +1,7 @@
 import * as jose from 'jose';
 import { getServerEnv } from '@/server/config/env';
 import { AuthenticationError } from './index';
+import { getDevKeyPair } from './dev-auth';
 
 export { AuthenticationError };
 
@@ -35,13 +36,15 @@ export function setCustomVerifierForTesting(verifier: ((token: string) => Promis
 
 /**
  * Checks whether an external identity provider is configured in server environment.
- * Requires AUTH_ISSUER, AUTH_AUDIENCE, and AUTH_JWKS_URI.
+ * Requires AUTH_ISSUER, AUTH_AUDIENCE, and AUTH_JWKS_URI, or ENABLE_DEV_AUTH in development.
  */
 export function isAuthProviderConfigured(): boolean {
   if (customKeyOrSet !== null || customVerifier !== null) return true;
   try {
     const env = getServerEnv();
-    return Boolean(env.AUTH_ISSUER && env.AUTH_AUDIENCE && env.AUTH_JWKS_URI);
+    if (env.AUTH_ISSUER && env.AUTH_AUDIENCE && env.AUTH_JWKS_URI) return true;
+    if (process.env.NODE_ENV !== 'production' && env.ENABLE_DEV_AUTH) return true;
+    return false;
   } catch {
     return false;
   }
@@ -64,24 +67,31 @@ export async function verifyJwtToken(token: string): Promise<VerifiedClaims> {
   let keySource: KeyLikeOrSecret | null = customKeyOrSet;
 
   if (!keySource) {
-    if (!env.AUTH_ISSUER || !env.AUTH_AUDIENCE || !env.AUTH_JWKS_URI) {
+    if (env.AUTH_ISSUER && env.AUTH_AUDIENCE && env.AUTH_JWKS_URI) {
+      if (!remoteJwksCache) {
+        remoteJwksCache = jose.createRemoteJWKSet(new URL(env.AUTH_JWKS_URI), {
+          timeoutDuration: 5000,
+          cooldownDuration: 30000,
+        });
+      }
+      keySource = remoteJwksCache;
+    } else if (process.env.NODE_ENV !== 'production' && env.ENABLE_DEV_AUTH) {
+      // In local development with dev auth enabled, resolve against persistent local EdDSA key
+      const devKeys = await getDevKeyPair();
+      keySource = devKeys.publicKey;
+    } else {
       throw new AuthenticationError('External identity provider is not fully configured (AUTH_ISSUER, AUTH_AUDIENCE, and AUTH_JWKS_URI are required).');
     }
-
-    if (!remoteJwksCache) {
-      remoteJwksCache = jose.createRemoteJWKSet(new URL(env.AUTH_JWKS_URI), {
-        timeoutDuration: 5000,
-        cooldownDuration: 30000,
-      });
-    }
-    keySource = remoteJwksCache;
   }
+
+  const effectiveIssuer = env.AUTH_ISSUER || (process.env.NODE_ENV !== 'production' ? `${env.APP_URL}/api/dev` : undefined);
+  const effectiveAudience = env.AUTH_AUDIENCE || (process.env.NODE_ENV !== 'production' ? 'tracecase-api' : undefined);
 
   const verifyOptions: jose.JWTVerifyOptions = {
     algorithms: ['RS256', 'ES256', 'EdDSA'],
     clockTolerance: env.AUTH_CLOCK_TOLERANCE_SEC ?? 10,
-    issuer: env.AUTH_ISSUER,
-    audience: env.AUTH_AUDIENCE,
+    issuer: effectiveIssuer,
+    audience: effectiveAudience,
   };
 
   try {

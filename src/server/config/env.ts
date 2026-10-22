@@ -8,7 +8,10 @@ const ServerEnvSchema = z.object({
   // Persistence (PostgreSQL & Drizzle)
   DATABASE_URL: z.string().default('postgres://tc_user:tc_pass@localhost:5432/tracecase'),
 
-  // AI Configuration (Luna via OpenAI API only, TC-INV-001)
+  // AI Configuration (explicit provider selection; local_ollama for development, openai_luna for production)
+  AI_PROVIDER: z.enum(['openai_luna', 'local_ollama']).default(process.env.NODE_ENV === 'development' ? 'local_ollama' : 'openai_luna'),
+  LOCAL_AI_ENDPOINT: z.string().url().default('http://127.0.0.1:11434'),
+  LOCAL_AI_MODEL: z.string().default('qwen3:4b-instruct-2507-q4_K_M'),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL_ID: z.literal('gpt-6-luna').default('gpt-6-luna'),
   OPENAI_BASE_URL: z.string().url().default('https://api.openai.com/v1'),
@@ -46,6 +49,12 @@ const ServerEnvSchema = z.object({
   AUTH_AUDIENCE: z.string().optional(),
   AUTH_JWKS_URI: z.string().url().optional(),
   AUTH_CLOCK_TOLERANCE_SEC: z.coerce.number().default(10),
+
+  // Local Development Authentication Bootstrap (strictly forbidden in production)
+  ENABLE_DEV_AUTH: z.preprocess((val) => {
+    if (typeof val === 'string') return val.toLowerCase() === 'true';
+    return Boolean(val);
+  }, z.boolean()).default(true),
 });
 
 export type ServerEnv = z.infer<typeof ServerEnvSchema>;
@@ -64,6 +73,14 @@ export function getServerEnv(): ServerEnv {
   // Safety check: Preview mode strictly forbidden in production (F-04)
   if (result.data.NODE_ENV === 'production' && result.data.DEV_PREVIEW_MODE) {
     throw new Error('[TraceCase Security] FATAL: DEV_PREVIEW_MODE is strictly forbidden in production environments.');
+  }
+
+  if (result.data.NODE_ENV === 'production' && result.data.AI_PROVIDER === 'local_ollama') {
+    throw new Error('[TraceCase Security] FATAL: local_ollama provider is strictly forbidden in production environments. Production requires openai_luna (TC-INV-001).');
+  }
+
+  if (result.data.NODE_ENV === 'production' && result.data.ENABLE_DEV_AUTH) {
+    throw new Error('[TraceCase Security] FATAL: ENABLE_DEV_AUTH is strictly forbidden in production environments.');
   }
 
   cachedEnv = result.data;

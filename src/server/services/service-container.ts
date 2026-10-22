@@ -54,6 +54,7 @@ export interface SystemReadinessReport {
     queue: ComponentReadiness;
     worker: ComponentReadiness;
     evidenceStorage: ComponentReadiness;
+    localAi?: ComponentReadiness;
   };
 }
 
@@ -138,17 +139,71 @@ export async function getSystemReadiness(): Promise<SystemReadinessReport> {
     // Default to false if env parse fails
   }
 
-  // 1. Probe OpenAI (GPT-6 Luna)
+  // 1. Probe configured AI Providers (OpenAI Luna and Local Ollama)
   const openAiConfigured = defaultOpenAiClient.isConfigured();
   const openAiStatus: ComponentReadiness = openAiConfigured
     ? {
         status: 'AVAILABLE',
-        metadata: { model: 'gpt-6-luna', role: 'ADVISOR_ONLY' },
+        metadata: { provider: 'openai_luna', model: 'gpt-6-luna', role: 'ADVISOR_ONLY' },
       }
     : {
         status: 'UNAVAILABLE',
         details: 'OPENAI_API_KEY environment variable is not configured.',
       };
+
+  let localAiStatus: ComponentReadiness | undefined;
+  let localAiAvailable = false;
+  try {
+    const env = getServerEnv();
+    if (env.AI_PROVIDER === 'local_ollama' || env.ENABLE_DEV_AUTH) {
+      try {
+        const probeRes = await fetch(`${env.LOCAL_AI_ENDPOINT.replace(/\/$/, '')}/api/tags`, {
+          signal: AbortSignal.timeout(3000),
+        });
+        if (probeRes.ok) {
+          const tagsData = (await probeRes.json()) as { models?: Array<{ name?: string; model?: string }> };
+          const hasModel = tagsData.models?.some((m) => m.name === env.LOCAL_AI_MODEL || m.model === env.LOCAL_AI_MODEL);
+          if (hasModel) {
+            localAiAvailable = true;
+            localAiStatus = {
+              status: 'AVAILABLE',
+              metadata: {
+                provider: 'local_ollama',
+                model: env.LOCAL_AI_MODEL,
+                endpoint: env.LOCAL_AI_ENDPOINT,
+                inferenceCostUsd: '0.0000',
+              },
+            };
+          } else {
+            localAiStatus = {
+              status: 'UNAVAILABLE',
+              details: `Ollama is running but model '${env.LOCAL_AI_MODEL}' was not found.`,
+            };
+          }
+        } else {
+          localAiStatus = {
+            status: 'UNAVAILABLE',
+            details: `Local Ollama endpoint returned HTTP ${probeRes.status}.`,
+          };
+        }
+      } catch (err: unknown) {
+        localAiStatus = {
+          status: 'UNAVAILABLE',
+          details: `Local Ollama at ${env.LOCAL_AI_ENDPOINT} is unreachable: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    }
+  } catch {
+    // env parse failed
+  }
+
+  let aiAvailable = false;
+  try {
+    const env = getServerEnv();
+    aiAvailable = env.AI_PROVIDER === 'local_ollama' ? localAiAvailable : openAiConfigured;
+  } catch {
+    aiAvailable = openAiConfigured || localAiAvailable;
+  }
 
   // 2. Probe Browser Automation Runtime (Playwright Chromium)
   const container = getServiceContainer();
@@ -227,7 +282,7 @@ export async function getSystemReadiness(): Promise<SystemReadinessReport> {
   let overallStatus: SystemReadinessReport['overallStatus'] = 'OPERATIONAL';
   if (!dbConnected) {
     overallStatus = 'NOT_READY';
-  } else if (!openAiConfigured || !storageAvailable || !browserAvailable || workerStatus.status !== 'AVAILABLE') {
+  } else if (!aiAvailable || !storageAvailable || !browserAvailable || workerStatus.status !== 'AVAILABLE') {
     overallStatus = 'DEGRADED';
   }
 
@@ -237,6 +292,7 @@ export async function getSystemReadiness(): Promise<SystemReadinessReport> {
     mode: isPreview ? 'preview_synthetic' : 'live',
     components: {
       openai: openAiStatus,
+      localAi: localAiStatus,
       browserRuntime: browserStatus,
       database: dbStatus,
       queue: queueStatus,

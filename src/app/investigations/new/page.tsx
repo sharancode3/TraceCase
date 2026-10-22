@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import type { ClientSafeTargetProfile, SafeTargetProfile } from '@/contracts/targets';
+import type { DraftReportIntake } from '@/contracts/reports';
 import { SYNTHETIC_TARGETS } from '@/dev/fixtures';
 import { fetchTargets, submitBugReport, requestPlanning } from '@/features/investigations/api-client';
 
@@ -20,6 +21,7 @@ export default function NewReportPage() {
   const [validationError, setValidationError] = React.useState<string | null>(null);
   const [submissionError, setSubmissionError] = React.useState<string | null>(null);
   const [attachedFileName, setAttachedFileName] = React.useState<string | null>(null);
+  const [savedInvestigationId, setSavedInvestigationId] = React.useState<string | null>(null);
 
   const [formData, setFormData] = React.useState({
     targetId: '',
@@ -68,54 +70,80 @@ export default function NewReportPage() {
     };
   }, []);
 
+  const handleRequestPlanningForInvestigation = async (invId: string) => {
+    setIsSubmitting(true);
+    setSubmissionError(null);
+    try {
+      const planResult = await requestPlanning(invId);
+      setIsSubmitting(false);
+
+      if (planResult.success) {
+        const planData = planResult.data as { status?: string; reason?: string; missingPrerequisites?: string[] };
+        if (planData.status === 'CLARIFICATION_NEEDED') {
+          router.push(`/investigations/${invId}/clarify`);
+        } else if (planData.status === 'PROPOSAL_READY' || planData.status === 'EXPERIMENT_PROPOSED') {
+          router.push(`/investigations/${invId}/approve`);
+        } else if (planData.status === 'UNABLE_TO_PROCEED') {
+          setSubmissionError(
+            `Autonomous planning was unable to construct an experiment: ${planData.reason || 'Missing required preconditions'}.`
+          );
+        } else {
+          router.push(`/investigations/${invId}/approve`);
+        }
+      } else {
+        setSubmissionError(
+          `Experiment planning request failed (${planResult.error.code}): ${planResult.error.message}`
+        );
+      }
+    } catch (err: unknown) {
+      setIsSubmitting(false);
+      setSubmissionError(
+        `Experiment planning error: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setValidationError(null);
     setSubmissionError(null);
 
+    // If a report was already created and planning failed, retry planning directly without duplicating the report
+    if (savedInvestigationId) {
+      await handleRequestPlanningForInvestigation(savedInvestigationId);
+      return;
+    }
+
     const stepsArray = formData.suspectedSteps
       ? formData.suspectedSteps.split('\n').map((s) => s.trim()).filter(Boolean)
       : undefined;
 
-    const payload = {
+    // Strict DraftReportIntake payload: use rawDescription only, omit legacy bugDescription, omit absent optional fields
+    const payload: DraftReportIntake = {
       targetId: formData.targetId,
       title: formData.title.trim(),
       rawDescription: formData.bugDescription.trim(),
-      bugDescription: formData.bugDescription.trim(),
-      expectedBehavior: formData.expectedBehavior.trim() || undefined,
-      observedBehavior: formData.observedBehavior.trim() || undefined,
-      suspectedSteps: stepsArray && stepsArray.length > 0 ? stepsArray : undefined,
-      browserEnvironment: formData.browserEnvironment.trim() || undefined,
-      buildVersion: formData.buildVersion.trim() || undefined,
+      ...(formData.expectedBehavior.trim() ? { expectedBehavior: formData.expectedBehavior.trim() } : {}),
+      ...(formData.observedBehavior.trim() ? { observedBehavior: formData.observedBehavior.trim() } : {}),
+      ...(stepsArray && stepsArray.length > 0 ? { suspectedSteps: stepsArray } : {}),
+      ...(formData.browserEnvironment.trim() ? { browserEnvironment: formData.browserEnvironment.trim() } : {}),
+      ...(formData.buildVersion.trim() ? { buildVersion: formData.buildVersion.trim() } : {}),
     };
 
     setIsSubmitting(true);
     const result = await submitBugReport(payload);
 
     if (result.success) {
-      // Backend returned valid report and investigation link
       const targetInvId = result.data.investigationId;
       if (targetInvId) {
-        // Trigger planning explicitly to transition state
-        const planResult = await requestPlanning(targetInvId);
-        setIsSubmitting(false);
-
-        if (planResult.success && planResult.data.status === 'CLARIFICATION_NEEDED') {
-          router.push(`/investigations/${targetInvId}/clarify`);
-        } else if (planResult.success && (planResult.data.status === 'PROPOSAL_READY' || planResult.data.status === 'EXPERIMENT_PROPOSED')) {
-          router.push(`/investigations/${targetInvId}/approve`);
-        } else if ('requiresClarification' in result.data && Boolean(result.data.requiresClarification)) {
-          router.push(`/investigations/${targetInvId}/clarify`);
-        } else {
-          router.push(`/investigations/${targetInvId}/approve`);
-        }
+        setSavedInvestigationId(targetInvId);
+        await handleRequestPlanningForInvestigation(targetInvId);
       } else {
         setIsSubmitting(false);
         router.push(`/investigations/${result.data.id}`);
       }
     } else {
       setIsSubmitting(false);
-      // API error (validation, 401 unauthenticated, etc.)
       setSubmissionError(
         `Submission failed (${result.error.code}): ${result.error.message}`
       );
@@ -184,19 +212,37 @@ export default function NewReportPage() {
               Dismiss
             </button>
           </div>
-          <div className="pt-2 border-t border-red-200 flex items-center justify-between text-neutral-800">
-            <span className="text-[11px]">
-              Live database insertion requires an authenticated session. You can explore the workflow using the sample preview persona.
-            </span>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleContinuePreview}
-              className="text-xs shrink-0 ml-3"
-            >
-              Explore Sample Approval Review
-            </Button>
-          </div>
+          {savedInvestigationId ? (
+            <div className="pt-2 border-t border-red-200 flex items-center justify-between text-neutral-800">
+              <span className="text-[11px]">
+                Report saved (Investigation: {savedInvestigationId.slice(0, 8)}...). You can retry autonomous experiment planning.
+              </span>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={() => handleRequestPlanningForInvestigation(savedInvestigationId)}
+                disabled={isSubmitting}
+                className="text-xs shrink-0 ml-3 space-x-1.5"
+              >
+                {isSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                <span>Retry Planning</span>
+              </Button>
+            </div>
+          ) : (
+            <div className="pt-2 border-t border-red-200 flex items-center justify-between text-neutral-800">
+              <span className="text-[11px]">
+                Live database insertion requires an authenticated session. You can explore the workflow using the sample preview persona.
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleContinuePreview}
+                className="text-xs shrink-0 ml-3"
+              >
+                Explore Sample Approval Review
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
@@ -366,7 +412,7 @@ export default function NewReportPage() {
           <CardFooter className="flex justify-between items-center bg-neutral-surface/20">
             <span className="text-xs text-brand-muted flex items-center space-x-1.5">
               <ShieldCheck className="w-4 h-4 text-cobalt-action" />
-              <span>Input validated against CreateReportCommandSchema</span>
+              <span>Input validated against DraftReportIntakeSchema</span>
             </span>
             <Button
               type="submit"

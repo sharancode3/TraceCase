@@ -434,7 +434,18 @@ export class PersistentDiskEvidenceStorageDriver implements EvidenceStorageDrive
 
     const tempPath = `${filePath}.tmp.${randomUUID()}`;
     await fs.writeFile(tempPath, bufferData);
-    await fs.rename(tempPath, filePath);
+    try {
+      await fs.rename(tempPath, filePath);
+    } catch {
+      // Windows NTFS atomic replace fallback when file already exists
+      try {
+        await fs.unlink(filePath);
+        await fs.rename(tempPath, filePath);
+      } catch {
+        await fs.copyFile(tempPath, filePath);
+        await fs.unlink(tempPath);
+      }
+    }
 
     const metaPath = `${filePath}.meta.json`;
     const meta = { key, tier, mimeType, byteSize, sha256Checksum, storedAt };

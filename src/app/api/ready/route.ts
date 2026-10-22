@@ -52,7 +52,8 @@ export async function GET() {
         },
         aiIntegration: {
           configured: liveReadiness.components.openai.status === 'AVAILABLE',
-          model: 'gpt-6-luna',
+          provider: env.AI_PROVIDER,
+          model: env.AI_PROVIDER === 'local_ollama' ? env.LOCAL_AI_MODEL : 'gpt-6-luna',
           status: liveReadiness.components.openai.status === 'AVAILABLE' ? 'ready' : 'unconfigured',
         },
       },

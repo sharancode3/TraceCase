@@ -60,7 +60,7 @@ import type { AuthoritativeExperimentPlan } from '@/contracts/planning';
 export default function InvestigationDetailPage() {
   const params = useParams();
   const id = params?.id as string;
-  const isPreviewId = id?.startsWith('0') || id?.includes('preview');
+  const isPreviewId = Boolean(id?.includes('preview') || SYNTHETIC_INVESTIGATIONS_CATALOG.some((inv) => inv.id === id));
 
   const [activeTab, setActiveTab] = React.useState<'video' | 'console' | 'network'>('video');
   const [consoleSearch, setConsoleSearch] = React.useState('');
@@ -74,6 +74,9 @@ export default function InvestigationDetailPage() {
   const [investigation, setInvestigation] = React.useState<InvestigationSnapshot | null>(null);
   const [realPlan, setRealPlan] = React.useState<AuthoritativeExperimentPlan | null>(null);
   const [realArtifacts, setRealArtifacts] = React.useState<ArtifactItem[]>([]);
+  const [realConsoleLogs, setRealConsoleLogs] = React.useState<ConsoleLogEntry[]>([]);
+  const [realNetworkTraces, setRealNetworkTraces] = React.useState<NetworkTraceEntry[]>([]);
+  const [selectedAttemptForVideo, setSelectedAttemptForVideo] = React.useState<number>(1);
   const [isLoading, setIsLoading] = React.useState(true);
   const [notFound, setNotFound] = React.useState(false);
 
@@ -106,7 +109,83 @@ export default function InvestigationDetailPage() {
       }
 
       if (artRes.success && artRes.data?.artifacts) {
-        setRealArtifacts(artRes.data.artifacts);
+        const artifactsList = artRes.data.artifacts;
+        setRealArtifacts(artifactsList);
+
+        // Fetch real console log content if available
+        const consoleArtifact = artifactsList.find((a) => a.kind === 'CONSOLE_LOG');
+        if (consoleArtifact?.url) {
+          try {
+            const resp = await fetch(consoleArtifact.url, { credentials: 'include' });
+            if (resp.ok) {
+              const text = await resp.text();
+              try {
+                const parsed = JSON.parse(text);
+                if (Array.isArray(parsed)) {
+                  const entries: ConsoleLogEntry[] = parsed.map((item: Record<string, unknown>, idx: number) => ({
+                    id: (item.id as string) || `log-${idx}`,
+                    timestamp: (item.timestamp as string) || new Date().toISOString(),
+                    level: ((item.level as string) || 'INFO').toUpperCase() as ConsoleLogEntry['level'],
+                    category: (item.category as string) || 'console',
+                    message: (item.message as string) || JSON.stringify(item),
+                  }));
+                  setRealConsoleLogs(entries);
+                }
+              } catch {
+                // Parse plain text logs line-by-line
+                const lines = text.split('\n').filter((l) => l.trim().length > 0);
+                const entries: ConsoleLogEntry[] = lines.map((line, idx) => {
+                  const isErr = line.includes('ERROR') || line.includes('ERR');
+                  const isWarn = line.includes('WARN');
+                  return {
+                    id: `log-${idx}`,
+                    timestamp: new Date().toISOString(),
+                    level: isErr ? 'ERROR' : isWarn ? 'WARN' : 'INFO',
+                    category: 'console',
+                    message: line,
+                  };
+                });
+                setRealConsoleLogs(entries);
+              }
+            }
+          } catch {
+            // Best effort
+          }
+        }
+
+        // Fetch real network trace content if available
+        const networkArtifact = artifactsList.find((a) => a.kind === 'NETWORK_TRACE');
+        if (networkArtifact?.url) {
+          try {
+            const resp = await fetch(networkArtifact.url, { credentials: 'include' });
+            if (resp.ok) {
+              const text = await resp.text();
+              const parsed = JSON.parse(text);
+              const rawList = Array.isArray(parsed)
+                ? parsed
+                : Array.isArray(parsed?.entries)
+                ? parsed.entries
+                : Array.isArray(parsed?.requests)
+                ? parsed.requests
+                : [];
+              const entries: NetworkTraceEntry[] = rawList.map((item: Record<string, unknown>, idx: number) => ({
+                id: (item.id as string) || `net-${idx}`,
+                timestamp: (item.timestamp as string) || new Date().toISOString(),
+                method: ((item.method as string) || 'GET').toUpperCase(),
+                url: (item.url as string) || '/',
+                status: typeof item.status === 'number' ? item.status : 200,
+                durationMs: typeof item.durationMs === 'number' ? item.durationMs : 0,
+                mimeType: (item.mimeType as string) || 'application/json',
+                requestHeaders: (item.requestHeaders || item.headers || {}) as Record<string, string>,
+                responseHeaders: (item.responseHeaders || {}) as Record<string, string>,
+                responseBody: item.responseBody,
+              }));
+              setRealNetworkTraces(entries);
+            }
+          } catch {
+            // Best effort
+          }
+        }
       }
 
       setIsLoading(false);
@@ -121,19 +200,30 @@ export default function InvestigationDetailPage() {
   const isTC1 = investigation?.id === SYNTHETIC_EVIDENCE_MANIFEST_TC1.investigationId;
   const manifest = isTC1 ? SYNTHETIC_EVIDENCE_MANIFEST_TC1 : null;
   const syntheticVideoArtifact = manifest?.artifacts.find((a) => a.kind === 'VIDEO_RECORDING');
-  const realVideoArtifact = realArtifacts.find((a) => a.kind === 'VIDEO_RECORDING');
-  const videoArtifact = realVideoArtifact
+
+  const videoArtifacts = React.useMemo(() => {
+    return realArtifacts.filter((a) => a.kind === 'VIDEO_RECORDING');
+  }, [realArtifacts]);
+
+  const activeRealVideo = React.useMemo(() => {
+    if (videoArtifacts.length === 0) return null;
+    const match = videoArtifacts.find((a) => a.attemptNumber === selectedAttemptForVideo);
+    return match || videoArtifacts[0];
+  }, [videoArtifacts, selectedAttemptForVideo]);
+
+  const videoArtifact = activeRealVideo
     ? {
-        id: realVideoArtifact.id,
-        kind: realVideoArtifact.kind,
-        storageTier: realVideoArtifact.storageTier,
-        publicUrl: realVideoArtifact.url,
-        fileName: `recording-${realVideoArtifact.id.slice(0, 8)}.webm`,
-        sizeBytes: realVideoArtifact.sizeBytes,
-        sha256Checksum: realVideoArtifact.sha256Checksum,
-        isEligibleForSharing: realVideoArtifact.isEligibleForSharing,
+        id: activeRealVideo.id,
+        kind: activeRealVideo.kind,
+        storageTier: activeRealVideo.storageTier,
+        publicUrl: activeRealVideo.url,
+        fileName: `recording-run${activeRealVideo.attemptNumber || 1}-${activeRealVideo.id.slice(0, 8)}.webm`,
+        sizeBytes: activeRealVideo.sizeBytes,
+        sha256Checksum: activeRealVideo.sha256Checksum,
+        isEligibleForSharing: activeRealVideo.isEligibleForSharing,
       }
     : syntheticVideoArtifact;
+  const hasAnyVideo = videoArtifacts.length > 0 || Boolean(manifest?.hasVideo);
 
   const isQuarantined = investigation?.evidenceReadiness === 'QUARANTINED_LEAK_DETECTED';
   const hasPlayableVideo = Boolean(
@@ -146,18 +236,16 @@ export default function InvestigationDetailPage() {
   );
 
   const consoleLogs: ConsoleLogEntry[] = React.useMemo(() => {
-    if (isTC1) {
-      return CANONICAL_TC1_CONSOLE_LOGS;
-    }
+    if (realConsoleLogs.length > 0) return realConsoleLogs;
+    if (isTC1) return CANONICAL_TC1_CONSOLE_LOGS;
     return [];
-  }, [isTC1]);
+  }, [realConsoleLogs, isTC1]);
 
   const networkTraces: NetworkTraceEntry[] = React.useMemo(() => {
-    if (isTC1) {
-      return CANONICAL_TC1_NETWORK_TRACES;
-    }
+    if (realNetworkTraces.length > 0) return realNetworkTraces;
+    if (isTC1) return CANONICAL_TC1_NETWORK_TRACES;
     return [];
-  }, [isTC1]);
+  }, [realNetworkTraces, isTC1]);
 
   const filteredLogs = React.useMemo(
     () => filterConsoleLogs(consoleLogs, consoleSearch),
@@ -174,7 +262,7 @@ export default function InvestigationDetailPage() {
     if (!investigation) return;
     setIsExporting(true);
     try {
-      const planToUse = realPlan || SYNTHETIC_PLAN_V1;
+      const planToUse = realPlan || (isTC1 ? SYNTHETIC_PLAN_V1 : null);
       const manifestToUse: EvidenceManifest | null = realArtifacts.length > 0 ? {
         investigationId: id,
         readinessStatus: (investigation.evidenceReadiness || 'PUBLIC_SAFE_READY') as EvidenceReadinessStatus,
@@ -521,15 +609,15 @@ export default function InvestigationDetailPage() {
                   <Video className="w-4 h-4 text-cobalt-action" />
                   <span>Reproduction Video</span>
                 </span>
-                <Badge variant={manifest?.hasVideo && !isQuarantined ? 'default' : 'outline'}>
-                  {isQuarantined ? 'Quarantined' : manifest?.hasVideo ? '.webm' : 'Unavailable'}
+                <Badge variant={hasAnyVideo && !isQuarantined ? 'default' : 'outline'}>
+                  {isQuarantined ? 'Quarantined' : hasAnyVideo ? (videoArtifacts.length > 1 ? `${videoArtifacts.length} Runs (.webm)` : '.webm') : 'Unavailable'}
                 </Badge>
               </div>
               <div className="text-[11px] text-brand-muted mt-1.5">
                 {isQuarantined
                   ? 'Withheld (Security review pending)'
-                  : manifest?.hasVideo
-                  ? '1280x720 Viewport Capture (1.2 MB)'
+                  : hasAnyVideo
+                  ? (videoArtifacts.length > 1 ? 'Both attempt recordings captured' : '1280x720 Viewport Capture')
                   : 'No video artifact available'}
               </div>
             </button>
@@ -616,6 +704,29 @@ export default function InvestigationDetailPage() {
                   )}
                 </div>
 
+                {videoArtifacts.length > 1 && (
+                  <div className="flex items-center space-x-2 pb-1">
+                    <span className="text-[11px] font-semibold text-brand-muted">Select Run:</span>
+                    {videoArtifacts.map((va) => {
+                      const attNum = va.attemptNumber || 1;
+                      const isSelected = selectedAttemptForVideo === attNum;
+                      return (
+                        <button
+                          key={va.id}
+                          type="button"
+                          onClick={() => setSelectedAttemptForVideo(attNum)}
+                          className={`px-2.5 py-1 rounded text-xs font-semibold transition-all ${
+                            isSelected
+                              ? 'bg-brand-deepPurple text-white shadow-sm'
+                              : 'bg-neutral-surface text-brand-navy hover:bg-neutral-divider/40 border border-neutral-divider'
+                          }`}
+                        >
+                          Attempt ${attNum} Recording
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
                 {hasPlayableVideo ? (
                   <div className="space-y-2">
                     <video
@@ -684,7 +795,7 @@ export default function InvestigationDetailPage() {
                       Showing {filteredLogs.length} of {consoleLogs.length} lines
                     </span>
                     <span className="px-2 py-0.5 rounded-full bg-neutral-surface border border-neutral-divider text-[10px] font-semibold text-brand-deepPurple">
-                      Synthetic Preview
+                      {realConsoleLogs.length > 0 ? 'Live Captured Logs' : isTC1 ? 'Synthetic Preview' : 'No Logs'}
                     </span>
                   </div>
                 </div>
@@ -765,7 +876,7 @@ export default function InvestigationDetailPage() {
                       Showing {filteredTraces.length} of {networkTraces.length} requests
                     </span>
                     <span className="px-2 py-0.5 rounded-full bg-neutral-surface border border-neutral-divider text-[10px] font-semibold text-brand-deepPurple">
-                      Sanitized HAR
+                      {realNetworkTraces.length > 0 ? 'Live Telemetry HAR' : isTC1 ? 'Sanitized HAR' : 'No Traces'}
                     </span>
                   </div>
                 </div>

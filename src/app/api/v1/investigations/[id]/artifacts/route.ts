@@ -84,6 +84,7 @@ export async function GET(
 
     const artifacts = rows.map((r) => ({
       id: r.id,
+      rawArtifactId: r.rawArtifactId ?? null,
       kind: r.kind,
       attemptNumber: r.attemptNumber,
       storageTier: r.storageTier,

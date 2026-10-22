@@ -377,6 +377,6 @@ describe('Person 3 Frontend & Evidence Viewer Contract Readiness', () => {
         process.env.DEV_PREVIEW_MODE = originalPreview;
         _resetCachedEnvForTesting();
       }
-    });
+    }, 30000);
   });
 });

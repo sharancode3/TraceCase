@@ -20,7 +20,7 @@ import { stripModelAuthorityFields } from './contracts';
  * 5. Response content is treated as untrusted data; never execute returned code.
  */
 
-export type SupportedLocalModel = 'phi4-mini:latest' | 'qwen2.5-coder:3b';
+export type SupportedLocalModel = 'phi4-mini:latest' | 'qwen2.5-coder:3b' | 'qwen3:4b-instruct-2507-q4_K_M';
 
 export interface ModelProviderConfig {
   providerType: 'local_ollama' | 'openai_luna' | 'mock_test_double';
@@ -547,6 +547,87 @@ export interface ModelProviderPort {
 // LOCAL OLLAMA MODEL PROVIDER
 // ============================================================================
 
+
+/**
+ * Lightweight Zod-to-JSON-Schema converter for schema-constrained local inference.
+ * Converts standard Zod objects, primitives, enums, literals, and unions to a JSON schema object
+ * compatible with Ollama's format parameter.
+ */
+export function zodToJsonSchemaObject(schema: z.ZodTypeAny): Record<string, unknown> | null {
+  try {
+    const def = schema._def;
+    if (def.typeName === 'ZodObject') {
+      const shape = def.shape();
+      const properties: Record<string, unknown> = {};
+      const required: string[] = [];
+
+      for (const [key, propSchema] of Object.entries(shape)) {
+        const propJson = zodToJsonSchemaObject(propSchema as z.ZodTypeAny);
+        if (propJson) {
+          properties[key] = propJson;
+        }
+        if ((propSchema as z.ZodTypeAny)._def.typeName !== 'ZodOptional') {
+          required.push(key);
+        }
+      }
+
+      return {
+        type: 'object',
+        properties,
+        ...(required.length > 0 ? { required } : {}),
+      };
+    }
+
+    if (def.typeName === 'ZodString') {
+      return { type: 'string' };
+    }
+
+    if (def.typeName === 'ZodNumber') {
+      return { type: 'number' };
+    }
+
+    if (def.typeName === 'ZodBoolean') {
+      return { type: 'boolean' };
+    }
+
+    if (def.typeName === 'ZodEnum') {
+      return { type: 'string', enum: def.values };
+    }
+
+    if (def.typeName === 'ZodLiteral') {
+      return { type: typeof def.value, enum: [def.value] };
+    }
+
+    if (def.typeName === 'ZodArray') {
+      const itemSchema = zodToJsonSchemaObject(def.type);
+      return {
+        type: 'array',
+        ...(itemSchema ? { items: itemSchema } : {}),
+      };
+    }
+
+    if (def.typeName === 'ZodOptional') {
+      return zodToJsonSchemaObject(def.innerType);
+    }
+
+    if (def.typeName === 'ZodNullable') {
+      return zodToJsonSchemaObject(def.innerType);
+    }
+
+    if (def.typeName === 'ZodDiscriminatedUnion' || def.typeName === 'ZodUnion') {
+      const options = (def.options || def.optionsMap ? Array.from((def.options || def.optionsMap).values()) : []) as z.ZodTypeAny[];
+      const anyOf = options.map((opt) => zodToJsonSchemaObject(opt)).filter(Boolean);
+      if (anyOf.length > 0) {
+        return { anyOf };
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export class OllamaLocalModelProvider implements ModelProviderPort {
   public readonly config: ModelProviderConfig;
   private readonly customFetch?: typeof fetch;
@@ -566,7 +647,7 @@ export class OllamaLocalModelProvider implements ModelProviderPort {
       modelIdentifier:
         options?.modelIdentifier ||
         (process.env.LOCAL_AI_MODEL as SupportedLocalModel) ||
-        'phi4-mini:latest',
+        'qwen3:4b-instruct-2507-q4_K_M',
       timeoutMs: options?.timeoutMs || 45000,
       temperature: options?.temperature ?? 0.1,
       maxRetries: options?.maxRetries ?? 2,
@@ -629,7 +710,7 @@ export class OllamaLocalModelProvider implements ModelProviderPort {
               { role: 'system', content: request.systemPrompt },
               { role: 'user', content: request.userPrompt },
             ],
-            format: 'json',
+            format: zodToJsonSchemaObject(outputSchema) || 'json',
             stream: false,
             options: {
               temperature: request.temperature ?? this.config.temperature,
@@ -684,8 +765,59 @@ export class OllamaLocalModelProvider implements ModelProviderPort {
           parsedRaw = normalizeLocalModelOutput(parsedRaw);
         }
 
-        // Strictly validate against requested Zod schema
-        const parseResult = outputSchema.safeParse(parsedRaw);
+        // Strictly validate against requested Zod schema with bounded schema-feedback retry
+        let parseResult = outputSchema.safeParse(parsedRaw);
+        if (!parseResult.success && retriesAttempted < 1) {
+          retriesAttempted++;
+          const repairErrors = parseResult.error.errors
+            .map((e) => `${e.path.join('.') || 'root'}: ${e.message}`)
+            .join('; ');
+
+          try {
+            const repairRes = await fetchToUse(endpoint, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              signal: abortController.signal,
+              body: JSON.stringify({
+                model: this.config.modelIdentifier,
+                messages: [
+                  { role: 'system', content: request.systemPrompt },
+                  { role: 'user', content: request.userPrompt },
+                  { role: 'assistant', content: rawText },
+                  {
+                    role: 'user',
+                    content: `Your previous response failed validation: ${repairErrors}. Output corrected JSON adhering strictly to the schema.`,
+                  },
+                ],
+                format: zodToJsonSchemaObject(outputSchema) || 'json',
+                stream: false,
+                options: {
+                  temperature: 0.1,
+                  num_predict: validatedMaxTokens,
+                },
+              }),
+            });
+
+            if (repairRes.ok) {
+              const repairBody = (await repairRes.json()) as { message?: { content?: string }; response?: string };
+              const repairText = repairBody.message?.content ?? repairBody.response ?? '';
+              const repairJsonStr = extractJsonFromResponse(repairText, correlationId);
+              let repairParsed = JSON.parse(repairJsonStr);
+              if (typeof repairParsed === 'object' && repairParsed !== null) {
+                repairParsed = stripModelAuthorityFields(repairParsed as Record<string, unknown>);
+                repairParsed = normalizeLocalModelOutput(repairParsed);
+              }
+              const secondParse = outputSchema.safeParse(repairParsed);
+              if (secondParse.success) {
+                parsedRaw = repairParsed;
+                parseResult = secondParse;
+              }
+            }
+          } catch {
+            // Fall through to initial validation failure
+          }
+        }
+
         if (!parseResult.success) {
           throw new ModelSchemaValidationError(parseResult.error, correlationId);
         }

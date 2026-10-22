@@ -185,6 +185,11 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
 
       // 3. Fail closed if raw bytes cannot be verified or read from disk or storage
       if (!rawBuffer) {
+        await this.updateRawArtifactStatus({
+          rawArtifactId: ref.captureId,
+          quarantineReason: 'RAW_SOURCE_UNAVAILABLE',
+        });
+
         results.push({
           artifactId: ref.captureId,
           investigationId: params.investigationId,
@@ -237,6 +242,29 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
             allowOverwrite: true,
           });
 
+          // Update raw capture metadata in RESTRICTED_RAW
+          await this.updateRawArtifactStatus({
+            rawArtifactId: ref.captureId,
+            storageRef: rawConsoleKey,
+            quarantineReason: null,
+            redactionApplied: scrubResult.redactionsApplied,
+          });
+
+          // Persist sanitized derivative record linking to parent raw capture
+          const safeBuffer = Buffer.from(scrubResult.safeContent, 'utf-8');
+          const safeChecksum = crypto.createHash('sha256').update(safeBuffer).digest('hex');
+          await this.persistDerivativeArtifact({
+            rawArtifactId: ref.captureId,
+            investigationId: params.investigationId,
+            attemptNumber,
+            kind: 'CONSOLE_LOG',
+            storageRef: safeConsoleKey,
+            mimeType: 'text/plain',
+            sizeBytes: safeBuffer.length,
+            sha256Checksum: safeChecksum,
+            redactionApplied: scrubResult.redactionsApplied,
+          });
+
           results.push({
             artifactId: ref.captureId,
             investigationId: params.investigationId,
@@ -265,6 +293,14 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
             allowOverwrite: true,
           });
 
+          const quarantineReason = !isCompleted ? 'CONSOLE_LOG_TRUNCATED' : 'CONSOLE_LOG_RESIDUAL_SECRET';
+          await this.updateRawArtifactStatus({
+            rawArtifactId: ref.captureId,
+            storageRef: quarantinedKey,
+            quarantineReason,
+            redactionApplied: scrubResult.redactionsApplied,
+          });
+
           results.push({
             artifactId: ref.captureId,
             investigationId: params.investigationId,
@@ -273,7 +309,7 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
             publishedTier: 'RESTRICTED_RAW',
             redactionApplied: scrubResult.redactionsApplied,
             isEligibleForSharing: false,
-            quarantineReason: !isCompleted ? 'CONSOLE_LOG_TRUNCATED' : 'CONSOLE_LOG_RESIDUAL_SECRET',
+            quarantineReason,
           });
         }
       } else if (ref.kind === 'NETWORK_TRACE') {
@@ -295,6 +331,12 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
 
         // Bound network trace size before unrestricted parsing
         if (rawBuffer.length > DEFAULT_MAX_NETWORK_SIZE_BYTES) {
+          await this.updateRawArtifactStatus({
+            rawArtifactId: ref.captureId,
+            storageRef: rawNetworkKey,
+            quarantineReason: 'NETWORK_TRACE_OVERSIZED',
+          });
+
           results.push({
             artifactId: ref.captureId,
             investigationId: params.investigationId,
@@ -324,6 +366,12 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
 
         // Malformed JSON must not automatically be promoted to safe processed evidence
         if (!isJsonParsed) {
+          await this.updateRawArtifactStatus({
+            rawArtifactId: ref.captureId,
+            storageRef: rawNetworkKey,
+            quarantineReason: 'NETWORK_TRACE_MALFORMED_JSON',
+          });
+
           results.push({
             artifactId: ref.captureId,
             investigationId: params.investigationId,
@@ -353,6 +401,29 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
             allowOverwrite: true,
           });
 
+          // Update raw capture metadata in RESTRICTED_RAW
+          await this.updateRawArtifactStatus({
+            rawArtifactId: ref.captureId,
+            storageRef: rawNetworkKey,
+            quarantineReason: null,
+            redactionApplied: redactionsApplied,
+          });
+
+          // Persist sanitized derivative record linking to parent raw capture
+          const safeBuffer = Buffer.from(safeNetworkText, 'utf-8');
+          const safeChecksum = crypto.createHash('sha256').update(safeBuffer).digest('hex');
+          await this.persistDerivativeArtifact({
+            rawArtifactId: ref.captureId,
+            investigationId: params.investigationId,
+            attemptNumber,
+            kind: 'NETWORK_TRACE',
+            storageRef: safeNetworkKey,
+            mimeType: 'application/json',
+            sizeBytes: safeBuffer.length,
+            sha256Checksum: safeChecksum,
+            redactionApplied: redactionsApplied,
+          });
+
           results.push({
             artifactId: ref.captureId,
             investigationId: params.investigationId,
@@ -363,6 +434,13 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
             isEligibleForSharing: true,
           });
         } else {
+          await this.updateRawArtifactStatus({
+            rawArtifactId: ref.captureId,
+            storageRef: rawNetworkKey,
+            quarantineReason: 'NETWORK_TRACE_RESIDUAL_SECRET',
+            redactionApplied: redactionsApplied,
+          });
+
           results.push({
             artifactId: ref.captureId,
             investigationId: params.investigationId,
@@ -386,6 +464,11 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
           rawBuffer[3] === 0xa3;
 
         if (!isWebm) {
+          await this.updateRawArtifactStatus({
+            rawArtifactId: ref.captureId,
+            quarantineReason: 'VIDEO_CONTAINER_INVALID',
+          });
+
           results.push({
             artifactId: ref.captureId,
             investigationId: params.investigationId,
@@ -412,6 +495,12 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
             data: rawBuffer,
             mimeType: 'video/webm',
             allowOverwrite: true,
+          });
+
+          await this.updateRawArtifactStatus({
+            rawArtifactId: ref.captureId,
+            storageRef: rawVideoKey,
+            quarantineReason: 'VIDEO_RECORDING_UNDERSIZED',
           });
 
           results.push({
@@ -443,6 +532,12 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
             allowOverwrite: true,
           });
 
+          await this.updateRawArtifactStatus({
+            rawArtifactId: ref.captureId,
+            storageRef: videoKey,
+            quarantineReason: 'VIDEO_PENDING_PRIVACY_REVIEW',
+          });
+
           results.push({
             artifactId: ref.captureId,
             investigationId: params.investigationId,
@@ -455,6 +550,11 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
           });
         }
       } else {
+        await this.updateRawArtifactStatus({
+          rawArtifactId: ref.captureId,
+          quarantineReason: 'UNSUPPORTED_ARTIFACT_POLICY',
+        });
+
         // Unknown or unsupported artifact kinds remain withheld
         results.push({
           artifactId: ref.captureId,
@@ -470,6 +570,75 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
     }
 
     return results;
+  }
+
+  private async persistDerivativeArtifact(params: {
+    rawArtifactId: string;
+    investigationId: string;
+    attemptNumber: number;
+    kind: string;
+    storageRef: string;
+    mimeType: string;
+    sizeBytes: number;
+    sha256Checksum: string;
+    redactionApplied: boolean;
+  }): Promise<string | null> {
+    if (!isDbConfigured()) return null;
+    try {
+      const db = this.dbProvider();
+      const derivativeId = crypto.randomUUID();
+      await db.insert(evidenceArtifactsTable).values({
+        id: derivativeId,
+        rawArtifactId: params.rawArtifactId,
+        investigationId: params.investigationId,
+        attemptNumber: params.attemptNumber,
+        kind: params.kind,
+        storageTier: 'PUBLIC_SAFE',
+        storageRef: params.storageRef,
+        mimeType: params.mimeType,
+        sizeBytes: params.sizeBytes,
+        sha256Checksum: params.sha256Checksum,
+        redactionApplied: params.redactionApplied,
+        isEligibleForSharing: true,
+        quarantineReason: null,
+        capturedAt: new Date(),
+      });
+      return derivativeId;
+    } catch {
+      return null;
+    }
+  }
+
+  private async updateRawArtifactStatus(params: {
+    rawArtifactId: string;
+    storageRef?: string;
+    quarantineReason?: string | null;
+    redactionApplied?: boolean;
+  }): Promise<void> {
+    if (!isDbConfigured()) return;
+    try {
+      const db = this.dbProvider();
+      const updates: Record<string, unknown> = {
+        storageTier: 'RESTRICTED_RAW',
+        isEligibleForSharing: false,
+        updatedAt: new Date(),
+      };
+      if (params.storageRef) {
+        updates.storageRef = params.storageRef;
+      }
+      if (params.quarantineReason !== undefined) {
+        updates.quarantineReason = params.quarantineReason;
+      }
+      if (params.redactionApplied !== undefined) {
+        updates.redactionApplied = params.redactionApplied;
+      }
+      await db
+        .update(evidenceArtifactsTable)
+        .set(updates)
+        .where(eq(evidenceArtifactsTable.id, params.rawArtifactId));
+    } catch {
+      // Best-effort database update
+    }
   }
 
   /**
