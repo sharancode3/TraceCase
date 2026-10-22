@@ -1,217 +1,106 @@
-# TraceCase — Person 1: Core Platform, Browser Execution, and Verification
+# Person 1 — TraceCase Workflow, UI and Reliability Plan
 
-**Role:** User / lead integrator. **Plan status:** Proposed; stages not executed by this document.  
-**Stages:** Nine, P1-01–P1-09. **Read first:** [Common baseline, ownership, handoffs and gates](../README.md).
+**Role:** TraceCase application owner and integration lead for this corrective sprint.
+**Goal:** Make the real user journey understandable, repair the report-to-plan failures visible in the screenshots, and present actual results without invented data or safety bypasses.
+**Plan status:** Proposed work; no stage is marked complete by this document.
 
-## Mission and ownership
+This plan replaces the previous nine-stage Person 1 roadmap as the active task list for the requested corrections. Existing phase reviews and handoffs remain historical evidence and must not be deleted or mistaken for this sprint's plan.
 
-Build the trusted system that accepts an authorized report, obtains useful AI proposals, requires approval, executes a bounded experiment, verifies two attempts, and returns an honest evidence-backed result. Extend the existing foundation rather than rebuilding the UI or replacing contracts independently.
+## Start by establishing the actual baseline
 
-Own public API handlers (`src/app/api/**`), auth, database/repositories/migrations, controller, policy, queue, browser, deterministic verification, target-adapter client, `worker/**`, shared configuration and deployment. Coordinate `src/contracts/**`, service ports and dependency changes. P2 owns AI and demo-target internals. P3 owns UI and evidence storage/sanitization services. You integrate their public operations; do not write competing versions.
+Before editing, inspect repository instructions, project memory, branch/revision, staged and unstaged diffs, and the specs linked by the [implementation index](../README.md). At the start of this inspection, the checkout appeared on codex/prototype-runtime-fixes with staged changes; the final status check showed main at commit 5cb8da0. Verify the revision and working tree fresh before editing, and preserve all existing work.
 
-At inspection, contracts, six table definitions, migration SQL, API scaffolds, policy helpers, fail-closed auth scaffold and an idle worker exist. Typecheck/lint/15 existing tests pass. That does not establish live auth, persistence, applied migration, durable concurrency, real browser execution or verification. These are the work below.
+Inspect:
+- src/app/page.tsx and investigation pages for intake, clarification, approval, live execution and result;
+- src/app/targets/page.tsx and report/target/investigation/plan/clarification/artifact API routes;
+- src/features/investigations API client, event reducer, live progress and evidence presentation;
+- clarification repository and workflow service;
+- artifact manifest, storage tier, evidence API, capture, sanitizer and video finalization;
+- contracts, migration journal and applied database state before proposing any migration.
 
-Use stage IDs in tasks and completion records. References below identify actual documents by their domain/topic; inspect their current sections and code rather than assuming draft examples are implemented. Do not infer a deadline from the submission-opening screenshot.
+Treat screenshots as symptoms. Confirm exact API responses, database rows, lifecycle, plan revision, clarification rows, attempt IDs and artifact metadata before asserting a cause. Never fix a display by deleting records or fabricating a plan.
 
-## P1-01 — Review the foundation and freeze usable integration contracts
+## Stage P1-R1 — Baseline, scope and acceptance map
 
-### Entry and references
+Create a concise issue map for each screenshot with page, visible symptom, matching source, confirmed cause or open question, and observable acceptance condition. Inspect the records that produced the duplicate-key and missing-plan screens. Verify current migration state, target records, evidence kinds and attempt associations, and whether actual video bytes exist.
 
-Begin immediately after Stage 0, alongside P2-01 and P3-01. Read [foundation decisions](../../docs/foundation-decisions.md), [status](../../docs/foundation-status.md), [contribution boundaries](../../docs/contribution-boundaries.md), [TRD](../../docs/trd.md) architecture/contracts, [workflow](../../docs/workflow-and-state-machine-specification.md), [agent contracts](../../docs/agent-and-tool-contracts.md), [API/events](../../docs/api-and-event-contracts.md), and [verification/safety](../../docs/verification-evidence-and-safety-specification.md). Inspect current contracts, `services/ports.ts`, auth, config, approval/fingerprint helpers, migration runner and route scaffolds.
+Freeze plain-language meanings for independent states:
+- Draft/planning: report saved, executable plan not available yet.
+- Needs clarification: answers needed before planning can continue.
+- Ready for review: persisted plan awaits human approval.
+- Running: worker executes the approved bounded plan.
+- Completed: execution ended; it does not say whether the bug reproduced.
+- Reproduced, not reproduced, inconclusive, inconsistent or blocked: verifier result.
+- Evidence ready, processing, empty, unavailable, restricted or failed: artifact state.
 
-### Implement and decide
+Do not make extra paid Luna calls to recreate errors that persisted records or deterministic checks can establish. Preserve real investigation history.
 
-1. Resolve common checklist F-01–F-11. Keep type names canonical and record changed draft examples. Do not call an earlier self-labelled approved document human approval.
-2. Separate model proposals from server-enriched plans. The server assigns IDs, versions, hashes, credentials references, approval and budget authority. Support incomplete intake; require clarified correct behavior/failure signature before approval, not a complete specification before any report can be saved.
-3. Define a small typed assertion vocabulary supported by the verifier. Describe missing observation, supported comparison, settling point, and unsupported visual checks. No free-text-to-arbitrary-code conversion.
-4. Replace the browser port's verdict-like boolean with observations/action receipts/capture coverage, leaving assessment to verification. Define the three AI role ports with P2.
-5. Split safe target metadata from reset/account secrets. P2 receives only safe context; P3 receives safe UI projection. Use credential references internally.
-6. Define evidence capture/processing/access ports with P3, including multi-page recordings, failed finalization and storage failures. Define typed safe progress payloads and snapshot sequence watermark.
-7. Correct preview/live composition, production default-secret behavior, and truthful readiness. Synthetic data cannot authorize live work or substitute for missing services. Do not assume existing defaults are production credentials.
-8. Complete approval binding: owned investigation/plan/target/fixture/account references, version, permitted steps/variants, limits, revocation and expiry if selected. Review canonical serialization, optional fields, ordered versus unordered fields, and material-scope coverage. A hash is not a signature or independent approval.
-9. Define ownership of every service write and choose event/queue commit consistency. Do not invent verified transactional pg-boss integration without checking installed APIs.
+**Exit:** baseline revision and working-tree state are recorded; screenshot symptoms map to source and acceptance conditions; facts are distinguished from assumptions; file ownership with Person 2 is agreed.
 
-### Behavior, checks and exit
+## Stage P1-R2 — Repair clarification persistence and planning recovery
 
-Unknown or missing trusted facts block live admission. Changes to material experiment meaning require approval again. Test cross-investigation approval reuse, missing/revoked approval, altered assertions/fixture scope, forbidden client fields, secret-free safe projections, invalid production config and typed event payloads. Keep ordinary locator refresh distinct from a changed semantic plan.
+First resolve the screenshot's database error. The schema has a unique index on investigation_id and question_index. The planning workflow passes a model questionIndex or array index for each round, while the repository stores explicit indices unchanged. A later round may collide with an earlier one. Confirm against the current DB and request history.
 
-**Deliverables:** agreed shared schemas/ports/examples, decision updates, focused negative tests and foundation review record. **Exit:** H-01 accepted by consumers; G0. P2/P3 may prepare independent fixtures, prompts and components while this lands. No real reproduction yet.
+Choose the smallest append-only correction that retains answered and unanswered questions. Model-provided indices must not serve as globally unique database positions. Allocate stable per-investigation ordering for newly persisted questions. Make allocation safe against retried/concurrent requests using workflow revision, existing idempotency and appropriate transaction/constraint handling. Preserve the ability to associate questions with clarification rounds where the current record supports it; propose an additive migration only if existing fields cannot preserve the necessary history. Do not truncate, destructively reindex historical records or remove the unique constraint without a reviewed replacement.
 
-## P1-02 — Establish real identity, persistence and owned resources
+Review answer submission and replanning as one journey. Repeated submissions must not duplicate questions or answers. Preserve saved answers after retryable errors. If planning requests another clarification round, append and show it. Navigate to plan review only after an executable proposal is persisted. If planning fails, is unavailable, returns unable-to-proceed or returns an unexpected state, remain on the investigation/clarification page, show a useful reason and retry action, and do not send the user to a missing-plan page.
 
-### Entry and references
+The clarification UI must distinguish fetch failure from an empty question list. Keep safe typed error envelopes. Never show raw DB exceptions, SQL, stack traces, credentials or storage locations. Retry planning against the same saved report; do not submit a duplicate. Prevent double-submit and retain the user's answer.
 
-Requires the relevant H-01 identity/data contracts. Read [database/ERD](../../docs/database-design-and-erd.md) ownership/transactions, [API/events](../../docs/api-and-event-contracts.md) authentication/commands, [PRD](../../docs/prd.md) intake/targets, and [operations](../../docs/test-evaluation-operations-and-execution-plan.md) local setup/migrations. Inspect `src/server/auth`, `db`, config and generated SQL.
+Check the approval route. A missing plan should explain whether planning is pending, failed, needs answers or has not been requested. Offer retry only when the workflow allows it. Approval and execution remain impossible without the persisted current plan and existing server-side version/hash gates.
 
-### Implement
+**Exit:** controlled repro no longer raises the duplicate-index error; retries preserve history and answers; routes reflect actual persisted states; no approval/start happens without a real plan.
 
-- Select/configure the documented auth integration with safe session verification. Do not create an organization/billing system. UI sign-in work belongs to P3; auth enforcement belongs here. Replace the production path's unavailable verifier with real verification; injected test identities stay in test composition. Review the existing admin bypass so only a deliberately verified server-authorized role can use it.
-- Provision an explicitly local/disposable database for development verification. Apply reviewed migrations, report failures with a non-success operational outcome, and distinguish connectivity, schema and permission problems. Never run an unknown reset or truncate to make setup pass.
-- Extend six initial tables incrementally: frozen plan revisions/clarification records, approval revocation and scope, attempts/candidates, action/observation/assertion receipts, fixture/reset receipts, artifact metadata, model usage and audit as required by stages. Avoid creating all ERD entities without an implemented use.
-- Provide typed owned repositories for targets, reports, investigations and plan versions; explicit artifact/model-usage repository operations requested by P3/P2. Define transaction boundaries, constraints and indexes for actual access patterns.
-- Record configured target origins, test-account reference, verified environment/build, fixture scope and trust provenance. A client sandbox request is not verification. Network probing needs explicit onboarding authorization and outbound policy.
-- Design any supported attachments with bounded types/sizes, safe names, ownership and restricted processing. P3 implements evidence/attachment storage service; defer unsupported formats explicitly. Do not require source-code upload or video interpretation for core reproduction.
+## Stage P1-R3 — Simplify the shell and dashboard
 
-### Checks and exit
+Follow the existing UI specification and design tokens: white canvas, pale lavender, cobalt actions, deep navy/purple text, rounded cards and thin outline icons. Reuse shared components, responsive layout and accessible contrast. Do not create a new theme or import decorative travel imagery.
 
-Test actual insert/read/update through owned repositories, cross-user access denial, duplicate/conflicting versions, migrations on a fresh local database, and protected routes with missing/invalid auth. A new session can reload saved data; auth/provider errors do not return invented empty live lists. Do not log connection strings or token bodies.
+Make the main journey clear: Investigations, Target Environments and Submit Bug Report. Show simple next actions first; place technical details in expandable sections.
 
-**Deliverables:** identity integration, applied local migration record, repositories and safe resource projections. **Exit:** real persisted owned resources usable by APIs; P3 receives auth/API error behavior and repository interfaces needed by evidence (part of H-09). Database-unavailable status is a blocker to persistence verification, not to P2's target or P3's UI work.
+Revise the dashboard to make title, target, latest state and next action scannable. Keep search and useful filters. Preserve lifecycle, verdict and evidence as separate facts, but explain them plainly. For example, “Completed · Inconclusive” means execution ended without proving an outcome; “Confirmed reproduced · Evidence processing” means the verdict is confirmed while packaging remains unfinished. Completed must never imply confirmed. Match evidence wording to the actual API value. Separate loading, empty and failed-to-load states.
 
-## P1-03 — Implement intake, planning, approval and investigation APIs
+Keep real failed/inconclusive investigations visible. Do not add sample rows or hide failures for presentation. Make responsive cards on narrow screens without losing title/verdict/state. Preserve keyboard navigation and screen-reader labels.
 
-### Entry and references
+**Exit:** labels match actual snapshots for draft, running, completed/confirmed, completed/inconclusive and pending evidence; filters/search work; no synthetic row appears; screen remains usable by keyboard and on mobile widths.
 
-Requires P1-02 for live persistence; P2 planner may still be a labelled double. Read [PRD](../../docs/prd.md) journeys/approval, [workflow](../../docs/workflow-and-state-machine-specification.md) transitions/scope invalidation and [API/events](../../docs/api-and-event-contracts.md) commands/errors/idempotency. Reuse current `/api/v1` route direction after H-01.
+## Stage P1-R4 — Make report intake and target setup easy
 
-### Implement
+Keep report intake short: choose a registered target, write a title and describe what happened. Make expected behavior, observed behavior, steps, browser environment and build optional guided fields. Tell the user “unknown is okay”; clarification can fill missing facts. Do not force users to invent selectors or verification assertions.
 
-1. Save a report and its reported environment/build without fabricating missing facts. Track reporter claims separately from verified environment values. Clarification answers append to a traceable report context.
-2. Invoke the planner through the agreed port, validate its proposal, persist unresolved questions or a versioned experiment, and server-enrich the accepted proposal. Unavailable AI remains an unavailable integration, not a mock live plan.
-3. Define correct behavior and reported failure as separate supported checks. Reject contradictions or unsupported verification before approval.
-4. Read stored plans for review. Remove `SYNTHETIC_PLAN_V1` from live approval. On approval, authenticate, verify ownership and version/hash/scope, and persist the authorization. On material edits, invalidate prior approval in the same coherent transaction.
-5. Keep approval and start semantics consistent with the selected two-step foundation direction. Provide one documented start/admission command; do not enqueue twice from an approval handler and a client follow-up.
-6. Implement safe rejection, revocation and cancellation commands. A revoked queued run cannot later execute under the old authorization. Cancellation is a request to stop future work, not rollback of target state.
-7. Add scoped idempotency for state-changing commands, payload conflict detection and optimistic versions. Reauthenticate cached responses; do not cache enduring signed artifact grants. Do not mistake command deduplication for exactly-once external effects.
-8. Return truthful snapshots/errors, including incomplete, pending, blocked, observed-once and inconsistent meanings using agreed schema/mappings. Do not directly accept a client verdict, approval fact or artifact-safe flag.
+When the target catalog is empty, show setup. When loading fails, show an error and retry. Do not render either as the other. Avoid silently selecting a target where environments could be confused. After save, show the saved status and an unobtrusive ID. Planning retry must reuse the same report.
 
-### Checks and exit
+Simplify target registration: name, base URL and environment first. Parse the base URL and show the derived primary origin. Put additional allowed origins, reset/readback endpoint and test-account reference under Advanced setup, explaining the purpose of each. Validate URL scheme, host and origin boundaries on the server. Explain that account reference is metadata, not stored credentials or a logged-in browser session. A reset/readback integration is required for two-run verification; target registration must not imply full readiness without it.
 
-Verify report → clarification → plan → review → approve → start request using real persistence. Test stale hashes, another user's IDs, double clicks, mismatched path/body identity, missing prerequisites and plan edits after approval. P3 must be able to replace fixture submissions with these APIs without changing schemas.
+Show only server-verified sandbox status. Distinguish “Sandbox requested” from “Sandbox verified”. Production remains locked from destructive actions. If the normalized base origin is already registered, warn and offer reuse; permit an intentional second profile only when the user confirms its distinct environment/build/scope. Never silently delete target records.
 
-**Deliverables:** owned workflow APIs, transition/service tests, stable examples and H-09 partial handoff. **Exit:** real authorization exists; execution still waits for the worker gate. H-04 can replace the planner double when available.
+File selection must mean a real persisted upload. Since current UI says attachment persistence is unavailable, implement a complete upload only if supported by existing storage/backend contracts; otherwise remove/disable file selection for this sprint and retain a truthful paste-diagnostics field. Never call a selected local filename an uploaded attachment.
 
-## P1-04 — Implement durable jobs, ownership and progress production
+**Exit:** first-time user can submit a useful report without internal browser knowledge; target readiness is clear; duplicates are warned about without data loss; unsupported upload is not offered as complete.
 
-### Entry and references
+## Stage P1-R5 — Show execution status and evidence accurately
 
-Requires stored approved plans and start semantics. Read [workflow](../../docs/workflow-and-state-machine-specification.md) side-effect ordering/leases, [database](../../docs/database-design-and-erd.md) concurrency/queue and [API/events](../../docs/api-and-event-contracts.md) jobs/events/progress. Verify pg-boss APIs against the selected installed version before implementation.
+Inspect progress, attempt snapshots, manifests, delivery routes and viewer parsers together. Never fill missing values with fake videos, logs, network requests, timestamps, HTTP statuses, durations or artifact links.
 
-### Implement
+The results page should show the report/target; lifecycle and trusted verdict separately; both actual attempts and reset/readback; recorded duration/actions/assertions; a concise finding; AI explanation separated from evidence and labeled hypotheses; and evidence by attempt and artifact kind.
 
-- Install/configure the selected queue, preserving queue-managed schema separation. Choose one coherent application state/job dispatch strategy and document recovery from a commit/enqueue split. Do not maintain competing truth in queue rows and investigation status.
-- Enforce one active investigation across the initial platform, including multiple worker processes; per-target locks or a constant `concurrency: 1` alone do not prove this. Define resource locking, leases, fencing and heartbeat/expiry behavior.
-- Dispatch small server-created job references, not credentials, raw prompts, model-approved booleans or mutable client plans. Re-read owned current plan/approval/fixture scope at claim and before action dispatch.
-- Produce authoritative state changes with durable safe progress events. Define per-investigation sequence, event version, snapshot watermark and cursor retention. P3 consumes replay; UI reconnect does not enqueue work.
-- Implement safe worker drain/stop, truthful liveness versus queue/browser readiness and diagnostic job checks. Do not advertise reproduction readiness before target/browser integrations pass.
-- Record intent before external actions and maintain a path for uncertain outcome reconciliation. Lease expiry must not make a second worker blindly replay the same mutation.
+For each artifact, distinguish not captured, captured-empty, available, processing, withheld/restricted, retrieval failed and corrupt/checksum failed. Empty console is a valid capture and should say “No console entries captured”. Network display uses actual sanitized URL, method, resource type, recorded status, transport failure and timestamps/duration. Missing fields remain unknown, never fabricated.
 
-### Checks and exit
+Show video count and attempt association from artifact records. Follow current restricted/raw versus safe derivative policy. Read the role/access matrix before changing video access. If it allows authenticated owner/reviewer playback of raw restricted recordings, use a private owner-scoped review path with a restricted label, and exclude raw bytes from exports and model input. If not, do not bypass 403 or expose storage paths; show the actual captured-but-restricted status and review state. Only authorized safe derivatives may be published/exported. Do not label an existing restricted recording “missing”.
 
-Use a harmless internal diagnostic job first. Test duplicate start/delivery, two-worker claim race, revoked queued approval, stale worker write, worker loss, event replay duplicates and a missing progress cursor window. No exactly-once guarantee is made.
+Make both attempts selectable; allow authorized sanitized logs/network artifacts to be opened. Keep storage paths private behind authenticated routes. Explanation can summarize verified facts and limitations; it cannot decide verdict or call a hypothesis confirmed.
 
-**Deliverables:** durable admission/worker protocol and progress snapshot/stream contract. **Exit:** a real diagnostic job is claimed/completed once in application history; live investigation dispatch remains gated. H-09 progress contract ready for P3-05.
+**Exit:** a real investigation view reflects persisted attempt/artifact records; empty and restricted states are truthful; permitted downloads work and raw/cross-user downloads remain denied; no fabricated output is shown.
 
-## P1-05 — Implement bounded Playwright execution and capture
+## Stage P1-R6 — Integrate, verify and hand off
 
-### Entry and references
+Integrate Person 2's app through the actual target catalog and agreed reset/readback contract. Do not hardcode it in UI, alter its internals, bypass allowlists or use a third-party target without authorization. Keep current 3005 buggy and 3006 fixed builds for regression.
 
-Needs H-01, H-02 controlled target and H-03 sanitizer for real capture exposure. Safe module/unit work can begin earlier. Read [agent/tool contracts](../../docs/agent-and-tool-contracts.md) dispatch/freshness, [architecture](../../docs/system-architecture.md) browser/network, [verification/safety](../../docs/verification-evidence-and-safety-specification.md) capture/action risks and [TRD](../../docs/trd.md) browser/target integration.
+Run a bounded browser verification of: empty/available target catalog; target registration; report submission; clarification and follow-up round; proposal and plan review; planning failure/retry without duplicate report or false approval routing; human approval and separate start; live progress; two valid buggy attempts with verified reset/readback; a clean fixed build only when both valid runs and prerequisites support that verdict; attempt-specific evidence display; restricted-video handling; destructive action blocked outside verified sandbox; and synthetic TC4 token redaction in shared text/export paths.
 
-### Implement
+Use real app/worker against owned local targets. Keep UI checks separate from provider checks. Record target build, fixture, plan hash, attempt IDs, reset/readback receipts, artifact IDs/checksums and observed browser result. Do not consume API budget to work around UI defects. Report an official case as passed only when actually demonstrated.
 
-1. Launch server-side Chromium through Playwright in the persistent worker. Isolate contexts by attempt; maintain backend fixture isolation separately. Set bounded resource/time limits. No user-browser takeover.
-2. Resolve credentials internally; avoid placing credential values in model context or capture where possible. Manual OTP/CAPTCHA handling must be a deliberate safe handoff or labelled mock; do not silently use a personal browser or automated bypass.
-3. Capture sanitized structured observations and fresh element references with run/attempt/session/freshness identity. Preserve noninteractive evidence needed by verification while bounding the AI projection with P2.
-4. Execute a small typed action set after validation. Check approval, target/network scope, resource identity, risk, fixture and budgets at dispatch. Model-supplied risk or selector is not permission. No arbitrary browser eval, shell, SQL, filesystem path or reset-all tool.
-5. Establish actual egress controls appropriate to the deployment, including target redirects/dependencies. Do not claim Playwright routing alone is a complete network sandbox. Document permitted local target exceptions narrowly.
-6. Start recording/log listeners before the reproduction steps. Capture console/page errors, response statuses, failed requests, timings and relevant observations; minimize headers/bodies. Invoke P3 sanitizer before downstream model/UI/progress exposure or ordinary persisted logs.
-7. Close contexts to finalize videos, including popup/multi-page artifacts. Return H-07 scoped capture references, coverage receipts and failure information. Do not load a whole video into the API unnecessarily.
-8. Maintain intent/dispatched/observed/uncertain records. A click timeout after delete needs readback/reconciliation, not automatic retry. Stop future actions on cancellation/revocation; finish only authorized evidence finalization/cleanup.
+**Definition of done:** saved report completes the real flow to results; recovery is understandable; visible controls work; evidence view reflects actual records; invariants hold; handoff lists verified behavior and remaining gaps.
 
-### Checks and exit
+## Restrictions
 
-First verify a harmless controlled action, then an approved disposable mutation. Test stale reference, ambiguous entity, forbidden origin, action over budget, missing approval, popup capture, empty console versus listener failure and a mutation timeout. This stage returns facts; it does not self-assign the final verdict.
-
-**Deliverables:** real browser/action/capture adapter, H-05 safe observations, H-07 finalized captures. **Exit:** a controlled approved procedure produces real inspectable captures with no preview substitution. P2-05 may now integrate live proposals.
-
-## P1-06 — Implement oracles, reset verification and two-attempt assessment
-
-### Entry and references
-
-Needs real execution, P2 target fixture/readback and P3 evidence processing for a complete slice. Read [verification/safety](../../docs/verification-evidence-and-safety-specification.md) oracle/validity/master decisions, [workflow](../../docs/workflow-and-state-machine-specification.md) dual attempts, [PRD](../../docs/prd.md) outcomes and [database](../../docs/database-design-and-erd.md) assertion/reset receipts.
-
-### Implement
-
-- Freeze supported intended-correct and reported-failure predicates before execution. Evaluate at defined observation/settling points; absence of an observation is unknown, not automatically false. Reject conflicting oracles. Unrelated errors are not a bug match; HTTP success is not application correctness.
-- Classify attempt validity independently from findings and artifact completeness. Record scope/precondition adherence, scenario reached, actual observations, assertion outcomes and environment/build. Unsupported visual judgments remain unsupported/manual review rather than LLM-certified pass/fail.
-- Before each attempt, verify relevant baseline identities and state. Between attempts, call P2's scoped reset endpoint under approved setup/reset authority, then independently read back required fixture/build conditions. Store a receipt tied to the actual fixture and attempt pair. HTTP 200 or `restored: true` alone is insufficient.
-- Repeat the same approved candidate under equivalent relevant conditions. Compare normalized failure meaning, candidate, relevant build and fixture compatibility. Preserve every attempt; do not cherry-pick later matches.
-- Compute two valid matches, observed once, valid bounded nonmatch, inconsistent findings, invalid/inconclusive and blocked states. One valid match plus a nonmatch is unconfirmed. Additional trials are outside the default pair unless explicitly bounded and approved.
-- Preserve two observed failures when media is missing; store evidence readiness separately. Never advertise a complete verified package without the required eligible recording/console/network artifacts.
-
-### Checks and exit
-
-Cover two matches, two valid nonmatches, match/nonmatch, one match only, reset failure, wrong reset entity, wrong build, invalid automation, unavailable observation, unrelated HTTP error, and missing/unsafe recording. Use independent P2 labels to check correctness.
-
-**Deliverables:** verifier receipts, reset/readback integration, aggregation tests and real deterministic vertical-slice record. **Exit:** G2: human-approved fixed procedure → two attempts/reset → qualified findings + real evidence. This is plumbing proof; do not call it the complete AI product.
-
-## P1-07 — Integrate the full agentic user journey and evidence APIs
-
-### Entry and references
-
-Needs H-04/H-06 AI proposals, H-08 evidence processing, H-10 narrative and H-09 UI integration. Read [agent contracts](../../docs/agent-and-tool-contracts.md) role boundaries/stops, [API/events](../../docs/api-and-event-contracts.md) artifact/progress and [UI/UX](../../docs/ui-ux-specification.md) user journeys/state mapping.
-
-### Implement
-
-Wire actual report context to P2 clarification/planner; validate/enrich proposals; show them in P3 UI; require human approval; execute bounded observe → propose → validate → act → observe loops; independently verify/reset/repeat; finalize P3 evidence; provide locked sanitized facts to P2 reviewer; assemble final authoritative report.
-
-All model role calls go through one configured Luna-only integration and controller-enforced limits. Reserve headroom for in-flight usage; estimates do not prove billing balance. Do not lower verification or choose another model to save credit. Model-proposed new scope goes back to plan review.
-
-Expose P3's artifact service through owned authenticated API handlers. P3 owns artifact processing facts; the controller updates investigation readiness from validated results. Keep temporary access grants separate from durable artifact identity. Enforce ownership on upload finalization, metadata, previews, downloads and export.
-
-Persist events/snapshots coherently and support reconnect/resnapshot without duplicate execution. Validate narrative references against actual safe evidence; a plausible prose citation is not a real artifact. Do not merge raw target profiles or fixture flags into AI context.
-
-### Checks and exit
-
-Run one actual vague report through clarification, approval, AI action proposals, both attempts and evidence result. Exercise missing AI configuration, invalid proposal, scope change, evidence-review failure and UI reconnect. Final findings must survive an unavailable narrative module.
-
-**Deliverables:** integrated application flow, H-09/H-10 complete and recorded G3 demonstration. **Exit:** an authorized user can use the real product without preview state or developer-authored steps being disguised as AI output.
-
-## P1-08 — Harden recovery and deploy the web/worker system
-
-### Entry and references
-
-Begin container/build preparation earlier, but no deployment-ready claim before integrated checks. Read [operations](../../docs/test-evaluation-operations-and-execution-plan.md) deployment/monitoring/recovery, [architecture](../../docs/system-architecture.md) topology/reliability and [verification/safety](../../docs/verification-evidence-and-safety-specification.md) cancellation/incidents/resources.
-
-### Implement
-
-- Handle provider, database, queue, browser, storage, fixture and finalization failures with distinct truthful statuses. Reconcile uncertain external effects; never replay a mutation just because the worker lease expired.
-- Implement graceful drain, safe restarts, timeout limits and cleanup of scoped resources. Preserve partial facts/evidence and mark coverage gaps. Cleanup must not become unapproved target destruction.
-- Add safe structured logs/metrics keyed by run/attempt/action, ownership/audit records, actionable readiness, storage/disk limits and budget stops. Do not log raw auth headers or arbitrary exception payloads.
-- Prepare reviewed runtime/container builds, separate web and persistent worker processes, database/queue/private storage and controlled target. P2 supplies target configuration; P3 supplies storage policies. Check host/browser dependencies and production package support against actual vendor guidance before release.
-- Deploy only to the intended configured environment under the task's authorization. Production preview must be disabled, default example secrets rejected, target egress limited and public worker diagnostics restricted.
-- Document migration sequencing, backups/restore limitations, rollback versus roll-forward and schema compatibility. Do not blindly reverse migrations. A frontend-only deployment is insufficient.
-
-### Checks and exit
-
-Exercise duplicate jobs, worker kill before/after effect, cancellation in flight, revoked queued approval, storage failure and restart. Verify deployed web, worker, DB and private evidence independently, then one safe full workflow. Record actual build/deployment revisions; no invented availability or restore guarantees.
-
-**Deliverables:** G4 engine checks, deployment record, safe operational runbook changes and known limitations. **Exit:** G5 environment can execute the workflow; historical local outputs are not substituted for deployed results.
-
-## P1-09 — Execute official acceptance and lead release handoff
-
-### Entry and references
-
-Needs all essential P2/P3 integrations and deployed checks. Read [PS traceability](../../docs/ps-requirements-traceability-matrix.md), [evaluation/operations](../../docs/test-evaluation-operations-and-execution-plan.md) official records/metrics/submission, and common official matrix.
-
-### Execute and record
-
-1. TC1: two valid same-failure attempts with actual finalized recordings, console and network logs.
-2. TC2: meaningful bounded nonreproduction with steps, environment/build, limitations; not an automation crash.
-3. TC3: deletion of disposable records only in verified sandbox, plus a safely blocked untrusted/non-sandbox variant.
-4. TC4: P2 injects a known synthetic token; P3 sanitizes; verify every enabled sharing surface within the agreed test scope. Never use a live key.
-5. Review independent labels/results with P2 and evidence/access with P3. Fix critical false confirmation, authorization, or known exposure defects before release. Do not fabricate a pass for an unavailable scenario.
-6. Prepare the deployed reference, source evidence, test records, presentation inputs, operator notes and known limitations. Final organizer form and deadline must be checked separately; the supplied opening time is not a deadline.
-
-### Exit and completion record
-
-Record actual inputs, source/target builds, plan approval, fixture/reset, attempts, assertions, artifact IDs, assessment, evidence readiness, deviations and reviewer. Claim only executed behavior. **Exit:** H-12 release-readiness package; optional innovations are not a gate.
-
-## Person 1 handoff checklist
-
-- P2 receives safe target/report context, supported predicates, fresh observations, locked facts and usage limits; never secrets or hidden ground truth.
-- P3 receives owned API operations, snapshots/events, capture references and authorized artifact service integration; never the responsibility to infer authorization.
-- P1 receives reset implementation, validated proposals and evidence readiness through H-02/H-04/H-06/H-08/H-10.
-- Database and contract changes land once with consumer updates. Every stage has relevant tests and an honest implemented/executed/verified/deployed status.
-- No automatic fixing, broad production browsing, alternative model, training requirement or unsupported success claim is introduced.
+Preserve two-run confirmation, human approval, authorization, reset/readback, ownership, idempotency and evidence tier rules. Do not build automatic target-code fixes, arbitrary URL browsing, OTP/CAPTCHA bypass, unrestricted browser tools or unapproved data access. No synthetic live reports or evidence. GPT-6 Luna remains the only planned OpenAI model; no training/fallback. Person 2 owns target implementation only. No branch switch, staging, commit, merge, push or reset is part of this plan.
