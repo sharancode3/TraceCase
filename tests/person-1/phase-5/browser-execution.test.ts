@@ -69,7 +69,7 @@ describe('P1-05: Real Playwright Chromium Execution and Evidence Capture', () =>
     }
     // Clean up temporary test files
     await fs.rm(testStagingDir, { recursive: true, force: true }).catch(() => {});
-  });
+  }, 30_000);
 
   it('launches headless Chromium, executes plan actions, captures evidence, and returns factual receipt', async () => {
     const investigationId = '77777777-7777-4777-8777-777777777777';

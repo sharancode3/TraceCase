@@ -26,7 +26,7 @@ const ServerEnvSchema = z.object({
 
   // Worker Daemon Configuration
   WORKER_PORT: z.coerce.number().default(3001),
-  WORKER_CONCURRENCY: z.literal(1).default(1), // TC-INV-011
+  WORKER_CONCURRENCY: z.coerce.number().pipe(z.literal(1)).default(1), // TC-INV-011
   WORKER_HEARTBEAT_SEC: z.coerce.number().default(10),
 
   // Development Preview Mode Flag

@@ -17,7 +17,7 @@ export function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="w-64 border-r border-neutral-divider/80 bg-white flex flex-col justify-between shrink-0 min-h-screen">
+    <aside className="hidden md:flex md:w-64 border-r border-neutral-divider/80 bg-white flex-col justify-between shrink-0 min-h-screen">
       <div>
         {/* Brand Header */}
         <div className="p-6 border-b border-neutral-divider/50 flex items-center space-x-3">
