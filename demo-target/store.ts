@@ -5,6 +5,7 @@ import type {
   FixtureResetReceipt,
   FixtureReadbackResult,
 } from './types';
+import { INITIAL_WORKBENCH_FIXTURE, type WorkbenchItem } from './workbench/workbench-view';
 
 /**
  * ============================================================================
@@ -16,7 +17,7 @@ import type {
  * process start or when the authorized POST /api/test/reset-fixture hook runs.
  */
 
-const SEED_FIXTURES: Record<SupportedFixtureScope, TaskItem[]> = {
+const SEED_FIXTURES: Record<SupportedFixtureScope, (TaskItem | WorkbenchItem)[]> = {
   two_tasks_one_completed: [
     {
       id: 'task-a',
@@ -59,6 +60,7 @@ const SEED_FIXTURES: Record<SupportedFixtureScope, TaskItem[]> = {
       createdAt: '2026-10-20T10:00:00.000Z',
     },
   ],
+  workbench_work_items: INITIAL_WORKBENCH_FIXTURE,
   default: [
     {
       id: 'task-a',
@@ -76,7 +78,7 @@ const SEED_FIXTURES: Record<SupportedFixtureScope, TaskItem[]> = {
 };
 
 export class DemoTargetStore {
-  private fixtures: Map<SupportedFixtureScope, TaskItem[]> = new Map();
+  private fixtures: Map<SupportedFixtureScope, (TaskItem | WorkbenchItem)[]> = new Map();
   public bugModeActive: boolean;
   public buildVersion: string;
 
@@ -107,7 +109,7 @@ export class DemoTargetStore {
   }
 
   public getTasks(scope: SupportedFixtureScope, filter: 'all' | 'active' | 'completed' = 'all'): TaskItem[] {
-    const tasks = this.fixtures.get(scope) || [];
+    const tasks = (this.fixtures.get(scope) || []) as TaskItem[];
     if (filter === 'active') {
       return tasks.filter((t) => !t.completed);
     }
@@ -115,6 +117,31 @@ export class DemoTargetStore {
       return tasks.filter((t) => t.completed);
     }
     return [...tasks];
+  }
+
+  public getWorkbenchItems(
+    scope: SupportedFixtureScope = 'workbench_work_items',
+    filter: 'all' | 'active' | 'completed' = 'all',
+    searchQuery: string = ''
+  ): WorkbenchItem[] {
+    const items = (this.fixtures.get(scope) || []) as WorkbenchItem[];
+    let filtered = items;
+    if (filter === 'active') {
+      filtered = filtered.filter((t) => !t.completed);
+    } else if (filter === 'completed') {
+      filtered = filtered.filter((t) => t.completed);
+    }
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      filtered = filtered.filter(
+        (t) =>
+          t.title.toLowerCase().includes(q) ||
+          (t.description && t.description.toLowerCase().includes(q)) ||
+          (t.owner && t.owner.toLowerCase().includes(q)) ||
+          t.id.toLowerCase().includes(q)
+      );
+    }
+    return [...filtered];
   }
 
   public getTaskById(scope: SupportedFixtureScope, id: string): TaskItem | undefined {
@@ -177,6 +204,48 @@ export class DemoTargetStore {
   }
 
   /**
+   * Workbench defect implementation:
+   * Under buggy mode, deleting an item while a filter (or search) is active deletes by
+   * the visible filtered index rather than by stable record ID!
+   */
+  public deleteWorkbenchItem(
+    scope: SupportedFixtureScope = 'workbench_work_items',
+    targetId: string,
+    currentFilter: 'all' | 'active' | 'completed' = 'all',
+    searchQuery: string = ''
+  ): { deletedItemId: string | null; deletedItemTitle: string | null } {
+    const items = (this.fixtures.get(scope) || []) as WorkbenchItem[];
+
+    if (!this.bugModeActive) {
+      // FIXED BEHAVIOR: Deletion by unique persistent identity
+      const index = items.findIndex((i) => i.id === targetId);
+      if (index === -1) {
+        return { deletedItemId: null, deletedItemTitle: null };
+      }
+      const [removed] = items.splice(index, 1);
+      this.fixtures.set(scope, items);
+      return { deletedItemId: removed.id, deletedItemTitle: removed.title };
+    }
+
+    // BUGGY BEHAVIOR: Index offset desynchronization
+    const visibleItems = this.getWorkbenchItems(scope, currentFilter, searchQuery);
+    const filteredIndex = visibleItems.findIndex((i) => i.id === targetId);
+
+    if (filteredIndex === -1) {
+      return { deletedItemId: null, deletedItemTitle: null };
+    }
+
+    // THE SEEDED DEFECT: Array splice uses filtered index against raw backing array!
+    if (filteredIndex < items.length) {
+      const [wronglyRemoved] = items.splice(filteredIndex, 1);
+      this.fixtures.set(scope, items);
+      return { deletedItemId: wronglyRemoved.id, deletedItemTitle: wronglyRemoved.title };
+    }
+
+    return { deletedItemId: null, deletedItemTitle: null };
+  }
+
+  /**
    * Scoped Fixture Reset Hook (POST /api/test/reset-fixture)
    */
   public resetFixture(
@@ -187,7 +256,7 @@ export class DemoTargetStore {
       throw new Error(`INVALID_FIXTURE_SCOPE: '${scope}' is not a recognized disposable fixture.`);
     }
 
-    const seed = JSON.parse(JSON.stringify(SEED_FIXTURES[scope])) as TaskItem[];
+    const seed = JSON.parse(JSON.stringify(SEED_FIXTURES[scope])) as (TaskItem | WorkbenchItem)[];
 
     if (faultInjection === 'PARTIAL_RESET') {
       // Intentionally restore only 1 task to test partial reset detection

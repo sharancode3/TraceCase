@@ -21,6 +21,7 @@ export type SupportedFixtureScope =
   | 'two_tasks_one_completed'
   | 'three_tasks_multi_status'
   | 'auth_test_user'
+  | 'workbench_work_items'
   | 'default';
 
 export interface TargetBuildInfo {
@@ -33,6 +34,8 @@ export interface TargetBuildInfo {
 export interface FixtureResetRequest {
   fixtureScope: SupportedFixtureScope;
   faultInjection?: 'NONE' | 'PARTIAL_RESET' | 'TIMEOUT_SIMULATION';
+  targetId?: string;
+  attemptPairId?: string;
 }
 
 export interface FixtureResetReceipt {
@@ -48,7 +51,7 @@ export interface FixtureReadbackResult {
   fixtureScope: SupportedFixtureScope;
   buildVersion: string;
   itemCount: number;
-  items: TaskItem[];
+  items: (TaskItem | import('./workbench/workbench-view').WorkbenchItem)[];
   verifiedAt: string;
 }
 

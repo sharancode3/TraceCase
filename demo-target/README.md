@@ -1,15 +1,21 @@
-# TraceCase — Controlled Demo Target Application (`TraceCase-Demo-Tasks`)
+# TraceCase — Controlled Demo Target Application (`TraceCase-Demo-Tasks` & `TraceCase Workbench`)
 
 **Component:** Controlled Staging / Demo Web Application  
-**Default Ports:** `3005` (buggy build `v1.0.0-buggy`) / `3006` (fixed build `v1.0.1-fixed`)  
-**Build Versions:** `v1.0.0-buggy` (seeded defect active) / `v1.0.1-fixed` (correct behavior)  
+**Default Ports:** `3005` (buggy build `v1.0.0-buggy` / `wb-v1.0.0-buggy`) / `3006` (fixed build `v1.0.1-fixed` / `wb-v1.0.1-fixed`)  
+**Build Versions:** `wb-v1.0.0-buggy` (seeded defect active) / `wb-v1.0.1-fixed` (correct behavior)  
+**Primary Routes:**
+- `/` — Legacy Task Management Demo Application
+- `/workbench` — TraceCase Workbench (Enterprise Operations Dashboard)
 **Authentication Secret:** Configured via `TARGET_RESET_SECRET` environment variable (fails closed if empty)  
 
 ---
 
-## 1. Overview & Seeded Defect
+## 1. Overview & Seeded Defects
 
-`TraceCase-Demo-Tasks` is a synthetic web application built to serve as an independently verifiable benchmark target for the TraceCase Bug Reproduction Agent.
+`demo-target` provides two distinct target application surfaces built to serve as independently verifiable benchmark targets for the TraceCase Autonomous Bug Reproduction Agent:
+
+1. **Legacy Task Application (`/`):** Baseline task manager with seeded index-offset deletion defect on `two_tasks_one_completed`.
+2. **TraceCase Workbench (`/workbench`):** Enterprise operations dashboard featuring search, live KPI metric cards, status filters, item queue, and detail inspection, with a seeded index-offset deletion defect on `workbench_work_items`.
 
 ### Seeded Defect (TC1 vs TC2):
 - **Backing Data:** Task A (completed, `id: 'task-a'`) is at index 0; Task B (active, `id: 'task-b'`) is at index 1.
@@ -64,8 +70,11 @@ DEMO_TARGET_PORT=3006 DEMO_TARGET_BUG_MODE=false DEMO_TARGET_BUILD_VERSION=v1.0.
 
 ### Public Web Surfaces
 - `GET /` — Accessible Task List UI with accessible `role="toolbar"`, filter buttons, and delete actions.
+- `GET /workbench` — TraceCase Workbench: accessible enterprise operations dashboard with summary cards, search, status filters, work item queue, and detail inspection pane.
 - `GET /api/tasks?filter=all|active|completed&scope=<scope>` — List tasks. Returns 400 on invalid filter or scope.
 - `DELETE /api/tasks/:id?filter=all|active|completed&scope=<scope>` — Delete task. Returns 400 on empty ID, invalid filter, or invalid scope.
+- `GET /api/workbench/items?filter=all|active|completed&search=<query>&scope=<scope>` — List workbench items with live overview KPIs (`total`, `active`, `completed`, `critical`).
+- `DELETE /api/workbench/items/:id?filter=all|active|completed&search=<query>&scope=<scope>` — Delete workbench work item. Returns 400 on empty ID or invalid filter/scope, 404 if item not found.
 - `GET /api/build-info` or `GET /api/info` — Safe application build metadata (application name, version, sandbox environment; `bugModeActive` is strictly omitted).
 - `GET /api/health` — Liveness health check.
 
@@ -81,21 +90,27 @@ DEMO_TARGET_PORT=3006 DEMO_TARGET_BUG_MODE=false DEMO_TARGET_BUILD_VERSION=v1.0.
 Privileged endpoints require authentication matching `TARGET_RESET_SECRET` (fails closed if unset or blank):
 
 ```bash
-# 1. Reset baseline fixture
+# 1. Reset baseline fixture (Legacy Task app)
 curl -X POST http://localhost:3005/api/test/reset-fixture \
   -H "Content-Type: application/json" \
   -H "X-TraceCase-Reset-Auth: $TARGET_RESET_SECRET" \
   -d '{"fixtureScope": "two_tasks_one_completed"}'
 
-# 2. Independent readback verification (mandatory; HTTP 200 alone is insufficient)
-curl "http://localhost:3005/api/test/readback?scope=two_tasks_one_completed" \
+# 2. Reset baseline fixture (TraceCase Workbench)
+curl -X POST http://localhost:3005/api/test/reset-fixture \
+  -H "Content-Type: application/json" \
+  -H "X-TraceCase-Reset-Auth: $TARGET_RESET_SECRET" \
+  -d '{"fixtureScope": "workbench_work_items"}'
+
+# 3. Independent readback verification (mandatory; HTTP 200 alone is insufficient)
+curl "http://localhost:3005/api/test/readback?scope=workbench_work_items" \
   -H "X-TraceCase-Reset-Auth: $TARGET_RESET_SECRET"
 
-# 3. Scoped cleanup
+# 4. Scoped cleanup
 curl -X POST http://localhost:3005/api/test/cleanup-fixture \
   -H "Content-Type: application/json" \
   -H "X-TraceCase-Reset-Auth: $TARGET_RESET_SECRET" \
-  -d '{"fixtureScope": "two_tasks_one_completed"}'
+  -d '{"fixtureScope": "workbench_work_items"}'
 ```
 
 ---
@@ -103,7 +118,8 @@ curl -X POST http://localhost:3005/api/test/cleanup-fixture \
 ## 4. Input Validation & Fail-Closed Safety
 
 1. **Scope Whitelist:** Only predefined disposable scopes are accepted:
-   - `two_tasks_one_completed` (Default, Count = 2)
+   - `workbench_work_items` (TraceCase Workbench Canonical Fixture, Count = 4)
+   - `two_tasks_one_completed` (Legacy Task Target Default, Count = 2)
    - `three_tasks_multi_status` (Count = 3)
    - `auth_test_user` (Diagnostic user task, Count = 1)
    - `default` (Alias to `two_tasks_one_completed`)
@@ -165,3 +181,82 @@ if (readback.itemCount !== 2) {
 // 4. Cleanup after investigation completes
 await client.cleanupFixture('two_tasks_one_completed');
 ```
+
+---
+
+## 8. TraceCase Workbench Specifications & Reproduction Guide
+
+### A. Target Profile & Registration Values
+For registration in TraceCase's target catalog:
+- **Application Name:** `TraceCase-Workbench`
+- **Base URLs:**
+  - Buggy Build: `http://localhost:3005` (or `http://127.0.0.1:3005`)
+  - Fixed Build: `http://localhost:3006` (or `http://127.0.0.1:3006`)
+- **Workbench Entrypoint:** `/workbench` (or `/workbench/index.html`)
+- **Allowed Origins:** `["http://localhost:3005", "http://localhost:3006", "http://127.0.0.1:3005", "http://127.0.0.1:3006"]`
+- **Fixture Scope:** `workbench_work_items`
+- **Reset Endpoint:** `/api/test/reset-fixture`
+- **Readback Endpoint:** `/api/test/readback?scope=workbench_work_items`
+- **Build Identifiers:**
+  - Buggy: `wb-v1.0.0-buggy`
+  - Fixed: `wb-v1.0.1-fixed`
+
+### B. Canonical Initial Fixture (`workbench_work_items`)
+Both builds initialize deterministically with exactly four work items:
+
+| Index | Item ID | Title | Status | Priority | Owner | Created At (UTC) |
+|---|---|---|---|---|---|---|
+| `0` | `wb-item-01` | Review Security Compliance Checklist | Completed (`true`) | High | `Sarah Connor` | `2026-10-21T09:00:00.000Z` |
+| `1` | `wb-item-02` | Implement Audit Log Retention Policy | Active (`false`) | Critical | `Alex Murphy` | `2026-10-21T09:30:00.000Z` |
+| `2` | `wb-item-03` | Provision Sandbox Network Boundaries | Active (`false`) | Medium | `Ellen Ripley` | `2026-10-21T10:00:00.000Z` |
+| `3` | `wb-item-04` | Rotate Staging Service Credentials | Completed (`true`) | Low | `James Holden` | `2026-10-21T10:30:00.000Z` |
+
+- **Total Items:** 4
+- **Active Items:** 2 (`wb-item-02`, `wb-item-03`)
+- **Completed Items:** 2 (`wb-item-01`, `wb-item-04`)
+- **Critical Active Items:** 1 (`wb-item-02`)
+
+### C. Defect Reproduction Journey
+1. Open browser at `/workbench` on port 3005 (buggy build).
+2. Observe 4 total items and initial KPIs: Total: 4, Active: 2, Completed: 2, Critical: 1.
+3. Click filter button **Active** (`id="filter-active"`).
+4. Observe visible filtered items: `wb-item-02` (filtered index 0) and `wb-item-03` (filtered index 1).
+5. Click **Delete** on `wb-item-02` (`data-action="delete" data-item-id="wb-item-02"`).
+6. **Buggy Outcome (`wb-v1.0.0-buggy`):**
+   - The server erroneously splices raw backing array at filtered index 0.
+   - Raw index 0 contains `wb-item-01` (`Review Security Compliance Checklist`), which is wrongly deleted!
+   - `wb-item-02` remains in the backing store and remains visible in the active queue.
+   - Readback state: `itemCount = 3`, `items = [wb-item-02, wb-item-03, wb-item-04]`.
+7. **Fixed Outcome (`wb-v1.0.1-fixed` on port 3006):**
+   - The server deletes `wb-item-02` by stable ID.
+   - `wb-item-02` disappears from the active queue.
+   - `wb-item-01` is strictly preserved.
+   - Readback state: `itemCount = 3`, `items = [wb-item-01, wb-item-03, wb-item-04]`.
+
+### D. Verification Commands & Test Results
+Run target-specific regression suites:
+```bash
+# 1. Complete Workbench UI, defect, reset, and readback tests
+npx vitest run tests/demo-target-workbench.test.ts
+
+# 2. Legacy demo-target tests (backward compatibility, TC4 synthetic auth redaction)
+npx vitest run tests/demo-target.test.ts
+
+# 3. Person 2 runnable integration examples
+npx vitest run tests/person-2-runnable-examples.test.ts
+
+# 4. Target TypeScript compilation check
+npx tsc --noEmit --target ES2022 --moduleResolution bundler --module esnext --strict true --skipLibCheck demo-target/* tests/demo-target*
+```
+
+**Actual Execution Results:**
+- `tests/demo-target-workbench.test.ts`: **37 passed** (0 failed)
+- `tests/demo-target.test.ts`: **26 passed** (0 failed)
+- `tests/person-2-runnable-examples.test.ts`: **5 passed** (0 failed)
+- Combined target suite total: **68 passed** (0 failed)
+- TypeScript compilation: **Clean exit 0** (0 errors)
+
+### E. Known Limitations & Unverified End-to-End Dependencies
+- **Target Logic & Oracle:** Fully implemented, independently tested, and passing.
+- **End-to-End Playwright Execution:** Real browser execution via `PlaywrightBrowserWorker` requires `playwright` binaries and Docker services (PostgreSQL/pg-boss) to be installed in the environment. These belong to Person 1's orchestrator layer and remain unverified in this target-only stage.
+
