@@ -6,6 +6,7 @@ import { Header } from '@/components/layout/header';
 import { PreviewBanner } from '@/components/layout/preview-banner';
 import { TourProvider } from '@/components/guide/tour-context';
 import { OnboardingTour } from '@/components/guide/onboarding-tour';
+import { FirstUseGuideModal } from '@/components/guide/first-use-guide-modal';
 import { isDevPreviewEnabled } from '@/server/config/env';
 
 const dmSans = DM_Sans({
@@ -36,6 +37,7 @@ export default function RootLayout({
       <body className="h-screen max-h-screen overflow-hidden bg-canvas text-brand-navy flex flex-col antialiased">
         <TourProvider>
           <OnboardingTour />
+          <FirstUseGuideModal />
           <PreviewBanner isSyntheticPreview={isSyntheticPreview} />
           <div className="flex flex-1 min-h-0 overflow-hidden">
             <Sidebar />

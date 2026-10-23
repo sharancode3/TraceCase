@@ -582,7 +582,7 @@ export default function NewReportPage() {
                     id="target-select"
                     value={formData.targetId}
                     onChange={(e) => {
-                      setFormData({ ...formData, targetId: e.target.value });
+                      setFormData((prev) => ({ ...prev, targetId: e.target.value }));
                       if (targetWarning) setTargetWarning(null);
                     }}
                     disabled={isSubmitting || Boolean(savedInvestigationId)}
@@ -638,7 +638,7 @@ export default function NewReportPage() {
                 id="report-title"
                 placeholder="e.g. Task deletion button fails silently on Active filter"
                 value={formData.title}
-                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                onChange={(e) => setFormData((prev) => ({ ...prev, title: e.target.value }))}
                 disabled={isSubmitting || Boolean(savedInvestigationId)}
               />
               <p className="text-xs text-brand-muted mt-1">
@@ -656,7 +656,7 @@ export default function NewReportPage() {
                 rows={4}
                 placeholder="Describe what occurred, what went wrong, or what unexpected behavior you noticed. Uncertainty is completely fine."
                 value={formData.bugDescription}
-                onChange={(e) => setFormData({ ...formData, bugDescription: e.target.value })}
+                onChange={(e) => setFormData((prev) => ({ ...prev, bugDescription: e.target.value }))}
                 disabled={isSubmitting || Boolean(savedInvestigationId)}
               />
               <p className="text-xs text-brand-muted mt-1">
@@ -688,7 +688,7 @@ export default function NewReportPage() {
                     rows={2}
                     placeholder="What should have occurred instead?"
                     value={formData.expectedBehavior}
-                    onChange={(e) => setFormData({ ...formData, expectedBehavior: e.target.value })}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, expectedBehavior: e.target.value }))}
                     disabled={isSubmitting || Boolean(savedInvestigationId)}
                   />
                 </div>
@@ -702,7 +702,7 @@ export default function NewReportPage() {
                     rows={2}
                     placeholder="What specific erroneous behavior was observed?"
                     value={formData.observedBehavior}
-                    onChange={(e) => setFormData({ ...formData, observedBehavior: e.target.value })}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, observedBehavior: e.target.value }))}
                     disabled={isSubmitting || Boolean(savedInvestigationId)}
                   />
                 </div>
@@ -717,7 +717,7 @@ export default function NewReportPage() {
                   rows={3}
                   placeholder={"1. Navigate to /tasks\n2. Click filter Active\n3. Click delete on first item"}
                   value={formData.suspectedSteps}
-                  onChange={(e) => setFormData({ ...formData, suspectedSteps: e.target.value })}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, suspectedSteps: e.target.value }))}
                   disabled={isSubmitting || Boolean(savedInvestigationId)}
                 />
               </div>
@@ -731,7 +731,7 @@ export default function NewReportPage() {
                     id="report-env"
                     placeholder="e.g. Chrome 130 / macOS Sequoia"
                     value={formData.browserEnvironment}
-                    onChange={(e) => setFormData({ ...formData, browserEnvironment: e.target.value })}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, browserEnvironment: e.target.value }))}
                     disabled={isSubmitting || Boolean(savedInvestigationId)}
                   />
                 </div>
@@ -744,7 +744,7 @@ export default function NewReportPage() {
                     id="report-build"
                     placeholder="e.g. v2.4.1 or staging-sha-7a8b9c"
                     value={formData.buildVersion}
-                    onChange={(e) => setFormData({ ...formData, buildVersion: e.target.value })}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, buildVersion: e.target.value }))}
                     disabled={isSubmitting || Boolean(savedInvestigationId)}
                   />
                 </div>
@@ -760,7 +760,7 @@ export default function NewReportPage() {
                   rows={3}
                   placeholder="Paste terminal errors, console logs, or HTTP response details here..."
                   value={formData.diagnosticLogs}
-                  onChange={(e) => setFormData({ ...formData, diagnosticLogs: e.target.value })}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, diagnosticLogs: e.target.value }))}
                   disabled={isSubmitting || Boolean(savedInvestigationId)}
                 />
                 <p className="text-xs text-brand-muted mt-1">

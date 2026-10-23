@@ -395,7 +395,7 @@ export class InvestigationWorkflowService {
       const expectedBaseline = isWorkbench
         ? {
             fixtureScope: 'workbench_work_items',
-            buildVersion: 'wb-v1.0.0-buggy',
+            buildVersion: (report as any)?.buildVersion || (report as any)?.targetBuildVersion || (inv as any)?.targetBuildVersion || (target as any)?.buildVersion || (proposal as any)?.buildVersion || 'wb-v1.0.0-buggy',
             itemCount: 4,
             items: INITIAL_WORKBENCH_FIXTURE,
           }

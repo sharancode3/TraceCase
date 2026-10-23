@@ -11,6 +11,7 @@ import {
   UserCheck,
   LogIn,
   LogOut,
+  HelpCircle,
 } from 'lucide-react';
 import { cn } from '../ui/button';
 import { useTour } from '@/components/guide/tour-context';
@@ -24,7 +25,7 @@ const NAV_ITEMS = [
 
 export function Sidebar() {
   const pathname = usePathname();
-  const { startTour, openPrompt } = useTour();
+  const { startTour, openGuide, openPrompt } = useTour();
   const [operator, setOperator] = React.useState<string | null>(null);
   const [isSigningIn, setIsSigningIn] = React.useState(false);
 
@@ -123,6 +124,14 @@ export function Sidebar() {
           })}
 
           <div className="pt-2">
+            <button
+              id="sidebar-guide-btn"
+              onClick={() => openGuide(0)}
+              className="w-full flex items-center space-x-3 px-3 py-2 rounded-control text-sm font-medium text-brand-navy bg-neutral-surface hover:bg-lavender-surface/50 border border-neutral-divider transition-all shadow-xs cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cobalt-action mb-1.5"
+            >
+              <HelpCircle className="w-4 h-4 text-brand-muted shrink-0" />
+              <span>First-Use Guide</span>
+            </button>
             <button
               id="sidebar-take-demo-btn"
               onClick={() => startTour(0)}

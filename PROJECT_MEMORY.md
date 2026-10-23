@@ -193,6 +193,22 @@ Earlier in this conversation, type checking, linting, all 15 existing tests, and
 - Prepared comprehensive final handoff in `implementation-stages/person-1/phase-2-final-handoff.md` detailing phase-by-phase status, changed files and contracts, unapplied migrations, check commands, real database vs doubles, known blockers, and a deferred runtime checklist.
 - Browser verification not run, per instruction.
 
+**Phase 2 Comprehensive Real Browser Acceptance and Joint Integration (`codex/integrate-phase2-sharvani`):** Completed locally with real browser execution across all 9 stages.
+- Successfully merged Person 1's `origin/phase2-sharvani` into the integration baseline containing Person 2's `testingupdate` Workbench target.
+- Reconciled delete confirmation modal markup and selectors in `demo-target/workbench/workbench-view.ts` (`data-task-id`, `aria-label="Confirm Delete"`).
+- Resolved state stale closure in `src/app/investigations/new/page.tsx` using functional updaters for `setFormData`.
+- Mounted `FirstUseGuideModal` in root layout alongside `OnboardingTour` with sidebar launch button (`#sidebar-guide-btn`).
+- Harmonized baseline synthesis in `investigation-workflow.service.ts` to derive target buildVersion dynamically, ensuring pre-flight baseline readback passes cleanly for both buggy (`wb-v1.0.0-buggy`) and fixed (`wb-v1.0.1-fixed`) builds.
+- Executed full 9-stage browser verification suite (`scripts/verify-full-browser-suite.ts`) in headless Chromium:
+  1. Stage 3 (First Visit, Guide & Tour): verified 6-step First-Use Guide (Target vs Server boundary), mobile viewport (375x667), and onboarding tour.
+  2. Stage 4-7 (Buggy Workbench Positive Journey, Port 3005): registered target, submitted bug report via UI, generated and cryptographically authorized plan, executed bounded dual-run in browser worker, verified target reset & readback, confirmed reproduction verdict `CONFIRMED_REPRODUCED` (Investigation ID `2bb6de84-7605-4b13-aa26-e8be4a2f4a0a`).
+  3. Stage 8 (Fixed Workbench Negative Control Journey, Port 3006): submitted identical report, authorized plan, executed dual-run, verified `NOT_REPRODUCED` (Investigation ID `c6989bd4-02f0-42dd-b666-7b2e819de08d`).
+  4. Stage 9 (Evidence Security & Export): verified secret scrubbing (`synthetic-jwt-token-xyz-9876` scrubbed from console logs and network traces) and exported JSON reproduction package.
+- All 95 test files passed (875 passed tests, 0 failed, 6 skipped in Vitest).
+- `pnpm exec tsc --noEmit` exited cleanly with code 0.
+- Zero emojis in code, commits, or reports; zero remote pushes; lead checkout `C:\SHARAN PROJECTS\TraceCase` on `main` preserved untouched.
+- Comprehensive report written in `implementation-stages/integration/phase-2-browser-acceptance-report.md`.
+
 
 
 ## Agreed Person 1 phases

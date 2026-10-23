@@ -891,6 +891,7 @@ export function renderWorkbenchHtml(options: RenderWorkbenchOptions): string {
             class="wb-queue-item ${item.completed ? 'status-completed' : 'status-active'}"
             id="${escapeHtml(item.id)}"
             data-item-id="${escapeHtml(item.id)}"
+            data-task-id="${escapeHtml(item.id)}"
             data-status="${item.completed ? 'completed' : 'active'}"
             data-priority="${escapeHtml(item.priority)}"
             role="listitem"
@@ -1040,7 +1041,7 @@ export function renderWorkbenchHtml(options: RenderWorkbenchOptions): string {
             type="button"
             id="wb-confirm-delete-btn"
             class="wb-btn wb-btn-danger"
-            aria-label="Confirm and delete work item"
+            aria-label="Confirm Delete"
           >
             Confirm Delete
           </button>
@@ -1163,6 +1164,7 @@ export function renderWorkbenchHtml(options: RenderWorkbenchOptions): string {
         }
         li.id = item.id;
         li.setAttribute('data-item-id', item.id);
+        li.setAttribute('data-task-id', item.id);
         li.setAttribute('data-status', item.completed ? 'completed' : 'active');
         li.setAttribute('data-priority', item.priority);
         li.setAttribute('role', 'listitem');

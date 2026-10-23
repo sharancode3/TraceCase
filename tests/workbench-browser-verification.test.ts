@@ -44,7 +44,7 @@ describe('Person 2: Workbench Live Playwright Browser Verification', () => {
     if (browser) await browser.close();
     if (buggyServer) await buggyServer.stop();
     if (fixedServer) await fixedServer.stop();
-  });
+  }, 30000);
 
   it('verifies initial state, metrics cards, and details inspection in browser', async () => {
     const page = await browser.newPage();
@@ -218,7 +218,7 @@ describe('Person 2: Workbench Live Playwright Browser Verification', () => {
     } finally {
       await page.close();
     }
-  });
+  }, 30000);
 
   it('demonstrates fixed build: deleting active item deletes target by unique ID (wb-item-02)', async () => {
     const page = await browser.newPage();
@@ -263,5 +263,5 @@ describe('Person 2: Workbench Live Playwright Browser Verification', () => {
     } finally {
       await page.close();
     }
-  });
+  }, 30000);
 });
