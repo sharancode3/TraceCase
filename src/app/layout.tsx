@@ -1,13 +1,27 @@
 import type { Metadata } from 'next';
+import { DM_Sans } from 'next/font/google';
 import './globals.css';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
 import { PreviewBanner } from '@/components/layout/preview-banner';
+import { TourProvider } from '@/components/guide/tour-context';
+import { OnboardingTour } from '@/components/guide/onboarding-tour';
 import { isDevPreviewEnabled } from '@/server/config/env';
+
+const dmSans = DM_Sans({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-dm-sans',
+});
 
 export const metadata: Metadata = {
   title: 'TraceCase — Autonomous Defect Reproduction',
   description: 'Deterministic web application bug reproduction and verifiable evidence pipeline.',
+  icons: {
+    icon: '/logo.svg',
+    shortcut: '/logo.svg',
+    apple: '/logo.png',
+  },
 };
 
 export default function RootLayout({
@@ -18,19 +32,23 @@ export default function RootLayout({
   const isSyntheticPreview = isDevPreviewEnabled();
 
   return (
-    <html lang="en">
-      <body className="min-h-screen bg-canvas text-brand-navy flex flex-col antialiased">
-        <PreviewBanner isSyntheticPreview={isSyntheticPreview} />
-        <div className="flex flex-1 min-h-0">
-          <Sidebar />
-          <div className="flex-1 flex flex-col min-w-0">
-            <Header />
-            <main className="flex-1 p-6 md:p-8 overflow-y-auto bg-neutral-surface/30">
-              {children}
-            </main>
+    <html lang="en" className={`h-full ${dmSans.variable}`}>
+      <body className="h-screen max-h-screen overflow-hidden bg-canvas text-brand-navy flex flex-col antialiased">
+        <TourProvider>
+          <OnboardingTour />
+          <PreviewBanner isSyntheticPreview={isSyntheticPreview} />
+          <div className="flex flex-1 min-h-0 overflow-hidden">
+            <Sidebar />
+            <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
+              <Header />
+              <main className="flex-1 p-6 md:p-8 overflow-y-auto bg-neutral-surface/30">
+                {children}
+              </main>
+            </div>
           </div>
-        </div>
+        </TourProvider>
       </body>
     </html>
   );
 }
+

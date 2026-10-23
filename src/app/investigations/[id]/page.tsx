@@ -21,6 +21,8 @@ import {
   Loader2,
   AlertCircle,
   Lock,
+  ArrowUpRight,
+  RefreshCw,
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -30,6 +32,7 @@ import {
   getLifecyclePresentation,
   getVerdictPresentation,
   getEvidencePresentation,
+  getNextPermittedAction,
   type EvidenceReadinessStatus,
 } from '@/contracts/status';
 import type { InvestigationSnapshot } from '@/contracts/investigations';
@@ -44,6 +47,7 @@ import {
 } from '@/features/investigations/evidence-presentation';
 import {
   fetchInvestigation,
+  fetchInvestigationResults,
   fetchPlan,
   fetchArtifacts,
   requestPlanning,
@@ -81,7 +85,6 @@ export default function InvestigationDetailPage() {
     } finally { setPlanning(false); }
   };
 
-
   const [activeTab, setActiveTab] = React.useState<'video' | 'console' | 'network'>('video');
   const [consoleSearch, setConsoleSearch] = React.useState('');
   const [networkSearch, setNetworkSearch] = React.useState('');
@@ -100,25 +103,37 @@ export default function InvestigationDetailPage() {
   const [isLoading, setIsLoading] = React.useState(true);
   const [notFound, setNotFound] = React.useState(false);
 
+  // Distinct Telemetry Retrieval States
+  const [consoleFetchState, setConsoleFetchState] = React.useState<'IDLE' | 'LOADING' | 'READY' | 'EMPTY' | 'FAILED' | 'RESTRICTED'>('IDLE');
+  const [consoleFetchError, setConsoleFetchError] = React.useState<string | null>(null);
+
+  const [networkFetchState, setNetworkFetchState] = React.useState<'IDLE' | 'LOADING' | 'READY' | 'EMPTY' | 'FAILED' | 'RESTRICTED'>('IDLE');
+  const [networkFetchError, setNetworkFetchError] = React.useState<string | null>(null);
+
   React.useEffect(() => {
     let isMounted = true;
     async function load() {
       setIsLoading(true);
-      const [invRes, planRes, artRes] = await Promise.all([
-        fetchInvestigation(id),
+      const [resRes, planRes, artRes] = await Promise.all([
+        fetchInvestigationResults(id),
         fetchPlan(id),
         fetchArtifacts(id),
       ]);
       if (!isMounted) return;
 
-      if (invRes.success && invRes.data) {
-        setInvestigation(invRes.data);
+      if (resRes.success && resRes.data) {
+        setInvestigation(resRes.data.snapshot);
         try {
           const response = await fetch(`/api/v1/investigations/${encodeURIComponent(id)}/explanation`);
           if (response.ok && isMounted) setExplanation((await response.json()).data);
         } catch { /* Explanation availability never blocks factual results. */ }
       } else {
-        setNotFound(true);
+        const invRes = await fetchInvestigation(id);
+        if (invRes.success && invRes.data) {
+          setInvestigation(invRes.data);
+        } else {
+          setNotFound(true);
+        }
       }
 
       if (planRes.success && planRes.data?.data) {
@@ -144,104 +159,150 @@ export default function InvestigationDetailPage() {
     let isCancelled = false;
 
     async function loadAttemptEvidence() {
-      // 1. Console log artifact for selected attempt (or fallback to any matching CONSOLE_LOG)
+      // 1. Console log artifact for selected attempt
       const consoleArtifact =
         realArtifacts.find((a) => a.kind === 'CONSOLE_LOG' && a.attemptNumber === selectedAttempt) ||
         realArtifacts.find((a) => a.kind === 'CONSOLE_LOG');
 
-      if (consoleArtifact?.url) {
+      if (!consoleArtifact) {
+        setRealConsoleLogs([]);
+        setConsoleFetchError(null);
+        if (investigation?.evidenceReadiness === 'PENDING_GENERATION' || investigation?.evidenceReadiness === 'PACKAGING_IN_PROGRESS') {
+          setConsoleFetchState('LOADING');
+        } else {
+          setConsoleFetchState('EMPTY');
+        }
+      } else if (consoleArtifact.storageTier === 'RESTRICTED_RAW' || investigation?.evidenceReadiness === 'QUARANTINED_LEAK_DETECTED') {
+        setRealConsoleLogs([]);
+        setConsoleFetchError(null);
+        setConsoleFetchState('RESTRICTED');
+      } else if (consoleArtifact.url) {
+        setConsoleFetchState('LOADING');
+        setConsoleFetchError(null);
         try {
           const resp = await fetch(consoleArtifact.url, { credentials: 'include' });
-          if (resp.ok && !isCancelled) {
-            const text = await resp.text();
-            try {
-              const parsed = JSON.parse(text);
-              const targetData = parsed?.safeContent !== undefined ? parsed.safeContent : parsed;
-              if (Array.isArray(targetData)) {
-                const entries: ConsoleLogEntry[] = targetData.map((item: Record<string, unknown>, idx: number) => ({
-                  id: (item.id as string) || `log-${idx}`,
-                  timestamp: (item.timestamp as string) || '',
-                  level: ((item.level as string) || 'INFO').toUpperCase() as ConsoleLogEntry['level'],
-                  category: (item.category as string) || (item.pageId as string) || 'console',
-                  message: (item.text as string) || (item.message as string) || JSON.stringify(item),
-                }));
-                setRealConsoleLogs(entries);
-              } else if (typeof targetData === 'string') {
-                const lines = targetData.split('\n').filter((l) => l.trim().length > 0);
-                setRealConsoleLogs(
-                  lines.map((line, idx) => ({
-                    id: `log-${idx}`,
-                    timestamp: '',
-                    level: line.includes('ERROR') ? 'ERROR' : line.includes('WARN') ? 'WARN' : 'INFO',
-                    category: 'console',
-                    message: line,
-                  }))
-                );
-              } else {
-                setRealConsoleLogs([]);
-              }
-            } catch {
-              const lines = text.split('\n').filter((l) => l.trim().length > 0);
-              const entries: ConsoleLogEntry[] = lines.map((line, idx) => ({
+          if (!resp.ok) {
+            if (!isCancelled) {
+              setRealConsoleLogs([]);
+              setConsoleFetchState('FAILED');
+              setConsoleFetchError(`Server returned HTTP ${resp.status} (${resp.statusText || 'Error'}). Telemetry could not be retrieved from storage.`);
+            }
+            return;
+          }
+          const text = await resp.text();
+          let entries: ConsoleLogEntry[] = [];
+          try {
+            const parsed = JSON.parse(text);
+            const targetData = parsed?.safeContent !== undefined ? parsed.safeContent : parsed;
+            if (Array.isArray(targetData)) {
+              entries = targetData.map((item: Record<string, unknown>, idx: number) => ({
+                id: (item.id as string) || `log-${idx}`,
+                timestamp: (item.timestamp as string) || '',
+                level: ((item.level as string) || 'INFO').toUpperCase() as ConsoleLogEntry['level'],
+                category: (item.category as string) || (item.pageId as string) || 'console',
+                message: (item.text as string) || (item.message as string) || JSON.stringify(item),
+              }));
+            } else if (typeof targetData === 'string') {
+              const lines = targetData.split('\n').filter((l) => l.trim().length > 0);
+              entries = lines.map((line, idx) => ({
                 id: `log-${idx}`,
                 timestamp: '',
-                level: line.includes('ERROR') || line.includes('ERR') ? 'ERROR' : line.includes('WARN') ? 'WARN' : 'INFO',
+                level: line.includes('ERROR') ? 'ERROR' : line.includes('WARN') ? 'WARN' : 'INFO',
                 category: 'console',
                 message: line,
               }));
-              setRealConsoleLogs(entries);
             }
+          } catch {
+            const lines = text.split('\n').filter((l) => l.trim().length > 0);
+            entries = lines.map((line, idx) => ({
+              id: `log-${idx}`,
+              timestamp: '',
+              level: line.includes('ERROR') || line.includes('ERR') ? 'ERROR' : line.includes('WARN') ? 'WARN' : 'INFO',
+              category: 'console',
+              message: line,
+            }));
           }
-        } catch {
-          if (!isCancelled) setRealConsoleLogs([]);
+          if (!isCancelled) {
+            setRealConsoleLogs(entries);
+            setConsoleFetchState(entries.length === 0 ? 'EMPTY' : 'READY');
+          }
+        } catch (err) {
+          if (!isCancelled) {
+            setRealConsoleLogs([]);
+            setConsoleFetchState('FAILED');
+            setConsoleFetchError(`Network error while retrieving console logs: ${err instanceof Error ? err.message : String(err)}`);
+          }
         }
-      } else {
-        setRealConsoleLogs([]);
       }
 
-      // 2. Network trace artifact for selected attempt (or fallback to any matching NETWORK_TRACE)
+      // 2. Network trace artifact for selected attempt
       const networkArtifact =
         realArtifacts.find((a) => a.kind === 'NETWORK_TRACE' && a.attemptNumber === selectedAttempt) ||
         realArtifacts.find((a) => a.kind === 'NETWORK_TRACE');
 
-      if (networkArtifact?.url) {
+      if (!networkArtifact) {
+        setRealNetworkTraces([]);
+        setNetworkFetchError(null);
+        if (investigation?.evidenceReadiness === 'PENDING_GENERATION' || investigation?.evidenceReadiness === 'PACKAGING_IN_PROGRESS') {
+          setNetworkFetchState('LOADING');
+        } else {
+          setNetworkFetchState('EMPTY');
+        }
+      } else if (networkArtifact.storageTier === 'RESTRICTED_RAW' || investigation?.evidenceReadiness === 'QUARANTINED_LEAK_DETECTED') {
+        setRealNetworkTraces([]);
+        setNetworkFetchError(null);
+        setNetworkFetchState('RESTRICTED');
+      } else if (networkArtifact.url) {
+        setNetworkFetchState('LOADING');
+        setNetworkFetchError(null);
         try {
           const resp = await fetch(networkArtifact.url, { credentials: 'include' });
-          if (resp.ok && !isCancelled) {
-            const text = await resp.text();
-            const parsed = JSON.parse(text);
-            const targetData = parsed?.safeContent !== undefined ? parsed.safeContent : parsed;
-            const rawList = Array.isArray(targetData)
-              ? targetData
-              : Array.isArray(targetData?.entries)
-              ? targetData.entries
-              : Array.isArray(targetData?.requests)
-              ? targetData.requests
-              : [];
-            const entries: NetworkTraceEntry[] = rawList.map((item: Record<string, unknown>, idx: number) => ({
-              id: (item.requestId as string) || (item.id as string) || `net-${idx}`,
-              timestamp: (item.startedAt as string) || (item.timestamp as string) || undefined,
-              method: ((item.method as string) || 'GET').toUpperCase(),
-              url: (item.url as string) || '/',
-              resourceType: item.resourceType as string | undefined,
-              status: typeof item.status === 'number' ? item.status : undefined,
-              isTransportFailure: Boolean(item.isTransportFailure),
-              failureText: item.failureText as string | undefined,
-              startedAt: item.startedAt as string | undefined,
-              completedAt: item.completedAt as string | undefined,
-              durationMs: typeof item.durationMs === 'number' ? item.durationMs : undefined,
-              mimeType: item.mimeType as string | undefined,
-              requestHeaders: (item.requestHeaders || item.headers || undefined) as Record<string, string> | undefined,
-              responseHeaders: (item.responseHeaders || undefined) as Record<string, string> | undefined,
-              responseBody: item.responseBody,
-            }));
-            setRealNetworkTraces(entries);
+          if (!resp.ok) {
+            if (!isCancelled) {
+              setRealNetworkTraces([]);
+              setNetworkFetchState('FAILED');
+              setNetworkFetchError(`Server returned HTTP ${resp.status} (${resp.statusText || 'Error'}). Telemetry could not be retrieved from storage.`);
+            }
+            return;
           }
-        } catch {
-          if (!isCancelled) setRealNetworkTraces([]);
+          const text = await resp.text();
+          const parsed = JSON.parse(text);
+          const targetData = parsed?.safeContent !== undefined ? parsed.safeContent : parsed;
+          const rawList = Array.isArray(targetData)
+            ? targetData
+            : Array.isArray(targetData?.entries)
+            ? targetData.entries
+            : Array.isArray(targetData?.requests)
+            ? targetData.requests
+            : [];
+          const entries: NetworkTraceEntry[] = rawList.map((item: Record<string, unknown>, idx: number) => ({
+            id: (item.requestId as string) || (item.id as string) || `net-${idx}`,
+            timestamp: (item.startedAt as string) || (item.timestamp as string) || undefined,
+            method: ((item.method as string) || 'GET').toUpperCase(),
+            url: (item.url as string) || '/',
+            resourceType: item.resourceType as string | undefined,
+            status: typeof item.status === 'number' ? item.status : undefined,
+            isTransportFailure: Boolean(item.isTransportFailure),
+            failureText: item.failureText as string | undefined,
+            startedAt: item.startedAt as string | undefined,
+            completedAt: item.completedAt as string | undefined,
+            durationMs: typeof item.durationMs === 'number' ? item.durationMs : undefined,
+            mimeType: item.mimeType as string | undefined,
+            requestHeaders: (item.requestHeaders || item.headers || undefined) as Record<string, string> | undefined,
+            responseHeaders: (item.responseHeaders || undefined) as Record<string, string> | undefined,
+            responseBody: item.responseBody,
+          }));
+          if (!isCancelled) {
+            setRealNetworkTraces(entries);
+            setNetworkFetchState(entries.length === 0 ? 'EMPTY' : 'READY');
+          }
+        } catch (err) {
+          if (!isCancelled) {
+            setRealNetworkTraces([]);
+            setNetworkFetchState('FAILED');
+            setNetworkFetchError(`Network error while retrieving network traces: ${err instanceof Error ? err.message : String(err)}`);
+          }
         }
-      } else {
-        setRealNetworkTraces([]);
       }
     }
 
@@ -249,7 +310,7 @@ export default function InvestigationDetailPage() {
     return () => {
       isCancelled = true;
     };
-  }, [realArtifacts, selectedAttempt]);
+  }, [realArtifacts, selectedAttempt, investigation?.evidenceReadiness]);
 
   // Telemetry and manifests
   const manifest: EvidenceManifest | null = null;
@@ -416,6 +477,15 @@ export default function InvestigationDetailPage() {
   const verdict = getVerdictPresentation(investigation.reproductionVerdict);
   const evidence = getEvidencePresentation(investigation.evidenceReadiness);
   const availability = getEvidenceAvailability(investigation.evidenceReadiness);
+  const nextAction = getNextPermittedAction({
+    id: investigation.id,
+    lifecycleStatus: investigation.lifecycleStatus,
+    reviewStatus: investigation.reviewStatus,
+    reproductionVerdict: investigation.reproductionVerdict,
+    evidenceReadiness: investigation.evidenceReadiness,
+    planVersion: investigation.planVersion,
+    isApproved: investigation.isApproved,
+  });
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
@@ -443,8 +513,22 @@ export default function InvestigationDetailPage() {
             <h2 className="text-2xl font-bold text-brand-navy tracking-tight">
               {investigation.title}
             </h2>
-            <div className="text-xs text-brand-muted">
-              Target: <a href={investigation.targetUrl} target="_blank" rel="noreferrer" className="text-cobalt-action hover:underline">{investigation.targetUrl}</a>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-brand-muted">
+              <span>Target: <a href={investigation.targetUrl} target="_blank" rel="noreferrer" className="text-cobalt-action hover:underline">{investigation.targetUrl}</a></span>
+              {investigation.targetEnvironment && (
+                <span className="inline-flex items-center space-x-1">
+                  <span>•</span>
+                  <span>Env:</span>
+                  <strong className="text-brand-navy font-semibold">{investigation.targetEnvironment}</strong>
+                </span>
+              )}
+              {investigation.targetBuildVersion && (
+                <span className="inline-flex items-center space-x-1">
+                  <span>•</span>
+                  <span>Build:</span>
+                  <strong className="font-mono text-brand-navy">{investigation.targetBuildVersion}</strong>
+                </span>
+              )}
             </div>
           </div>
 
@@ -525,17 +609,42 @@ export default function InvestigationDetailPage() {
             <div className="text-[11px] text-brand-muted mt-0.5">{evidence.description}</div>
           </div>
         </div>
+
+        {/* Next Permitted Action Banner */}
+        <div className="mt-4 p-3.5 rounded-control bg-white border border-lavender-accent/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+          <div className="space-y-0.5">
+            <div className="flex items-center space-x-2">
+              <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-cobalt-subtle text-cobalt-action">
+                Next Permitted Action
+              </span>
+              <span className="font-semibold text-xs text-brand-navy">
+                {nextAction.label}
+              </span>
+            </div>
+            <p className="text-xs text-brand-muted">
+              {nextAction.description}
+            </p>
+          </div>
+          {nextAction.href && (
+            <Link href={nextAction.href}>
+              <Button size="sm" variant={nextAction.isActionable ? 'primary' : 'outline'} className="text-xs shrink-0 space-x-1.5">
+                <span>{nextAction.label}</span>
+                <ArrowUpRight className="w-3.5 h-3.5 ml-1" />
+              </Button>
+            </Link>
+          )}
+        </div>
       </Card>
 
       {explanation ? (
         <Card>
           <CardHeader>
             <CardTitle className="text-base flex items-center justify-between">
-              <span>Evidence Explanation</span>
+              <span>Evidence Explanation (AI-Synthesized Hypotheses)</span>
               <Badge variant="outline">AI Synthesized</Badge>
             </CardTitle>
             <CardDescription>
-              Generated from recorded findings. Suggested causes remain hypotheses (TC-INV-008).
+              AI-synthesized narrative and causal hypotheses (TC-INV-008). Deterministic execution measurements and assertion verdicts are presented separately below.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4 text-sm text-brand-navy">
@@ -587,9 +696,12 @@ export default function InvestigationDetailPage() {
       ) : investigation?.lifecycleStatus === 'COMPLETED' ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Evidence Explanation</CardTitle>
+            <CardTitle className="text-base flex items-center justify-between">
+              <span>Evidence Explanation (AI-Synthesized Hypotheses)</span>
+              <Badge variant="outline">AI Narrative</Badge>
+            </CardTitle>
             <CardDescription>
-              Synthesize a natural language review from recorded verification facts.
+              Synthesize a natural language review from recorded verification facts. Deterministic execution measurements remain separate below.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-brand-navy">
@@ -618,45 +730,244 @@ export default function InvestigationDetailPage() {
             A defect is confirmed only when two independent runs yield matching failure signatures under restored conditions.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Run 1 Summary */}
-            <div className="p-4 rounded-control border border-neutral-divider bg-white space-y-2">
+            <div className="p-4 rounded-control border border-neutral-divider bg-white space-y-3">
               <div className="flex items-center justify-between">
                 <span className="font-bold text-sm text-brand-navy">Attempt 1 (Initial Run)</span>
                 {investigation.attempt1 ? (
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-semibold border border-emerald-200">
-                    {investigation.attempt1.validity === 'VALID_DEFECT_DETECTED' ? 'Defect Detected' : investigation.attempt1.validity === 'VALID_CLEAN_RUN' ? 'Clean Run' : investigation.attempt1.validity}
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-semibold border ${
+                    investigation.attempt1.validity === 'VALID_DEFECT_DETECTED'
+                      ? 'bg-rose-50 text-rose-700 border-rose-200'
+                      : investigation.attempt1.validity === 'VALID_CLEAN_RUN'
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : 'bg-amber-50 text-amber-700 border-amber-200'
+                  }`}>
+                    {investigation.attempt1.validity === 'VALID_DEFECT_DETECTED'
+                      ? 'Defect Detected'
+                      : investigation.attempt1.validity === 'VALID_CLEAN_RUN'
+                      ? 'Clean Run'
+                      : investigation.attempt1.validity}
                   </span>
                 ) : (
                   <span className="text-xs text-brand-muted">Not Executed</span>
                 )}
               </div>
-              <div className="text-xs text-brand-muted space-y-1 pt-1">
-                <div>Actions: {investigation.attempt1?.actionsExecuted || 0} steps executed</div>
-                <div>Duration: {investigation.attempt1?.durationMs ? `${investigation.attempt1.durationMs / 1000}s` : 'N/A'}</div>
-                <div>Mutation State: {investigation.attempt1?.mutationState || 'NONE'}</div>
+              <div className="text-xs text-brand-muted space-y-1">
+                <div>Actions: <strong className="text-brand-navy">{investigation.attempt1?.actionsExecuted ?? 0}</strong> steps executed</div>
+                <div>Last Observed Step: <span className="font-mono">{investigation.attempt1?.lastObservedStep !== null && investigation.attempt1?.lastObservedStep !== undefined ? `Step #${investigation.attempt1.lastObservedStep}` : 'Not recorded'}</span></div>
+                <div>Duration: <span className="font-mono">{typeof investigation.attempt1?.durationMs === 'number' ? `${investigation.attempt1.durationMs / 1000}s` : 'Not recorded'}</span></div>
+                <div>Mutation State: <strong className="text-brand-navy">{investigation.attempt1?.mutationState || 'NONE'}</strong></div>
+                {investigation.attempt1?.buildId && (
+                  <div>Build ID: <span className="font-mono text-brand-navy">{investigation.attempt1.buildId}</span></div>
+                )}
+                {investigation.attempt1?.failureMessage && (
+                  <div className="pt-1 text-rose-800 font-mono text-[11px] break-all">
+                    Message: {investigation.attempt1.failureMessage}
+                  </div>
+                )}
               </div>
+              {/* Attempt 1 Assertion Observations */}
+              {Array.isArray(investigation.assertionEvaluations) &&
+                investigation.assertionEvaluations.some((a) => a.attemptNumber === 1) && (
+                  <div className="pt-2 border-t border-neutral-divider space-y-1.5">
+                    <span className="text-[11px] font-bold text-brand-navy uppercase tracking-wider block">
+                      Assertion Observations
+                    </span>
+                    <div className="space-y-1">
+                      {investigation.assertionEvaluations
+                        .filter((a) => a.attemptNumber === 1)
+                        .map((assertion, idx) => (
+                          <div
+                            key={assertion.id || idx}
+                            className={`p-2 rounded text-[11px] border flex items-center justify-between ${
+                              assertion.result === 'PASSED'
+                                ? 'bg-emerald-50/60 border-emerald-200 text-emerald-900'
+                                : 'bg-rose-50/60 border-rose-200 text-rose-900'
+                            }`}
+                          >
+                            <div>
+                              <span className="font-semibold">{assertion.purpose || assertion.assertionId}</span>
+                              {assertion.expectedValue && (
+                                <div className="text-[10px] text-neutral-600 font-mono">
+                                  Exp: {assertion.expectedValue} | Obs: {assertion.observedValue ?? 'None'}
+                                </div>
+                              )}
+                            </div>
+                            <span className="font-bold text-[10px] uppercase ml-2 shrink-0">
+                              {assertion.result}
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
             </div>
 
             {/* Run 2 Summary */}
-            <div className="p-4 rounded-control border border-neutral-divider bg-white space-y-2">
+            <div className="p-4 rounded-control border border-neutral-divider bg-white space-y-3">
               <div className="flex items-center justify-between">
                 <span className="font-bold text-sm text-brand-navy">Attempt 2 (Confirmation Run)</span>
                 {investigation.attempt2 ? (
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-semibold border border-emerald-200">
-                    {investigation.attempt2.validity === 'VALID_DEFECT_DETECTED' ? 'Defect Detected' : investigation.attempt2.validity === 'VALID_CLEAN_RUN' ? 'Clean Run' : investigation.attempt2.validity}
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-semibold border ${
+                    investigation.attempt2.validity === 'VALID_DEFECT_DETECTED'
+                      ? 'bg-rose-50 text-rose-700 border-rose-200'
+                      : investigation.attempt2.validity === 'VALID_CLEAN_RUN'
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : 'bg-amber-50 text-amber-700 border-amber-200'
+                  }`}>
+                    {investigation.attempt2.validity === 'VALID_DEFECT_DETECTED'
+                      ? 'Defect Detected'
+                      : investigation.attempt2.validity === 'VALID_CLEAN_RUN'
+                      ? 'Clean Run'
+                      : investigation.attempt2.validity}
                   </span>
                 ) : (
-                  <span className="text-xs text-brand-muted">Awaiting Attempt 1 / Reset</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-neutral-surface text-brand-muted border border-neutral-divider">
+                    Not Executed
+                  </span>
                 )}
               </div>
-              <div className="text-xs text-brand-muted space-y-1 pt-1">
-                <div>Actions: {investigation.attempt2?.actionsExecuted || 0} steps executed</div>
-                <div>Duration: {investigation.attempt2?.durationMs ? `${investigation.attempt2.durationMs / 1000}s` : 'N/A'}</div>
-                <div>Mutation State: {investigation.attempt2?.mutationState || 'NONE'}</div>
-              </div>
+              {investigation.attempt2 ? (
+                <div className="text-xs text-brand-muted space-y-1">
+                  <div>Actions: <strong className="text-brand-navy">{investigation.attempt2.actionsExecuted}</strong> steps executed</div>
+                  <div>Last Observed Step: <span className="font-mono">{investigation.attempt2.lastObservedStep !== null && investigation.attempt2.lastObservedStep !== undefined ? `Step #${investigation.attempt2.lastObservedStep}` : 'Not recorded'}</span></div>
+                  <div>Duration: <span className="font-mono">{typeof investigation.attempt2.durationMs === 'number' ? `${investigation.attempt2.durationMs / 1000}s` : 'Not recorded'}</span></div>
+                  <div>Mutation State: <strong className="text-brand-navy">{investigation.attempt2.mutationState}</strong></div>
+                  {investigation.attempt2.buildId && (
+                    <div>Build ID: <span className="font-mono text-brand-navy">{investigation.attempt2.buildId}</span></div>
+                  )}
+                  {investigation.attempt2.failureMessage && (
+                    <div className="pt-1 text-rose-800 font-mono text-[11px] break-all">
+                      Message: {investigation.attempt2.failureMessage}
+                    </div>
+                  )}
+                  {/* Attempt 2 Assertion Observations */}
+                  {Array.isArray(investigation.assertionEvaluations) &&
+                    investigation.assertionEvaluations.some((a) => a.attemptNumber === 2) && (
+                      <div className="pt-2 border-t border-neutral-divider space-y-1.5">
+                        <span className="text-[11px] font-bold text-brand-navy uppercase tracking-wider block">
+                          Assertion Observations
+                        </span>
+                        <div className="space-y-1">
+                          {investigation.assertionEvaluations
+                            .filter((a) => a.attemptNumber === 2)
+                            .map((assertion, idx) => (
+                              <div
+                                key={assertion.id || idx}
+                                className={`p-2 rounded text-[11px] border flex items-center justify-between ${
+                                  assertion.result === 'PASSED'
+                                    ? 'bg-emerald-50/60 border-emerald-200 text-emerald-900'
+                                    : 'bg-rose-50/60 border-rose-200 text-rose-900'
+                                }`}
+                              >
+                                <div>
+                                  <span className="font-semibold">{assertion.purpose || assertion.assertionId}</span>
+                                  {assertion.expectedValue && (
+                                    <div className="text-[10px] text-neutral-600 font-mono">
+                                      Exp: {assertion.expectedValue} | Obs: {assertion.observedValue ?? 'None'}
+                                    </div>
+                                  )}
+                                </div>
+                                <span className="font-bold text-[10px] uppercase ml-2 shrink-0">
+                                  {assertion.result}
+                                </span>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    )}
+                </div>
+              ) : (
+                <div className="p-3 bg-neutral-surface/60 rounded border border-neutral-divider text-xs space-y-2">
+                  <div className="font-semibold text-brand-navy flex items-center space-x-1.5">
+                    <AlertCircle className="w-4 h-4 text-brand-muted shrink-0" />
+                    <span>Second Attempt Status: Not Executed</span>
+                  </div>
+                  <p className="text-brand-muted leading-relaxed">
+                    {investigation.resetReceipt && !investigation.resetReceipt.isVerifiedRestored
+                      ? 'Attempt 2 was blocked: Target reset verification failed. Execution was halted to prevent non-deterministic testing on dirty state.'
+                      : investigation.attempt1?.validity === 'VALID_CLEAN_RUN'
+                      ? 'Attempt 2 was not executed: Defect was not observed in Attempt 1 (clean run). Second confirmation run was unnecessary.'
+                      : investigation.attempt1?.mutationState === 'MUTATION_UNCERTAIN'
+                      ? 'Attempt 2 was blocked: Target mutation state could not be verified as restored.'
+                      : investigation.attempt1
+                      ? 'Attempt 2 was not executed: Second run was blocked because Attempt 1 did not detect a defect, encountered mutation uncertainty, or target reset could not be verified.'
+                      : 'Awaiting Attempt 1 completion and reset verification.'}
+                  </p>
+                  <p className="text-[11px] text-brand-deepPurple font-medium">
+                    TraceCase never manufactures artificial confirmation attempts or receipts.
+                  </p>
+                </div>
+              )}
             </div>
+          </div>
+
+          {/* Target Reset & Baseline Readback Receipt Banner */}
+          <div className="p-4 rounded-control border bg-neutral-surface/40 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center space-x-2">
+                <RefreshCw className="w-4 h-4 text-cobalt-action" />
+                <span className="font-bold text-sm text-brand-navy">Target Reset & Baseline Readback Receipt</span>
+              </div>
+              {investigation.resetReceipt ? (
+                <span className={`text-xs px-2.5 py-0.5 rounded-full font-semibold border ${
+                  investigation.resetReceipt.isVerifiedRestored
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : 'bg-rose-50 text-rose-700 border-rose-200'
+                }`}>
+                  {investigation.resetReceipt.isVerifiedRestored ? 'Restoration Verified' : 'Restoration Failed'}
+                </span>
+              ) : (
+                <span className="text-xs px-2.5 py-0.5 rounded-full font-medium bg-white text-brand-muted border border-neutral-divider">
+                  Receipt Pending / Not Issued
+                </span>
+              )}
+            </div>
+            {investigation.resetReceipt ? (
+              <div className="text-xs space-y-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div className="p-2 rounded bg-white border border-neutral-divider">
+                    <span className="text-[10px] uppercase font-bold text-brand-muted block">Transport</span>
+                    <span className={`font-semibold ${investigation.resetReceipt.transportSuccess ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      {investigation.resetReceipt.transportSuccess ? 'Success (200 OK)' : 'Transport Failure'}
+                    </span>
+                  </div>
+                  <div className="p-2 rounded bg-white border border-neutral-divider">
+                    <span className="text-[10px] uppercase font-bold text-brand-muted block">Baseline Equivalence</span>
+                    <span className={`font-semibold ${investigation.resetReceipt.baselineEquivalent ? 'text-emerald-700' : 'text-amber-700'}`}>
+                      {investigation.resetReceipt.baselineEquivalent ? 'Equivalent (State Clean)' : 'State Discrepancy'}
+                    </span>
+                  </div>
+                  <div className="p-2 rounded bg-white border border-neutral-divider">
+                    <span className="text-[10px] uppercase font-bold text-brand-muted block">Verified At</span>
+                    <span className="font-mono text-[11px] text-brand-navy">
+                      {new Date(investigation.resetReceipt.verifiedAt).toLocaleTimeString()}
+                    </span>
+                  </div>
+                </div>
+                <div className="p-2.5 rounded bg-white border border-neutral-divider font-mono text-[11px] space-y-1">
+                  <div><span className="text-brand-muted">Expected State Hash:</span> {investigation.resetReceipt.readback?.expectedStateHash || 'None'}</div>
+                  <div><span className="text-brand-muted">Observed State Hash:</span> {investigation.resetReceipt.readback?.observedStateHash || 'None'}</div>
+                  {investigation.resetReceipt.targetBuildId && (
+                    <div><span className="text-brand-muted">Target Build:</span> <span className="font-semibold text-brand-navy">{investigation.resetReceipt.targetBuildId}</span></div>
+                  )}
+                </div>
+                {Array.isArray(investigation.resetReceipt.readback?.discrepancies) && investigation.resetReceipt.readback.discrepancies.length > 0 && (
+                  <div className="p-2 rounded bg-amber-50 border border-amber-200 text-amber-900 text-xs">
+                    <span className="font-bold">Observed Discrepancies:</span>
+                    <ul className="list-disc pl-4 space-y-0.5 mt-1">
+                      {investigation.resetReceipt.readback.discrepancies.map((d: string, i: number) => <li key={i}>{d}</li>)}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-brand-muted">
+                Target reset receipt has not been recorded. Reset and readback verification is required before initiating Attempt 2 (TC-INV-002).
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -805,12 +1116,43 @@ export default function InvestigationDetailPage() {
                   <Terminal className="w-4 h-4 text-cobalt-action" />
                   <span>Sanitized Console Log</span>
                 </span>
-                <Badge variant={consoleLogs.length > 0 ? 'confirmed' : 'outline'}>
-                  {consoleLogs.length > 0 ? `${consoleLogs.length} events` : 'Empty'}
+                <Badge
+                  variant={
+                    consoleFetchState === 'FAILED'
+                      ? 'outline'
+                      : consoleFetchState === 'RESTRICTED'
+                      ? 'outline'
+                      : consoleFetchState === 'LOADING'
+                      ? 'outline'
+                      : realConsoleLogs.length > 0
+                      ? 'confirmed'
+                      : 'outline'
+                  }
+                  className={
+                    consoleFetchState === 'FAILED'
+                      ? 'border-rose-400 text-rose-700 bg-rose-50'
+                      : consoleFetchState === 'RESTRICTED'
+                      ? 'border-amber-400 text-amber-800 bg-amber-50'
+                      : undefined
+                  }
+                >
+                  {consoleFetchState === 'LOADING'
+                    ? 'Loading...'
+                    : consoleFetchState === 'FAILED'
+                    ? 'Retrieval Failed'
+                    : consoleFetchState === 'RESTRICTED'
+                    ? 'Restricted'
+                    : realConsoleLogs.length > 0
+                    ? `${realConsoleLogs.length} events`
+                    : 'Empty'}
                 </Badge>
               </div>
               <div className="text-[11px] text-brand-muted mt-1.5">
-                CDP telemetry with regex scrubbing
+                {consoleFetchState === 'FAILED'
+                  ? 'Telemetry endpoint failed - see details'
+                  : consoleFetchState === 'RESTRICTED'
+                  ? 'Raw output withheld (privacy controls)'
+                  : 'CDP telemetry with regex scrubbing'}
               </div>
             </button>
 
@@ -834,12 +1176,43 @@ export default function InvestigationDetailPage() {
                   <ExternalLink className="w-4 h-4 text-cobalt-action" />
                   <span>Network HAR Trace</span>
                 </span>
-                <Badge variant={networkTraces.length > 0 ? 'confirmed' : 'outline'}>
-                  {networkTraces.length > 0 ? `${networkTraces.length} requests` : 'Empty'}
+                <Badge
+                  variant={
+                    networkFetchState === 'FAILED'
+                      ? 'outline'
+                      : networkFetchState === 'RESTRICTED'
+                      ? 'outline'
+                      : networkFetchState === 'LOADING'
+                      ? 'outline'
+                      : realNetworkTraces.length > 0
+                      ? 'confirmed'
+                      : 'outline'
+                  }
+                  className={
+                    networkFetchState === 'FAILED'
+                      ? 'border-rose-400 text-rose-700 bg-rose-50'
+                      : networkFetchState === 'RESTRICTED'
+                      ? 'border-amber-400 text-amber-800 bg-amber-50'
+                      : undefined
+                  }
+                >
+                  {networkFetchState === 'LOADING'
+                    ? 'Loading...'
+                    : networkFetchState === 'FAILED'
+                    ? 'Retrieval Failed'
+                    : networkFetchState === 'RESTRICTED'
+                    ? 'Restricted'
+                    : realNetworkTraces.length > 0
+                    ? `${realNetworkTraces.length} requests`
+                    : 'Empty'}
                 </Badge>
               </div>
               <div className="text-[11px] text-brand-muted mt-1.5">
-                Sanitized HTTP telemetry (.json)
+                {networkFetchState === 'FAILED'
+                  ? 'Network telemetry failed - see details'
+                  : networkFetchState === 'RESTRICTED'
+                  ? 'Raw trace withheld (privacy controls)'
+                  : 'Sanitized HTTP telemetry (.json)'}
               </div>
             </button>
           </div>
@@ -969,7 +1342,31 @@ export default function InvestigationDetailPage() {
                   </div>
                 </div>
 
-                {filteredLogs.length > 0 ? (
+                {consoleFetchState === 'LOADING' ? (
+                  <div className="p-8 text-center text-xs text-brand-muted border border-dashed border-neutral-divider rounded-control bg-neutral-surface/30">
+                    <RefreshCw className="w-5 h-5 mx-auto mb-2 text-cobalt-action animate-spin" />
+                    <p>Fetching sanitized console telemetry from storage...</p>
+                  </div>
+                ) : consoleFetchState === 'FAILED' ? (
+                  <div role="alert" className="p-4 rounded-control border border-rose-300 bg-rose-50 text-xs text-rose-900 space-y-2">
+                    <div className="flex items-center space-x-2 font-bold text-rose-800">
+                      <AlertTriangle className="w-4 h-4 shrink-0 text-rose-700" />
+                      <span>Console Telemetry Retrieval Failed</span>
+                    </div>
+                    <p>{consoleFetchError || 'The server or storage endpoint encountered an error while retrieving the sanitized console log artifact.'}</p>
+                    <div className="p-2.5 rounded bg-white/80 border border-rose-200 text-[11px] text-rose-950 font-medium">
+                      <strong>Honest Status Guarantee:</strong> A retrieval failure does not imply no console errors occurred. Telemetry was inaccessible.
+                    </div>
+                  </div>
+                ) : consoleFetchState === 'RESTRICTED' ? (
+                  <div role="status" className="p-6 text-center space-y-2 border border-neutral-divider rounded-control bg-lavender-surface text-xs text-brand-navy">
+                    <Lock className="w-6 h-6 mx-auto text-brand-deepPurple" />
+                    <span className="font-bold">Console Log Classified as RESTRICTED_RAW</span>
+                    <p className="text-[11px] text-brand-muted max-w-md mx-auto">
+                      Raw console output is quarantined or held in restricted storage pending automated redactor processing (TC-INV-009).
+                    </p>
+                  </div>
+                ) : filteredLogs.length > 0 ? (
                   <div
                     tabIndex={0}
                     role="region"
@@ -1050,7 +1447,31 @@ export default function InvestigationDetailPage() {
                   </div>
                 </div>
 
-                {filteredTraces.length > 0 ? (
+                {networkFetchState === 'LOADING' ? (
+                  <div className="p-8 text-center text-xs text-brand-muted border border-dashed border-neutral-divider rounded-control bg-neutral-surface/30">
+                    <RefreshCw className="w-5 h-5 mx-auto mb-2 text-cobalt-action animate-spin" />
+                    <p>Fetching sanitized network trace telemetry from storage...</p>
+                  </div>
+                ) : networkFetchState === 'FAILED' ? (
+                  <div role="alert" className="p-4 rounded-control border border-rose-300 bg-rose-50 text-xs text-rose-900 space-y-2">
+                    <div className="flex items-center space-x-2 font-bold text-rose-800">
+                      <AlertTriangle className="w-4 h-4 shrink-0 text-rose-700" />
+                      <span>Network Trace Retrieval Failed</span>
+                    </div>
+                    <p>{networkFetchError || 'The server or storage endpoint encountered an error while retrieving the sanitized network trace artifact.'}</p>
+                    <div className="p-2.5 rounded bg-white/80 border border-rose-200 text-[11px] text-rose-950 font-medium">
+                      <strong>Honest Status Guarantee:</strong> A retrieval failure does not imply no network requests or errors occurred. Telemetry was inaccessible.
+                    </div>
+                  </div>
+                ) : networkFetchState === 'RESTRICTED' ? (
+                  <div role="status" className="p-6 text-center space-y-2 border border-neutral-divider rounded-control bg-lavender-surface text-xs text-brand-navy">
+                    <Lock className="w-6 h-6 mx-auto text-brand-deepPurple" />
+                    <span className="font-bold">Network Trace Classified as RESTRICTED_RAW</span>
+                    <p className="text-[11px] text-brand-muted max-w-md mx-auto">
+                      Raw network trace is quarantined or held in restricted storage pending automated redactor processing (TC-INV-009).
+                    </p>
+                  </div>
+                ) : filteredTraces.length > 0 ? (
                   <div className="space-y-2 max-h-96 overflow-y-auto">
                     {filteredTraces.map((trace) => {
                       const isExpanded = expandedNetworkId === trace.id;

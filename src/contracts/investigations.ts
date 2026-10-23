@@ -6,6 +6,7 @@ import {
   AttemptValiditySchema,
   MutationUncertaintySchema,
 } from './status';
+import { VerifiedResetReceiptSchema } from './reset';
 
 export const AttemptSummarySchema = z.object({
   attemptNumber: z.union([z.literal(1), z.literal(2)]),
@@ -18,6 +19,8 @@ export const AttemptSummarySchema = z.object({
   lastObservedStep: z.number().int().nonnegative().nullable(),
   mutationState: MutationUncertaintySchema,
   failureMessage: z.string().nullable().optional(),
+  buildId: z.string().nullable().optional(),
+  summary: z.string().nullable().optional(),
 });
 export type AttemptSummary = z.infer<typeof AttemptSummarySchema>;
 
@@ -58,6 +61,23 @@ export const InvestigationSnapshotSchema = z.object({
   rejectionReason: z.string().nullable().optional(),
   cancellationReason: z.string().nullable().optional(),
   tokenCostUsd: z.number().nonnegative(),
+  resetReceipt: VerifiedResetReceiptSchema.nullable().optional(),
+  assertionEvaluations: z.array(
+    z.object({
+      id: z.string().optional(),
+      attemptNumber: z.number().int(),
+      assertionId: z.string(),
+      kind: z.string(),
+      purpose: z.string(),
+      result: z.string(),
+      expectedValue: z.string().nullable().optional(),
+      observedValue: z.string().nullable().optional(),
+      details: z.string().nullable().optional(),
+      evaluatedAt: z.string().optional(),
+    })
+  ).optional(),
+  targetEnvironment: z.string().nullable().optional(),
+  targetBuildVersion: z.string().nullable().optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   completedAt: z.string().datetime().nullable(),

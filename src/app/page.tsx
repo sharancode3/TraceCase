@@ -9,6 +9,7 @@ import {
   getLifecyclePresentation,
   getVerdictPresentation,
   getEvidencePresentation,
+  getNextPermittedAction,
 } from '@/contracts/status';
 import type { InvestigationSnapshot } from '@/contracts/investigations';
 import { fetchInvestigations } from '@/features/investigations/api-client';
@@ -35,7 +36,7 @@ export default function DashboardPage() {
         setErrorNotice(res.success
           ? 'Sample mode is disabled here. Set DEV_PREVIEW_MODE=false to use real investigations.'
           : res.status === 401
-            ? 'Sign in using the button above to load your investigations.'
+            ? 'Sign in to load your investigations.'
             : `Investigations could not be loaded: ${res.error.message}`);
       }
       setIsLoading(false);
@@ -65,17 +66,17 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
       {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div id="dashboard-header" className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-brand-navy tracking-tight">
+          <h2 className="text-xl font-bold text-brand-navy tracking-tight">
             Investigations Dashboard
           </h2>
-          <p className="text-sm text-brand-muted mt-1">
+          <p className="text-sm text-brand-muted mt-1 leading-relaxed">
             Register a test target, submit a bug report, review and approve the plan, then start the browser investigation.
           </p>
         </div>
-        <Link href="/investigations/new">
-          <Button variant="primary" className="space-x-2">
+        <Link id="dashboard-create-btn" href="/investigations/new">
+          <Button variant="primary" className="space-x-2 text-sm">
             <Plus className="w-4 h-4" />
             <span>Create Bug Report</span>
           </Button>
@@ -83,20 +84,21 @@ export default function DashboardPage() {
       </div>
 
       {/* Filter and Search Bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white p-3 rounded-card border border-neutral-divider/80 shadow-subtle">
+      <div id="dashboard-filter-search-container" className="flex flex-col sm:flex-row items-center justify-between gap-3 w-full">
         <div className="relative w-full sm:w-80">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-brand-muted" />
           <input
+            id="dashboard-search"
             type="text"
             placeholder="Search investigations by title or target..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 rounded-control border border-neutral-divider text-xs text-brand-navy focus:outline-none focus:ring-2 focus:ring-cobalt-action"
+            className="w-full pl-9 pr-4 py-2 rounded-control border border-neutral-divider text-sm text-brand-navy focus:outline-none focus:ring-2 focus:ring-cobalt-action placeholder:text-brand-muted"
           />
         </div>
 
         {/* Status Filter Tabs */}
-        <div className="flex items-center space-x-1.5 overflow-x-auto w-full sm:w-auto">
+        <div id="dashboard-filter-bar" className="flex items-center space-x-1.5 overflow-x-auto w-full sm:w-auto">
           {[
             { id: 'ALL', label: 'All Cases' },
             { id: 'CONFIRMED', label: 'Confirmed (TC1)' },
@@ -107,7 +109,7 @@ export default function DashboardPage() {
             <button
               key={tab.id}
               onClick={() => setFilter(tab.id)}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors shrink-0 ${
+              className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors shrink-0 ${
                 filter === tab.id
                   ? 'bg-cobalt-action text-white shadow-sm'
                   : 'bg-neutral-surface text-brand-navy hover:bg-lavender-surface'
@@ -154,13 +156,14 @@ export default function DashboardPage() {
           </div>
         ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs">
+          <table className="w-full text-left border-collapse text-sm">
             <thead>
-              <tr className="bg-lavender-surface/50 border-b border-neutral-divider text-brand-deepPurple font-semibold">
+              <tr className="bg-lavender-surface/50 border-b border-neutral-divider text-brand-deepPurple font-semibold text-xs uppercase tracking-wider">
                 <th className="py-3 px-4">Title & Target</th>
                 <th className="py-3 px-4">Lifecycle State</th>
                 <th className="py-3 px-4">Reproduction Verdict</th>
                 <th className="py-3 px-4">Evidence Readiness</th>
+                <th className="py-3 px-4">Next Permitted Action</th>
                 <th className="py-3 px-4 text-right">Actions</th>
               </tr>
             </thead>
@@ -169,14 +172,23 @@ export default function DashboardPage() {
                 const lifecycle = getLifecyclePresentation(inv.lifecycleStatus);
                 const verdict = getVerdictPresentation(inv.reproductionVerdict);
                 const evidence = getEvidencePresentation(inv.evidenceReadiness);
+                const nextAction = getNextPermittedAction({
+                  id: inv.id,
+                  lifecycleStatus: inv.lifecycleStatus,
+                  reviewStatus: inv.reviewStatus,
+                  reproductionVerdict: inv.reproductionVerdict,
+                  evidenceReadiness: inv.evidenceReadiness,
+                  planVersion: inv.planVersion,
+                  isApproved: inv.isApproved,
+                });
 
                 return (
                   <tr key={inv.id} className="hover:bg-neutral-surface/40 transition-colors">
                     <td className="py-3.5 px-4">
-                      <div className="font-semibold text-brand-navy max-w-sm truncate">
+                      <div className="font-semibold text-sm text-brand-navy max-w-sm truncate">
                         {inv.title}
                       </div>
-                      <div className="flex items-center space-x-2 text-[11px] text-brand-muted mt-0.5">
+                      <div className="flex items-center space-x-2 text-xs text-brand-muted mt-0.5">
                         <span className="truncate max-w-[200px]">{inv.targetName}</span>
                         <span>•</span>
                         <span>{new Date(inv.createdAt).toLocaleDateString()}</span>
@@ -184,30 +196,41 @@ export default function DashboardPage() {
                           <span className="text-emerald-700 font-medium">Sandbox</span>
                         ) : (
                           <span className="text-amber-700 font-medium flex items-center space-x-1">
-                            <ShieldAlert className="w-3 h-3 inline" />
+                            <ShieldAlert className="w-3.5 h-3.5 inline" />
                             <span>Protected Prod</span>
                           </span>
                         )}
                       </div>
                     </td>
                     <td className="py-3.5 px-4 whitespace-nowrap">
-                      <span className={`inline-block px-2.5 py-0.5 rounded-full border text-[11px] font-medium ${lifecycle.badgeClass}`}>
+                      <span className={`inline-block px-2.5 py-0.5 rounded-full border text-xs font-medium ${lifecycle.badgeClass}`}>
                         {lifecycle.label}
                       </span>
                     </td>
                     <td className="py-3.5 px-4 whitespace-nowrap">
-                      <span className={`inline-block px-2.5 py-0.5 rounded-full border text-[11px] ${verdict.badgeClass}`}>
+                      <span className={`inline-block px-2.5 py-0.5 rounded-full border text-xs font-medium ${verdict.badgeClass}`}>
                         {verdict.label}
                       </span>
                     </td>
                     <td className="py-3.5 px-4 whitespace-nowrap">
-                      <span className={`inline-block px-2.5 py-0.5 rounded-full border text-[11px] ${evidence.badgeClass}`}>
+                      <span className={`inline-block px-2.5 py-0.5 rounded-full border text-xs font-medium ${evidence.badgeClass}`}>
                         {evidence.label}
                       </span>
                     </td>
+                    <td className="py-3.5 px-4 whitespace-nowrap">
+                      <Link href={nextAction.href || `/investigations/${inv.id}`}>
+                        <span
+                          className={`inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full border text-xs font-medium hover:underline cursor-pointer ${nextAction.badgeClass}`}
+                          title={nextAction.description}
+                        >
+                          <span>{nextAction.label}</span>
+                          <ArrowUpRight className="w-3 h-3 ml-0.5" />
+                        </span>
+                      </Link>
+                    </td>
                     <td className="py-3.5 px-4 text-right whitespace-nowrap">
                       <Link href={`/investigations/${inv.id}`}>
-                        <Button size="sm" variant="outline" className="h-8 px-2.5 text-xs">
+                        <Button size="sm" variant="outline" className="h-8 px-2.5 text-xs font-medium">
                           <span>Inspect</span>
                           <ArrowUpRight className="w-3.5 h-3.5 ml-1" />
                         </Button>

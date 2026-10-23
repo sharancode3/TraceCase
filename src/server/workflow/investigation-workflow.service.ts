@@ -13,6 +13,10 @@ import {
   AuthoritativeExperimentPlan,
 } from '@/contracts/planning';
 import {
+  ReportPlannerOutputSchema,
+} from '@/contracts/ai';
+import { TxOrDb } from '@/server/db/repositories/clarifications.repository';
+import {
   ActionTier,
   InvestigationLifecycleStatus,
   ReproductionVerdict,
@@ -33,6 +37,7 @@ import { validateExperimentProposal } from '@/server/policy/proposal-validator';
 import { calculateAuthoritativePlanFingerprint } from '@/server/policy/plan-fingerprint';
 import { verifyAuthoritativeApprovalCompatibility } from '@/server/policy/approval-guard';
 import { clarificationsRepository } from '@/server/db/repositories/clarifications.repository';
+import { attemptsRepository } from '@/server/db/repositories/attempts.repository';
 import {
   ConflictError,
   PolicyViolationError,
@@ -141,6 +146,7 @@ export class InvestigationWorkflowService {
     const db = this.dbProvider();
     const inv = await this.getOwnedInvestigationOrThrow(params.investigationId, params.ownerId);
     this.verifyRevision(inv.workflowRevision, params.expectedWorkflowRevision);
+    const initialWorkflowRevision = inv.workflowRevision;
 
     if (inv.lifecycleStatus === 'CANCELLED' || inv.reviewStatus === 'CANCELLED') {
       throw new ConflictError('Cannot plan an investigation that has been cancelled.', 'INVESTIGATION_CANCELLED');
@@ -165,16 +171,47 @@ export class InvestigationWorkflowService {
     const safeTargetContext = projectSafeModelTargetContext(target as unknown as Record<string, unknown>);
     const planner = params.plannerPort || getServiceContainer().clarificationAgent || unavailableReportClarificationAgent;
 
-    // Load answered clarification questions to construct normalized context
+    // 3. Load answered and pending clarification questions to construct normalized context with provenance
     const questions = await clarificationsRepository.listQuestions(inv.id);
-    const knownFacts: Record<string, string> = {};
+    const knownFacts: Record<string, string> = {
+      '[Target Config] Base URL': target.baseUrl,
+      '[Target Config] Environment': target.environment,
+      '[Target Config] Allowed Origins': target.allowedOrigins.join(', '),
+      '[Reporter Claim] Bug Title': report.title,
+      '[Reporter Claim] Bug Description': report.rawDescription || report.bugDescription,
+    };
+    if (report.expectedBehavior) {
+      knownFacts['[Reporter Claim] Claimed Expected Behavior'] = report.expectedBehavior;
+    }
+    if (report.observedBehavior) {
+      knownFacts['[Reporter Claim] Claimed Failure Signature'] = report.observedBehavior;
+    }
+    if (report.suspectedSteps && Array.isArray(report.suspectedSteps) && report.suspectedSteps.length > 0) {
+      knownFacts['[Reporter Claim] Suspected Steps'] = report.suspectedSteps.join(' -> ');
+    }
+
     const missingFacts: string[] = [];
+    const answeredQuestionTexts = new Set<string>();
 
     for (const q of questions) {
       if (q.isAnswered && q.answerText) {
-        knownFacts[`Question ${q.questionIndex}: ${q.questionText}`] = q.answerText;
+        knownFacts[`[User Clarification Round ${q.roundIndex ?? 1} Q${q.questionIndex}] ${q.questionText}`] = q.answerText;
+        answeredQuestionTexts.add(q.questionText.trim().toLowerCase());
       } else {
         missingFacts.push(q.questionText);
+      }
+    }
+
+    // If the investigation is already awaiting user answers for a pending clarification round,
+    // return existing unanswered questions without re-invoking the model or duplicating rows
+    if (inv.reviewStatus === 'CLARIFICATION_PENDING') {
+      const pendingQuestions = questions.filter((q) => !q.isAnswered);
+      if (pendingQuestions.length > 0) {
+        return {
+          status: 'CLARIFICATION_NEEDED' as const,
+          questions: pendingQuestions,
+          workflowRevision: inv.workflowRevision,
+        };
       }
     }
 
@@ -195,7 +232,7 @@ export class InvestigationWorkflowService {
       resolvedAt: null,
     };
 
-    // Call planner
+    // Rebuild clarification history from all answered questions
     const clarificationHistory = questions
       .filter((q) => q.isAnswered && q.answerText)
       .map((q) => {
@@ -211,6 +248,7 @@ export class InvestigationWorkflowService {
         };
       });
 
+    // Model request is executed outside of any database transaction
     const plannerOutput = await planner.generateProposal({
       investigationId: inv.id,
       report: plannerInput,
@@ -218,26 +256,96 @@ export class InvestigationWorkflowService {
       clarificationHistory,
     });
 
+    // Validate planner output against runtime schema
+    const schemaValidation = ReportPlannerOutputSchema.safeParse(plannerOutput);
+    if (!schemaValidation.success) {
+      throw new ValidationFailedError(
+        `Planner output schema validation failed: ${schemaValidation.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join('; ')}`,
+        schemaValidation.error.format()
+      );
+    }
+
     if (plannerOutput.status === 'CLARIFICATION_NEEDED') {
+      // Authoritative clarification limit from system architecture: maximum 3 rounds
+      const MAX_CLARIFICATION_ROUNDS = 3;
+      const completedRounds = Math.max(0, ...questions.map((q) => q.roundIndex ?? 1));
+
+      if (completedRounds >= MAX_CLARIFICATION_ROUNDS) {
+        const nextRev = initialWorkflowRevision + 1;
+        const [updatedInv] = await db
+          .update(investigationsTable)
+          .set({
+            reviewStatus: 'BLOCKED',
+            workflowRevision: nextRev,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(investigationsTable.id, inv.id),
+              eq(investigationsTable.workflowRevision, initialWorkflowRevision)
+            )
+          )
+          .returning();
+
+        if (!updatedInv || updatedInv.lifecycleStatus === 'CANCELLED') {
+          throw new ConflictError(
+            `Investigation workflow revision changed concurrently during planning (expected rev ${initialWorkflowRevision}).`,
+            'CONCURRENT_WORKFLOW_MUTATION'
+          );
+        }
+
+        await this.emitEvent(inv.id, 'PLANNING_BLOCKED', {
+          reason: `Maximum clarification rounds (${MAX_CLARIFICATION_ROUNDS}) reached without sufficient facts to synthesize a testable plan.`,
+          missingPrerequisites: ['Sufficient defect steps and observable assertion criteria could not be established within allowed clarification rounds.'],
+        });
+
+        return {
+          status: 'UNABLE_TO_PROCEED' as const,
+          reason: `Maximum clarification rounds (${MAX_CLARIFICATION_ROUNDS}) reached without sufficient facts to synthesize a testable plan.`,
+          missingPrerequisites: ['Sufficient defect steps and observable assertion criteria could not be established within allowed clarification rounds.'],
+          workflowRevision: nextRev,
+        };
+      }
+
+      // Avoid repeating already answered questions unless follow-up is distinct
+      const candidateQuestions = plannerOutput.questions.filter((q) => {
+        const key = q.questionText.trim().toLowerCase();
+        return !answeredQuestionTexts.has(key);
+      });
+      const questionsToPersist = candidateQuestions.length > 0 ? candidateQuestions : plannerOutput.questions;
+
+      // Server-assigned append-only ordering: do NOT forward model-local questionIndex
       const persistedQuestions = await clarificationsRepository.saveQuestions(
         inv.id,
-        plannerOutput.questions.map((q, idx) => ({
-          questionIndex: q.questionIndex ?? idx,
+        questionsToPersist.map((q) => ({
           questionText: q.questionText,
           explanation: q.explanation || (q as unknown as { whyItMatters?: string }).whyItMatters || null,
           suggestedOptions: q.suggestedOptions || (q as unknown as { options?: string[] }).options || null,
         }))
       );
 
-      const nextRev = inv.workflowRevision + 1;
-      await db
+      const nextRev = initialWorkflowRevision + 1;
+      const [updatedInv] = await db
         .update(investigationsTable)
         .set({
           reviewStatus: 'CLARIFICATION_PENDING',
           workflowRevision: nextRev,
           updatedAt: new Date(),
         })
-        .where(eq(investigationsTable.id, inv.id));
+        .where(
+          and(
+            eq(investigationsTable.id, inv.id),
+            eq(investigationsTable.workflowRevision, initialWorkflowRevision)
+          )
+        )
+        .returning();
+
+      if (!updatedInv || updatedInv.lifecycleStatus === 'CANCELLED') {
+        throw new ConflictError(
+          `Investigation workflow revision changed concurrently during planning (expected rev ${initialWorkflowRevision}).`,
+          'CONCURRENT_WORKFLOW_MUTATION'
+        );
+      }
 
       await this.emitEvent(inv.id, 'CLARIFICATION_REQUESTED', {
         questionCount: persistedQuestions.length,
@@ -290,29 +398,52 @@ export class InvestigationWorkflowService {
       const computedHash = calculateAuthoritativePlanFingerprint(authoritativePlan);
       authoritativePlan.planHash = computedHash;
 
-      // Store immutable plan revision
-      await db.insert(experimentPlanRevisionsTable).values({
-        id: authoritativePlan.id,
-        investigationId: inv.id,
-        version: nextVersion,
-        planHash: computedHash,
-        planPayload: authoritativePlan as unknown as Record<string, unknown>,
-        createdBy: params.ownerId,
-        createdAt: new Date(),
-      });
+      // Store immutable plan revision and update parent investigation atomically inside a transaction
+      const nextRev = initialWorkflowRevision + 1;
 
-      // Update parent investigation state
-      const nextRev = inv.workflowRevision + 1;
-      await db
-        .update(investigationsTable)
-        .set({
-          planVersion: nextVersion,
+      const runPersist = async (tx: TxOrDb) => {
+        await tx.insert(experimentPlanRevisionsTable).values({
+          id: authoritativePlan.id,
+          investigationId: inv.id,
+          version: nextVersion,
           planHash: computedHash,
-          reviewStatus: 'PROPOSAL_READY',
-          workflowRevision: nextRev,
-          updatedAt: new Date(),
-        })
-        .where(eq(investigationsTable.id, inv.id));
+          planPayload: authoritativePlan as unknown as Record<string, unknown>,
+          createdBy: params.ownerId,
+          createdAt: new Date(),
+        });
+
+        const [updatedInv] = await tx
+          .update(investigationsTable)
+          .set({
+            planVersion: nextVersion,
+            planHash: computedHash,
+            reviewStatus: 'PROPOSAL_READY',
+            workflowRevision: nextRev,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(investigationsTable.id, inv.id),
+              eq(investigationsTable.workflowRevision, initialWorkflowRevision)
+            )
+          )
+          .returning();
+
+        if (!updatedInv || updatedInv.lifecycleStatus === 'CANCELLED') {
+          throw new ConflictError(
+            `Investigation workflow revision changed concurrently during planning (expected rev ${initialWorkflowRevision}).`,
+            'CONCURRENT_WORKFLOW_MUTATION'
+          );
+        }
+
+        return updatedInv;
+      };
+
+      if (typeof db.transaction === 'function') {
+        await db.transaction(runPersist);
+      } else {
+        await runPersist(db);
+      }
 
       await this.emitEvent(inv.id, 'PLAN_PUBLISHED', {
         planVersion: nextVersion,
@@ -329,15 +460,28 @@ export class InvestigationWorkflowService {
     }
 
     if (plannerOutput.status === 'UNABLE_TO_PROCEED') {
-      const nextRev = inv.workflowRevision + 1;
-      await db
+      const nextRev = initialWorkflowRevision + 1;
+      const [updatedInv] = await db
         .update(investigationsTable)
         .set({
           reviewStatus: 'BLOCKED',
           workflowRevision: nextRev,
           updatedAt: new Date(),
         })
-        .where(eq(investigationsTable.id, inv.id));
+        .where(
+          and(
+            eq(investigationsTable.id, inv.id),
+            eq(investigationsTable.workflowRevision, initialWorkflowRevision)
+          )
+        )
+        .returning();
+
+      if (!updatedInv || updatedInv.lifecycleStatus === 'CANCELLED') {
+        throw new ConflictError(
+          `Investigation workflow revision changed concurrently during planning (expected rev ${initialWorkflowRevision}).`,
+          'CONCURRENT_WORKFLOW_MUTATION'
+        );
+      }
 
       await this.emitEvent(inv.id, 'PLANNING_BLOCKED', {
         reason: plannerOutput.reason,
@@ -367,6 +511,44 @@ export class InvestigationWorkflowService {
     const db = this.dbProvider();
     const inv = await this.getOwnedInvestigationOrThrow(params.investigationId, params.ownerId);
     this.verifyRevision(inv.workflowRevision, params.expectedWorkflowRevision);
+    const initialWorkflowRevision = inv.workflowRevision;
+
+    if (inv.lifecycleStatus === 'CANCELLED' || inv.reviewStatus === 'CANCELLED') {
+      throw new ConflictError('Cannot answer clarifications for a cancelled investigation.', 'INVESTIGATION_CANCELLED');
+    }
+
+    if (!params.answers || params.answers.length === 0) {
+      throw new ValidationFailedError('At least one answer must be submitted.', ['answers cannot be empty']);
+    }
+
+    // Load existing questions to validate existence, investigation association, and round validity
+    const existingQuestions = await clarificationsRepository.listQuestions(inv.id);
+    const questionMap = new Map(existingQuestions.map((q) => [q.id, q]));
+
+    const pendingQuestions = existingQuestions.filter((q) => !q.isAnswered);
+    const activeRound = pendingQuestions.length > 0
+      ? Math.max(...pendingQuestions.map((q) => q.roundIndex ?? 1))
+      : Math.max(1, ...existingQuestions.map((q) => q.roundIndex ?? 1));
+
+    for (const a of params.answers) {
+      const q = questionMap.get(a.questionId);
+      if (!q) {
+        throw new NotFoundError('ClarificationQuestion', a.questionId);
+      }
+      if (q.investigationId !== inv.id) {
+        throw new NotFoundError('ClarificationQuestion', a.questionId);
+      }
+      if (typeof a.answerText !== 'string' || a.answerText.trim().length === 0) {
+        throw new ValidationFailedError(`Answer for question ${a.questionId} cannot be empty.`, ['empty answer text']);
+      }
+      // If there are pending questions in an active round, prevent answering questions from prior completed rounds
+      if (pendingQuestions.length > 0 && q.isAnswered && (q.roundIndex ?? 1) < activeRound) {
+        throw new ConflictError(
+          `Question ${a.questionId} belongs to prior round ${q.roundIndex ?? 1} which is already answered.`,
+          'PRIOR_ROUND_QUESTION'
+        );
+      }
+    }
 
     const answered = await clarificationsRepository.batchAnswerQuestions(
       inv.id,
@@ -374,14 +556,27 @@ export class InvestigationWorkflowService {
       params.ownerId
     );
 
-    const nextRev = inv.workflowRevision + 1;
-    await db
+    const nextRev = initialWorkflowRevision + 1;
+    const [updatedInv] = await db
       .update(investigationsTable)
       .set({
         workflowRevision: nextRev,
         updatedAt: new Date(),
       })
-      .where(eq(investigationsTable.id, inv.id));
+      .where(
+        and(
+          eq(investigationsTable.id, inv.id),
+          eq(investigationsTable.workflowRevision, initialWorkflowRevision)
+        )
+      )
+      .returning();
+
+    if (!updatedInv || updatedInv.lifecycleStatus === 'CANCELLED') {
+      throw new ConflictError(
+        `Investigation workflow revision changed concurrently during answer submission (expected rev ${initialWorkflowRevision}).`,
+        'CONCURRENT_WORKFLOW_MUTATION'
+      );
+    }
 
     await this.emitEvent(inv.id, 'CLARIFICATION_ANSWERED', {
       answeredCount: answered.length,
@@ -898,6 +1093,8 @@ export class InvestigationWorkflowService {
         lastObservedStep: att1.lastObservedStep != null ? parseInt(att1.lastObservedStep, 10) : null,
         mutationState: (att1.mutationState as MutationUncertainty) || 'NONE',
         failureMessage: att1.invalidityReason || null,
+        summary: att1.summary || null,
+        buildId: (target as unknown as { buildId?: string }).buildId || report.buildVersion || null,
       };
     }
 
@@ -914,7 +1111,58 @@ export class InvestigationWorkflowService {
         lastObservedStep: att2.lastObservedStep != null ? parseInt(att2.lastObservedStep, 10) : null,
         mutationState: (att2.mutationState as MutationUncertainty) || 'NONE',
         failureMessage: att2.invalidityReason || null,
+        summary: att2.summary || null,
+        buildId: (target as unknown as { buildId?: string }).buildId || report.buildVersion || null,
       };
+    }
+
+    // Query reset receipt if recorded
+    let resetReceipt: InvestigationSnapshot['resetReceipt'] = null;
+    try {
+      const rawReceipt = await attemptsRepository.getResetReceipt(inv.id);
+      if (rawReceipt) {
+        resetReceipt = {
+          id: rawReceipt.id,
+          targetId: rawReceipt.targetId,
+          investigationId: rawReceipt.investigationId,
+          attemptNumber: 2 as const,
+          transportSuccess: rawReceipt.transportSuccess,
+          baselineEquivalent: rawReceipt.baselineEquivalent,
+          isVerifiedRestored: rawReceipt.isVerifiedRestored,
+          targetBuildId: (target as unknown as { buildId?: string }).buildId || undefined,
+          readback: {
+            targetId: rawReceipt.targetId,
+            expectedStateHash: rawReceipt.expectedStateHash || '',
+            observedStateHash: rawReceipt.observedStateHash || '',
+            isEquivalent: rawReceipt.baselineEquivalent,
+            discrepancies: Array.isArray(rawReceipt.discrepancies) ? (rawReceipt.discrepancies as string[]) : [],
+            checkedAt: rawReceipt.verifiedAt.toISOString(),
+          },
+          verifiedAt: rawReceipt.verifiedAt.toISOString(),
+        };
+      }
+    } catch {
+      // Best effort lookup
+    }
+
+    // Query assertion evaluations
+    let assertionEvaluations: InvestigationSnapshot['assertionEvaluations'] = [];
+    try {
+      const rawEvaluations = await attemptsRepository.getAssertionEvaluations(inv.id);
+      assertionEvaluations = rawEvaluations.map((ev) => ({
+        id: ev.id,
+        attemptNumber: ev.attemptNumber,
+        assertionId: ev.assertionId,
+        kind: ev.kind,
+        purpose: ev.purpose,
+        result: ev.result,
+        expectedValue: ev.expectedValue ?? null,
+        observedValue: ev.observedValue ?? null,
+        details: ev.details ?? null,
+        evaluatedAt: ev.evaluatedAt.toISOString(),
+      }));
+    } catch {
+      // Best effort lookup
     }
 
     return {
@@ -944,6 +1192,10 @@ export class InvestigationWorkflowService {
       rejectionReason: inv.rejectionReason,
       cancellationReason: inv.cancellationReason,
       tokenCostUsd: Number(inv.tokenCostUsd || 0),
+      resetReceipt,
+      assertionEvaluations,
+      targetEnvironment: target.environment || null,
+      targetBuildVersion: (target as unknown as { buildId?: string }).buildId || report.buildVersion || null,
       createdAt: inv.createdAt.toISOString(),
       updatedAt: inv.updatedAt.toISOString(),
       completedAt: inv.completedAt ? inv.completedAt.toISOString() : null,

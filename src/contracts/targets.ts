@@ -29,6 +29,7 @@ export const SafeTargetProfileSchema = z.object({
   baseUrl: z.string().url(),
   allowedOrigins: z.array(z.string().url()).min(1),
   isSandboxVerified: z.boolean(),
+  isSandboxRequested: z.boolean().optional(),
   environment: z.enum(['staging', 'development', 'demo', 'production']),
   hasResetCapability: z.boolean(),
   hasTestAccountConfigured: z.boolean(),
@@ -36,6 +37,100 @@ export const SafeTargetProfileSchema = z.object({
   updatedAt: z.string().datetime(),
 }).strict();
 export type SafeTargetProfile = z.infer<typeof SafeTargetProfileSchema>;
+
+/**
+ * Result of parsing and validating a target application URL.
+ */
+export interface NormalizedTargetUrlResult {
+  isValid: boolean;
+  normalizedOrigin: string | null;
+  normalizedBaseUrl: string | null;
+  error?: string;
+}
+
+/**
+ * Shared utility for parsing and normalizing a target base URL.
+ * Enforces protocol safety (http/https only), credentials stripping,
+ * SSRF protection against cloud metadata IPs, and uniform origin derivation.
+ */
+export function parseAndNormalizeTargetUrl(rawUrl: string): NormalizedTargetUrlResult {
+  const trimmed = (rawUrl || '').trim();
+  if (!trimmed) {
+    return { isValid: false, normalizedOrigin: null, normalizedBaseUrl: null, error: 'URL cannot be empty' };
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return {
+        isValid: false,
+        normalizedOrigin: null,
+        normalizedBaseUrl: null,
+        error: `Protocol '${parsed.protocol}' is not supported. Target URLs must use http:// or https://.`,
+      };
+    }
+    if (parsed.username || parsed.password) {
+      return {
+        isValid: false,
+        normalizedOrigin: null,
+        normalizedBaseUrl: null,
+        error: 'Target URL must not contain embedded user credentials or passwords.',
+      };
+    }
+    const host = parsed.hostname.toLowerCase();
+    if (
+      host === '169.254.169.254' ||
+      host === 'metadata.google.internal' ||
+      host === '169.254.169.253' ||
+      host === '100.100.100.200'
+    ) {
+      return {
+        isValid: false,
+        normalizedOrigin: null,
+        normalizedBaseUrl: null,
+        error: 'Cloud provider metadata IP addresses are strictly prohibited (SSRF prevention).',
+      };
+    }
+    const origin = parsed.origin.toLowerCase();
+    // Normalize pathname without trailing slash (unless root /)
+    const pathname = parsed.pathname === '/' ? '' : parsed.pathname.replace(/\/+$/, '');
+    const normalizedBaseUrl = `${origin}${pathname}`;
+    return {
+      isValid: true,
+      normalizedOrigin: origin,
+      normalizedBaseUrl,
+    };
+  } catch {
+    return {
+      isValid: false,
+      normalizedOrigin: null,
+      normalizedBaseUrl: null,
+      error: 'Please enter a valid HTTP or HTTPS URL (e.g. http://localhost:3005 or https://staging.example.com).',
+    };
+  }
+}
+
+/**
+ * Validates that an internal returnTo or redirect path is strictly relative and safe.
+ * Rejects protocol-relative URLs (//), full URLs with schemes, and backslashes to prevent open redirects.
+ */
+export function sanitizeInternalReturnPath(
+  rawPath: string | null | undefined,
+  fallback: string = '/investigations/new'
+): string {
+  if (!rawPath || typeof rawPath !== 'string') {
+    return fallback;
+  }
+  const trimmed = rawPath.trim();
+  if (
+    trimmed.startsWith('/') &&
+    !trimmed.startsWith('//') &&
+    !trimmed.includes('\\') &&
+    !trimmed.includes(':')
+  ) {
+    return trimmed;
+  }
+  return fallback;
+}
 
 /**
  * Safe model target context.
@@ -89,7 +184,7 @@ export type ClientSafeTargetProfile = z.infer<typeof ClientSafeTargetProfileSche
 export const CreateTargetCommandSchema = z.object({
   name: z.string().trim().min(2, 'Name must be at least 2 characters').max(100),
   baseUrl: z.string().trim().url('Must be a valid URL'),
-  allowedOrigins: z.array(z.string().trim().url()).min(1, 'At least one allowed origin is required'),
+  allowedOrigins: z.array(z.string().trim().url()).optional().default([]),
   isSandboxRequested: z.boolean().default(true),
   testAccountRef: z.string().trim().max(100).optional(),
   fixtureResetEndpoint: z.string().trim().url().optional(),
@@ -109,10 +204,11 @@ export function projectSafeTargetProfile(
     name: target.name,
     baseUrl: target.baseUrl,
     allowedOrigins: Array.isArray(target.allowedOrigins) ? [...target.allowedOrigins] : [],
-    isSandboxVerified: Boolean(target.isSandboxVerified ?? target.isSandbox ?? false),
+    isSandboxVerified: Boolean(target.isSandboxVerified ?? false),
+    isSandboxRequested: Boolean(target.isSandbox ?? target.isSandboxRequested ?? false),
     environment: target.environment,
-    hasResetCapability: Boolean(target.fixtureResetEndpoint),
-    hasTestAccountConfigured: Boolean(target.testAccountRef),
+    hasResetCapability: Boolean(target.fixtureResetEndpoint || target.hasResetCapability),
+    hasTestAccountConfigured: Boolean(target.testAccountRef || target.hasTestAccountConfigured),
     createdAt: target.createdAt instanceof Date ? target.createdAt.toISOString() : (target.createdAt ?? new Date().toISOString()),
     updatedAt: target.updatedAt instanceof Date ? target.updatedAt.toISOString() : (target.updatedAt ?? new Date().toISOString()),
   });

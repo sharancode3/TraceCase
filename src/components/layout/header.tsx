@@ -3,8 +3,10 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Plus, UserCheck, LogIn, LogOut, Menu, X, LayoutDashboard, Target, PlusCircle } from 'lucide-react';
-import { Button, cn } from '../ui/button';
+import { UserCheck, LogIn, LogOut, Menu, X, LayoutDashboard, Target, PlusCircle, PlayCircle } from 'lucide-react';
+import { cn } from '../ui/button';
+import { useTour } from '@/components/guide/tour-context';
+import { TraceCaseLogo } from '@/components/ui/logo';
 
 const MOBILE_NAV_ITEMS = [
   { label: 'Investigations', href: '/', icon: LayoutDashboard },
@@ -34,10 +36,21 @@ export function Header() {
         // Dev auth not active or offline
       });
 
+    const handleAuthChange = (e: Event) => {
+      const custom = e as CustomEvent<{ operator: string | null }>;
+      if (isMounted) {
+        setOperator(custom.detail?.operator || null);
+      }
+    };
+    window.addEventListener('tracecase:auth-state-change', handleAuthChange);
+
     return () => {
       isMounted = false;
+      window.removeEventListener('tracecase:auth-state-change', handleAuthChange);
     };
   }, []);
+
+  const { startTour, openPrompt } = useTour();
 
   const handleDevSignIn = async () => {
     setIsSigningIn(true);
@@ -49,8 +62,12 @@ export function Header() {
       });
       if (res.ok) {
         const json = await res.json();
-        setOperator(json.principal?.email || 'operator@tracecase.local');
-        window.location.reload();
+        const email = json.principal?.email || 'operator@tracecase.local';
+        setOperator(email);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('tracecase:auth-state-change', { detail: { operator: email } }));
+        }
+        openPrompt();
       }
     } catch {
       // Best-effort dev login
@@ -63,14 +80,16 @@ export function Header() {
     try {
       await fetch('/api/dev/session', { method: 'DELETE' });
       setOperator(null);
-      window.location.reload();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('tracecase:auth-state-change', { detail: { operator: null } }));
+      }
     } catch {
       // Best-effort dev logout
     }
   };
 
   return (
-    <header className="relative border-b border-neutral-divider/80 bg-white">
+    <header className="md:hidden relative border-b border-neutral-divider/80 bg-white">
       <div className="h-16 px-4 md:px-6 flex items-center justify-between">
         <div className="flex items-center space-x-3 md:space-x-4">
           <button
@@ -80,45 +99,37 @@ export function Header() {
           >
             {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </button>
-          <h1 className="text-base font-semibold text-brand-navy">
-            Investigation Console
-          </h1>
-          <div className="hidden sm:flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full bg-neutral-surface border border-neutral-divider text-[11px] font-medium text-brand-muted">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-            <span>Local Development</span>
+          <div className="flex items-center space-x-2">
+            <TraceCaseLogo size={22} color="#4767DB" />
+            <span className="font-bold text-sm text-brand-navy tracking-tight">TraceCase</span>
           </div>
         </div>
 
         <div className="flex items-center space-x-2 md:space-x-3">
+
           {operator ? (
-            <div className="hidden sm:flex items-center space-x-2 px-3 py-1.5 rounded-control bg-lavender-surface/50 border border-lavender-accent/30 text-xs text-brand-deepPurple">
-              <UserCheck className="w-3.5 h-3.5 text-cobalt-action" />
-              <span className="font-medium font-mono text-[11px]">{operator}</span>
-              <button
-                onClick={handleDevSignOut}
-                title="Sign out of local operator session"
-                className="text-brand-muted hover:text-brand-navy ml-1.5"
-              >
-                <LogOut className="w-3 h-3" />
-              </button>
-            </div>
+            <button
+              id="header-operator-badge"
+              onClick={handleDevSignOut}
+              title="Click to sign out"
+              aria-label="Sign out of operator session"
+              className="flex items-center space-x-2 px-3 py-1.5 rounded-control bg-lavender-surface/50 hover:bg-lavender-surface border border-lavender-accent/30 hover:border-lavender-accent/60 text-xs text-brand-deepPurple transition-all cursor-pointer group"
+            >
+              <UserCheck className="w-4 h-4 text-cobalt-action group-hover:text-cobalt-action/80 transition-colors" />
+              <span className="font-medium font-mono text-xs group-hover:underline">{operator}</span>
+              <LogOut className="w-3.5 h-3.5 text-brand-muted group-hover:text-brand-navy ml-1 transition-colors" />
+            </button>
           ) : (
             <button
+              id="header-signin-btn"
               onClick={handleDevSignIn}
               disabled={isSigningIn}
-              className="hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-control bg-neutral-surface hover:bg-lavender-surface/50 border border-neutral-divider text-xs text-brand-navy transition-colors"
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-control bg-neutral-surface hover:bg-lavender-surface/50 border border-neutral-divider text-sm text-brand-navy transition-colors font-medium"
             >
-              <LogIn className="w-3.5 h-3.5 text-cobalt-action" />
+              <LogIn className="w-4 h-4 text-cobalt-action" />
               <span>{isSigningIn ? 'Signing in...' : 'Sign in (Local Dev)'}</span>
             </button>
           )}
-
-          <Link href="/investigations/new">
-            <Button size="sm" variant="primary" className="space-x-1.5">
-              <Plus className="w-4 h-4" />
-              <span>New Report</span>
-            </Button>
-          </Link>
         </div>
       </div>
 
@@ -146,23 +157,38 @@ export function Header() {
                 </Link>
               );
             })}
+            <button
+              id="header-mobile-take-demo-btn"
+              onClick={() => {
+                setMobileMenuOpen(false);
+                startTour(0);
+              }}
+              className="w-full flex items-center space-x-3 px-3 py-2 rounded-control text-sm font-semibold text-cobalt-action bg-lavender-subtle hover:bg-lavender-surface border border-lavender-accent/40 transition-all cursor-pointer"
+            >
+              <PlayCircle className="w-4 h-4 text-cobalt-action shrink-0" />
+              <span>Take a Demo</span>
+            </button>
           </nav>
 
           <div className="pt-2 border-t border-neutral-divider/60">
             {operator ? (
-              <div className="flex items-center justify-between py-2 text-xs text-brand-deepPurple">
-                <span className="font-mono text-[11px] truncate">{operator}</span>
-                <button
-                  onClick={() => {
-                    handleDevSignOut();
-                    setMobileMenuOpen(false);
-                  }}
-                  className="text-xs text-brand-muted hover:text-brand-navy flex items-center space-x-1"
-                >
-                  <LogOut className="w-3 h-3" />
+              <button
+                onClick={() => {
+                  handleDevSignOut();
+                  setMobileMenuOpen(false);
+                }}
+                className="w-full flex items-center justify-between py-2 px-3 rounded-control bg-lavender-surface/50 hover:bg-lavender-surface text-xs text-brand-deepPurple transition-all cursor-pointer"
+                title="Click to sign out"
+              >
+                <div className="flex items-center space-x-2">
+                  <UserCheck className="w-4 h-4 text-cobalt-action" />
+                  <span className="font-mono text-xs truncate">{operator}</span>
+                </div>
+                <span className="text-xs text-brand-muted hover:text-brand-navy flex items-center space-x-1">
+                  <LogOut className="w-3.5 h-3.5" />
                   <span>Sign out</span>
-                </button>
-              </div>
+                </span>
+              </button>
             ) : (
               <button
                 onClick={() => {
@@ -170,9 +196,9 @@ export function Header() {
                   setMobileMenuOpen(false);
                 }}
                 disabled={isSigningIn}
-                className="w-full flex items-center justify-center space-x-1.5 py-2 px-3 rounded-control bg-neutral-surface hover:bg-lavender-surface/50 border border-neutral-divider text-xs text-brand-navy"
+                className="w-full flex items-center justify-center space-x-1.5 py-2 px-3 rounded-control bg-neutral-surface hover:bg-lavender-surface/50 border border-neutral-divider text-sm font-medium text-brand-navy"
               >
-                <LogIn className="w-3.5 h-3.5 text-cobalt-action" />
+                <LogIn className="w-4 h-4 text-cobalt-action" />
                 <span>{isSigningIn ? 'Signing in...' : 'Sign in (Local Dev)'}</span>
               </button>
             )}

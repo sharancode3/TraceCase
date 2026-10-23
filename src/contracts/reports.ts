@@ -13,6 +13,7 @@ export const CreateReportCommandSchema = z.object({
   suspectedSteps: z.array(z.string().trim().min(1)).max(20).optional(),
   browserEnvironment: z.string().trim().max(100).optional(),
   buildVersion: z.string().trim().max(50).optional(),
+  idempotencyKey: z.string().trim().max(128).optional(),
 }).strict(); // Server owns ID, createdBy, timestamps, and investigation links
 export type CreateReportCommand = z.infer<typeof CreateReportCommandSchema>;
 
@@ -30,6 +31,7 @@ export const DraftReportIntakeSchema = z.object({
   suspectedSteps: z.array(z.string().trim().min(1)).max(20).optional(),
   browserEnvironment: z.string().trim().max(100).optional(),
   buildVersion: z.string().trim().max(50).optional(),
+  idempotencyKey: z.string().trim().max(128).optional(),
 }).strict();
 export type DraftReportIntake = z.infer<typeof DraftReportIntakeSchema>;
 

@@ -643,6 +643,81 @@ export function renderWorkbenchHtml(options: RenderWorkbenchOptions): string {
       font-size: 0.875rem;
     }
 
+    /* Confirmation Modal */
+    .wb-modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      backdrop-filter: blur(2px);
+    }
+    .wb-modal-dialog {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.2);
+      width: 100%;
+      max-width: 480px;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    .wb-modal-title {
+      font-size: 1.125rem;
+      font-weight: 700;
+      color: var(--text-main);
+      margin: 0;
+    }
+    .wb-modal-desc {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+      margin: 0;
+    }
+    .wb-confirm-item-card {
+      background: #f8fafc;
+      border: 1px solid var(--border-subtle);
+      border-left: 3px solid var(--danger-text);
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    .wb-confirm-item-id {
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-size: 0.75rem;
+      color: var(--text-subtle);
+      font-weight: 600;
+    }
+    .wb-confirm-item-title {
+      font-size: 0.9375rem;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+    .wb-modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.75rem;
+      margin-top: 0.5rem;
+    }
+    .wb-btn-danger {
+      background: var(--danger-text);
+      color: #ffffff;
+      border: 1px solid transparent;
+    }
+    .wb-btn-danger:hover {
+      background: #b91c1c;
+    }
+    .wb-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
     /* Footer */
     .wb-footer {
       font-size: 0.75rem;
@@ -889,6 +964,50 @@ export function renderWorkbenchHtml(options: RenderWorkbenchOptions): string {
       </ul>
     </section>
 
+    <!-- Delete Confirmation Modal Dialog -->
+    <div
+      id="wb-confirm-modal"
+      class="wb-modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="wb-confirm-title"
+      aria-describedby="wb-confirm-desc"
+      style="display: none;"
+    >
+      <div class="wb-modal-dialog">
+        <div class="wb-modal-header">
+          <h2 id="wb-confirm-title" class="wb-modal-title">Confirm Deletion</h2>
+        </div>
+        <div class="wb-modal-body">
+          <p id="wb-confirm-desc" class="wb-modal-desc">
+            Are you sure you want to permanently delete this work item from the queue?
+          </p>
+          <div class="wb-confirm-item-card" aria-label="Work item pending deletion">
+            <span id="wb-confirm-item-id" class="wb-confirm-item-id"></span>
+            <span id="wb-confirm-item-title" class="wb-confirm-item-title"></span>
+          </div>
+        </div>
+        <div class="wb-modal-actions">
+          <button
+            type="button"
+            id="wb-confirm-cancel-btn"
+            class="wb-btn wb-btn-secondary"
+            aria-label="Cancel deletion"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            id="wb-confirm-delete-btn"
+            class="wb-btn wb-btn-danger"
+            aria-label="Confirm and delete work item"
+          >
+            Confirm Delete
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Footer -->
     <footer class="wb-footer">
       <span>Application: TraceCase Workbench</span> &bull;
@@ -904,6 +1023,9 @@ export function renderWorkbenchHtml(options: RenderWorkbenchOptions): string {
       let currentFilter = 'all';
       let searchQuery = '';
       let selectedItemId = null;
+      let pendingDeleteItemId = null;
+      let isDeleting = false;
+      let lastFocusedElement = null;
 
       const queueList = document.getElementById('wb-queue-list');
       const emptyState = document.getElementById('wb-empty-state');
@@ -925,6 +1047,13 @@ export function renderWorkbenchHtml(options: RenderWorkbenchOptions): string {
       const detailOwner = document.getElementById('detail-owner');
       const detailCreated = document.getElementById('detail-created');
       const detailDeleteBtn = document.getElementById('detail-delete-btn');
+
+      // Confirmation modal elements
+      const confirmModal = document.getElementById('wb-confirm-modal');
+      const confirmItemId = document.getElementById('wb-confirm-item-id');
+      const confirmItemTitle = document.getElementById('wb-confirm-item-title');
+      const confirmCancelBtn = document.getElementById('wb-confirm-cancel-btn');
+      const confirmDeleteBtn = document.getElementById('wb-confirm-delete-btn');
 
       // Metrics elements
       const totalVal = document.getElementById('metric-total-val');
@@ -1104,9 +1233,113 @@ export function renderWorkbenchHtml(options: RenderWorkbenchOptions): string {
         });
       }
 
+      function openConfirmModal(itemId, triggerEl) {
+        if (!itemId || isDeleting) return;
+        pendingDeleteItemId = itemId;
+        lastFocusedElement = triggerEl || document.activeElement;
+
+        const item = items.find(function(i) { return i.id === itemId; });
+        const title = item ? item.title : itemId;
+
+        if (confirmItemId) confirmItemId.textContent = itemId;
+        if (confirmItemTitle) confirmItemTitle.textContent = title;
+
+        if (confirmModal) {
+          confirmModal.style.display = 'flex';
+          if (confirmCancelBtn) confirmCancelBtn.disabled = false;
+          if (confirmDeleteBtn) confirmDeleteBtn.disabled = false;
+          if (confirmCancelBtn) confirmCancelBtn.focus();
+        }
+      }
+
+      function closeConfirmModal() {
+        if (!confirmModal) return;
+        confirmModal.style.display = 'none';
+        pendingDeleteItemId = null;
+        if (confirmCancelBtn) confirmCancelBtn.disabled = false;
+        if (confirmDeleteBtn) confirmDeleteBtn.disabled = false;
+
+        if (lastFocusedElement && typeof lastFocusedElement.focus === 'function' && document.body.contains(lastFocusedElement)) {
+          lastFocusedElement.focus();
+        } else {
+          const fallbackEl = document.getElementById('wb-queue-list') || document.body;
+          if (fallbackEl && typeof fallbackEl.focus === 'function') {
+            fallbackEl.focus();
+          }
+        }
+        lastFocusedElement = null;
+      }
+
+      // Confirmation Modal Action Handlers
+      if (confirmCancelBtn) {
+        confirmCancelBtn.addEventListener('click', function() {
+          if (!isDeleting) {
+            closeConfirmModal();
+          }
+        });
+      }
+
+      if (confirmDeleteBtn) {
+        confirmDeleteBtn.addEventListener('click', async function() {
+          if (isDeleting || !pendingDeleteItemId) return;
+          isDeleting = true;
+          if (confirmCancelBtn) confirmCancelBtn.disabled = true;
+          if (confirmDeleteBtn) confirmDeleteBtn.disabled = true;
+          const targetId = pendingDeleteItemId;
+          try {
+            await executeDelete(targetId);
+          } finally {
+            isDeleting = false;
+            closeConfirmModal();
+          }
+        });
+      }
+
+      if (confirmModal) {
+        confirmModal.addEventListener('click', function(e) {
+          if (e.target === confirmModal && !isDeleting) {
+            closeConfirmModal();
+          }
+        });
+      }
+
+      // Escape key and focus trap for confirmation modal
+      document.addEventListener('keydown', function(e) {
+        if (confirmModal && confirmModal.style.display !== 'none') {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            if (!isDeleting) {
+              closeConfirmModal();
+            }
+            return;
+          }
+
+          if (e.key === 'Tab') {
+            const focusable = [confirmCancelBtn, confirmDeleteBtn].filter(function(btn) {
+              return btn && !btn.disabled;
+            });
+            if (focusable.length === 0) return;
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+
+            if (e.shiftKey) {
+              if (document.activeElement === first) {
+                e.preventDefault();
+                last.focus();
+              }
+            } else {
+              if (document.activeElement === last) {
+                e.preventDefault();
+                first.focus();
+              }
+            }
+          }
+        }
+      });
+
       // Action Handlers on Queue List (Delegated)
       if (queueList) {
-        queueList.addEventListener('click', async function(e) {
+        queueList.addEventListener('click', function(e) {
           const actionBtn = e.target.closest('[data-action]');
           if (!actionBtn) return;
 
@@ -1116,7 +1349,7 @@ export function renderWorkbenchHtml(options: RenderWorkbenchOptions): string {
           if (action === 'view-details') {
             selectItem(itemId);
           } else if (action === 'delete') {
-            await executeDelete(itemId);
+            openConfirmModal(itemId, actionBtn);
           }
         });
 
@@ -1134,9 +1367,9 @@ export function renderWorkbenchHtml(options: RenderWorkbenchOptions): string {
 
       // Detail Delete Button Handler
       if (detailDeleteBtn) {
-        detailDeleteBtn.addEventListener('click', async function() {
+        detailDeleteBtn.addEventListener('click', function() {
           if (selectedItemId) {
-            await executeDelete(selectedItemId);
+            openConfirmModal(selectedItemId, detailDeleteBtn);
           }
         });
       }

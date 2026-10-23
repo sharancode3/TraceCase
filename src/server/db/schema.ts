@@ -116,6 +116,7 @@ export const clarificationQuestionsTable = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     investigationId: uuid('investigation_id').notNull().references(() => investigationsTable.id),
     questionIndex: integer('question_index').notNull(),
+    roundIndex: integer('round_index').notNull().default(1),
     questionText: text('question_text').notNull(),
     explanation: text('explanation'),
     suggestedOptions: text('suggested_options').array(),
@@ -128,6 +129,7 @@ export const clarificationQuestionsTable = pgTable(
   (table) => [
     uniqueIndex('clarification_questions_inv_idx_idx').on(table.investigationId, table.questionIndex),
     index('clarification_questions_inv_id_idx').on(table.investigationId),
+    index('clarification_questions_inv_round_idx').on(table.investigationId, table.roundIndex),
   ]
 );
 

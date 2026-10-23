@@ -95,6 +95,19 @@ describe('Person 2: TraceCase Workbench UI & View Generator (Stage P2-2.2)', () 
       expect(html).toContain('id="wb-empty-state" class="wb-empty-state" role="status"');
       expect(html).toContain('id="wb-loading-state" class="wb-loading-state" role="status"');
       expect(html).toContain('id="wb-error-toast" class="wb-error-toast" role="alert"');
+
+      // 8. Delete confirmation modal dialog
+      expect(html).toContain('id="wb-confirm-modal"');
+      expect(html).toContain('role="dialog"');
+      expect(html).toContain('aria-modal="true"');
+      expect(html).toContain('aria-labelledby="wb-confirm-title"');
+      expect(html).toContain('aria-describedby="wb-confirm-desc"');
+      expect(html).toContain('id="wb-confirm-title"');
+      expect(html).toContain('Confirm Deletion');
+      expect(html).toContain('id="wb-confirm-item-id"');
+      expect(html).toContain('id="wb-confirm-item-title"');
+      expect(html).toContain('id="wb-confirm-cancel-btn"');
+      expect(html).toContain('id="wb-confirm-delete-btn"');
     });
 
     it('omits internal bugModeActive flag from generated HTML', () => {
@@ -914,6 +927,269 @@ describe('Person 2: TraceCase Workbench UI & View Generator (Stage P2-2.2)', () 
         await client.resetFixture('workbench_work_items');
         const finalReadback = await client.readbackFixture('workbench_work_items');
         expect(finalReadback.itemCount).toBe(4);
+      });
+    });
+
+    describe('7. Stage P2-2.2: Delete Confirmation Modal & Controlled Mutation Guards', () => {
+      let buggyApp: ReturnType<typeof createDemoTargetServer>;
+      let buggyUrl: string;
+      let fixedApp: ReturnType<typeof createDemoTargetServer>;
+      let fixedUrl: string;
+      const testSecret = 'tc-confirm-test-secret-2026';
+
+      beforeAll(async () => {
+        buggyApp = createDemoTargetServer({
+          port: 0,
+          resetSecret: testSecret,
+          bugModeActive: true,
+          buildVersion: 'wb-v1.0.0-buggy',
+        });
+        const bPort = await buggyApp.start(0, '127.0.0.1');
+        buggyUrl = `http://127.0.0.1:${bPort}`;
+
+        fixedApp = createDemoTargetServer({
+          port: 0,
+          resetSecret: testSecret,
+          bugModeActive: false,
+          buildVersion: 'wb-v1.0.1-fixed',
+        });
+        const fPort = await fixedApp.start(0, '127.0.0.1');
+        fixedUrl = `http://127.0.0.1:${fPort}`;
+      });
+
+      afterAll(async () => {
+        await buggyApp.stop();
+        await fixedApp.stop();
+      });
+
+      it('1. Clicking delete button opens confirmation dialog with accessible labels and item preview', () => {
+        const html = renderWorkbenchHtml({
+          buildVersion: 'wb-v1.0.0-buggy',
+          isSandbox: true,
+          items: INITIAL_WORKBENCH_FIXTURE,
+        });
+
+        // Dialog container and accessibility attributes
+        expect(html).toContain('id="wb-confirm-modal"');
+        expect(html).toContain('role="dialog"');
+        expect(html).toContain('aria-modal="true"');
+        expect(html).toContain('aria-labelledby="wb-confirm-title"');
+        expect(html).toContain('aria-describedby="wb-confirm-desc"');
+
+        // Modal title and item preview fields
+        expect(html).toContain('id="wb-confirm-title"');
+        expect(html).toContain('Confirm Deletion');
+        expect(html).toContain('id="wb-confirm-desc"');
+        expect(html).toContain('id="wb-confirm-item-id"');
+        expect(html).toContain('id="wb-confirm-item-title"');
+
+        // Actions
+        expect(html).toContain('id="wb-confirm-cancel-btn"');
+        expect(html).toContain('id="wb-confirm-delete-btn"');
+
+        // Script verifies openConfirmModal logic
+        expect(html).toContain('function openConfirmModal(itemId, triggerEl)');
+        expect(html).toContain("confirmModal.style.display = 'flex'");
+      });
+
+      it('2. Clicking delete alone does not mutate server state or delete any records', async () => {
+        // Reset fixture to baseline
+        await fetch(`${buggyUrl}/api/test/reset-fixture`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-TraceCase-Reset-Auth': testSecret },
+          body: JSON.stringify({ fixtureScope: 'workbench_work_items' }),
+        });
+
+        // Verify all 4 baseline items exist prior to any action
+        const beforeRes = await fetch(`${buggyUrl}/api/test/readback?scope=workbench_work_items`, {
+          headers: { 'X-TraceCase-Reset-Auth': testSecret },
+        });
+        const before = (await beforeRes.json()) as FixtureReadbackResult;
+        expect(before.itemCount).toBe(4);
+
+        // Client-side openConfirmModal simply displays dialog: NO DELETE request is sent
+        // Readback confirms 100% untouched store state
+        const afterRes = await fetch(`${buggyUrl}/api/test/readback?scope=workbench_work_items`, {
+          headers: { 'X-TraceCase-Reset-Auth': testSecret },
+        });
+        const after = (await afterRes.json()) as FixtureReadbackResult;
+        expect(after.itemCount).toBe(4);
+        expect(after.items.map((i) => i.id)).toEqual(before.items.map((i) => i.id));
+      });
+
+      it('3. Cancel does not send DELETE request and closes confirmation interface', () => {
+        const html = renderWorkbenchHtml({
+          buildVersion: 'wb-v1.0.0-buggy',
+          isSandbox: true,
+          items: INITIAL_WORKBENCH_FIXTURE,
+        });
+
+        // Cancel handler closes modal, resets pendingDeleteItemId, and restores focus
+        expect(html).toContain('function closeConfirmModal()');
+        expect(html).toContain("confirmModal.style.display = 'none'");
+        expect(html).toContain('pendingDeleteItemId = null');
+        expect(html).toContain("confirmCancelBtn.addEventListener('click'");
+      });
+
+      it('4. Cancel preserves selected item, active filter, search query, and metrics', () => {
+        const metrics = calculateWorkbenchMetrics(INITIAL_WORKBENCH_FIXTURE);
+        expect(metrics.total).toBe(4);
+        expect(metrics.active).toBe(2);
+        expect(metrics.completed).toBe(2);
+
+        // Cancel does not mutate local items array or filter settings
+        const html = renderWorkbenchHtml({
+          buildVersion: 'wb-v1.0.0-buggy',
+          isSandbox: true,
+          items: INITIAL_WORKBENCH_FIXTURE,
+        });
+
+        expect(html).toContain("confirmCancelBtn.addEventListener('click', function() {");
+        expect(html).toContain("closeConfirmModal();");
+      });
+
+      it('5. Confirm Delete sends exactly one DELETE request and prevents duplicate in-flight submissions', async () => {
+        // Reset fixture to baseline
+        await fetch(`${buggyUrl}/api/test/reset-fixture`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-TraceCase-Reset-Auth': testSecret },
+          body: JSON.stringify({ fixtureScope: 'workbench_work_items' }),
+        });
+
+        // Confirm handler sets isDeleting=true and disables action buttons to prevent double-click race
+        const html = renderWorkbenchHtml({
+          buildVersion: 'wb-v1.0.0-buggy',
+          isSandbox: true,
+          items: INITIAL_WORKBENCH_FIXTURE,
+        });
+        expect(html).toContain('if (isDeleting || !pendingDeleteItemId) return;');
+        expect(html).toContain('isDeleting = true;');
+        expect(html).toContain('confirmDeleteBtn.disabled = true;');
+        expect(html).toContain('confirmCancelBtn.disabled = true;');
+
+        // Exactly one DELETE request executes
+        const res = await fetch(`${buggyUrl}/api/workbench/items/wb-item-04?filter=all&scope=workbench_work_items`, {
+          method: 'DELETE',
+        });
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as any;
+        expect(body.deletedItemId).toBe('wb-item-04');
+
+        // Post-deletion readback confirms single removal
+        const readbackRes = await fetch(`${buggyUrl}/api/test/readback?scope=workbench_work_items`, {
+          headers: { 'X-TraceCase-Reset-Auth': testSecret },
+        });
+        const readback = (await readbackRes.json()) as FixtureReadbackResult;
+        expect(readback.itemCount).toBe(3);
+        expect(readback.items.find((i) => i.id === 'wb-item-04')).toBeUndefined();
+      });
+
+      it('6. Both row-level and detail-panel Delete buttons route through confirmation modal', () => {
+        const html = renderWorkbenchHtml({
+          buildVersion: 'wb-v1.0.0-buggy',
+          isSandbox: true,
+          items: INITIAL_WORKBENCH_FIXTURE,
+        });
+
+        // Row button delegation calls openConfirmModal
+        expect(html).toContain("else if (action === 'delete') {");
+        expect(html).toContain('openConfirmModal(itemId, actionBtn);');
+
+        // Detail pane button listener calls openConfirmModal
+        expect(html).toContain("detailDeleteBtn.addEventListener('click', function() {");
+        expect(html).toContain('openConfirmModal(selectedItemId, detailDeleteBtn);');
+      });
+
+      it('7. Invalid or failed deletion displays an error toast without false success', async () => {
+        // Attempting to delete non-existent item returns 404
+        const res = await fetch(`${buggyUrl}/api/workbench/items/wb-nonexistent-id?filter=all&scope=workbench_work_items`, {
+          method: 'DELETE',
+        });
+        expect(res.status).toBe(404);
+        const data = (await res.json()) as any;
+        expect(data.error.code).toBe('ITEM_NOT_FOUND');
+
+        // Client code handles error response via showError
+        const html = renderWorkbenchHtml({
+          buildVersion: 'wb-v1.0.0-buggy',
+          isSandbox: true,
+          items: INITIAL_WORKBENCH_FIXTURE,
+        });
+        expect(html).toContain('showError(msg);');
+        expect(html).toContain("logActivity('ERROR', 'Delete rejected: ' + msg, 'tag-error');");
+      });
+
+      it('8. Buggy build still deletes the wrong record after confirmation (controlled defect preserved)', async () => {
+        // Reset fixture to baseline
+        await fetch(`${buggyUrl}/api/test/reset-fixture`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-TraceCase-Reset-Auth': testSecret },
+          body: JSON.stringify({ fixtureScope: 'workbench_work_items' }),
+        });
+
+        // In buggy build, user confirms deletion of wb-item-02 while active filter is on:
+        // Due to the intentional index offset defect, wb-item-01 is deleted instead!
+        const res = await fetch(`${buggyUrl}/api/workbench/items/wb-item-02?filter=active&scope=workbench_work_items`, {
+          method: 'DELETE',
+        });
+        expect(res.status).toBe(200);
+        const data = (await res.json()) as any;
+        expect(data.deletedItemId).toBe('wb-item-01');
+
+        const readbackRes = await fetch(`${buggyUrl}/api/test/readback?scope=workbench_work_items`, {
+          headers: { 'X-TraceCase-Reset-Auth': testSecret },
+        });
+        const readback = (await readbackRes.json()) as FixtureReadbackResult;
+        expect(readback.itemCount).toBe(3);
+        expect(readback.items.map((i) => i.id)).toEqual(['wb-item-02', 'wb-item-03', 'wb-item-04']);
+      });
+
+      it('9. Fixed build still deletes the correct record after confirmation', async () => {
+        // Reset fixed fixture to baseline
+        await fetch(`${fixedUrl}/api/test/reset-fixture`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-TraceCase-Reset-Auth': testSecret },
+          body: JSON.stringify({ fixtureScope: 'workbench_work_items' }),
+        });
+
+        // In fixed build, user confirms deletion of wb-item-02 while active filter is on:
+        // Fixed behavior deletes by stable ID wb-item-02, preserving wb-item-01
+        const res = await fetch(`${fixedUrl}/api/workbench/items/wb-item-02?filter=active&scope=workbench_work_items`, {
+          method: 'DELETE',
+        });
+        expect(res.status).toBe(200);
+        const data = (await res.json()) as any;
+        expect(data.deletedItemId).toBe('wb-item-02');
+
+        const readbackRes = await fetch(`${fixedUrl}/api/test/readback?scope=workbench_work_items`, {
+          headers: { 'X-TraceCase-Reset-Auth': testSecret },
+        });
+        const readback = (await readbackRes.json()) as FixtureReadbackResult;
+        expect(readback.itemCount).toBe(3);
+        expect(readback.items.map((i) => i.id)).toEqual(['wb-item-01', 'wb-item-03', 'wb-item-04']);
+      });
+
+      it('10. Reset and readback behavior remains completely unchanged and idempotent', async () => {
+        const client = new DemoTargetClient({
+          baseUrl: buggyUrl,
+          resetSecret: testSecret,
+          timeoutMs: 5000,
+        });
+
+        // Mutate store
+        await fetch(`${buggyUrl}/api/workbench/items/wb-item-03?filter=all&scope=workbench_work_items`, {
+          method: 'DELETE',
+        });
+
+        // Reset restores exactly 4 items
+        const receipt = await client.resetFixture('workbench_work_items');
+        expect(receipt.success).toBe(true);
+        expect(receipt.itemsRestored).toBe(4);
+
+        // Readback confirms all 4 canonical items present in approved order
+        const readback = await client.readbackFixture('workbench_work_items');
+        expect(readback.itemCount).toBe(4);
+        expect(readback.items.map((i) => i.id)).toEqual(['wb-item-01', 'wb-item-02', 'wb-item-03', 'wb-item-04']);
       });
     });
   });

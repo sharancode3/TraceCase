@@ -116,6 +116,7 @@ export const EvidenceArtifactMetadataSchema = z.object({
   createdAt: z.string().datetime(),
 });
 export type EvidenceArtifactMetadata = z.infer<typeof EvidenceArtifactMetadataSchema>;
+export type AuthorizedArtifactDescriptor = EvidenceArtifactMetadata;
 
 /**
  * Legacy evidence manifest schema.

@@ -9,7 +9,7 @@ import { ClarificationQuestionSchema, ProposedClarificationQuestionSchema } from
 export const ClarificationProposalSchema = z.object({
   status: z.literal('CLARIFICATION_NEEDED'),
   questions: z.array(ProposedClarificationQuestionSchema.or(ClarificationQuestionSchema)).min(1).max(5),
-  preliminaryUnderstanding: z.string().max(1000),
+  preliminaryUnderstanding: z.string().max(1000).optional().default('Clarification needed to establish reproduction parameters.'),
 }).strict();
 
 export const ExperimentProposalSchema = z.object({
