@@ -131,14 +131,57 @@ The integrated journey in `tests/integration/workbench-integrated-journey.test.t
 5. **Trusted Pair Assessment:** PairAssessor evaluated both attempts and returned `CONFIRMED_REPRODUCED` with `validAttemptCount: 2`, `matchingAttemptCount: 2`, and `isComparable: true`.
 6. **Dual-Bucket Evidence Sanitization:** Captured network traces containing authorization tokens were redacted (`[REDACTED_SECRET]`) and delivered through the `PUBLIC_SAFE` tier with verified SHA-256 integrity.
 
+## 7. Live Application & End-to-End User Journey Verification
+
+Beyond headless integration suites, the entire TraceCase application was verified through a live user journey with real background daemon workers, real PostgreSQL persistence, OpenAI Luna planning, cryptographic plan approval, and real Playwright browser execution:
+
+1. **Target Registration:**
+   - Target URL: `http://localhost:3005/workbench`
+   - Scope: `workbench_work_items`
+   - Sandbox status: `isSandbox: true`, `isSandboxVerified: true`
+   - Reset endpoint: `http://localhost:3005/api/test/reset-fixture`
+   - Target ID: `57e92051-58ec-48cb-9c81-685643403ceb`
+
+2. **Bug Report Intake:**
+   - Investigation ID: `37314888-278d-4f45-a414-74116b870736`
+   - Title: `Deleting active task "Implement Audit Log Retention Policy" (wb-item-02) removes wb-item-01 instead`
+   - Build Version: `wb-v1.0.0-buggy`
+   - Suspected Steps: Included navigation, Active filter, clicking Delete on `wb-item-02`, and confirming deletion via `#wb-confirm-delete`.
+
+3. **OpenAI Luna Plan Generation & Cryptographic Approval:**
+   - Plan Version: 1
+   - Plan Hash: `8ddde02a5b59448d5d7c295d6a86edee9d6631ca69bbbc1da3e1a6b3920b9711`
+   - Expected Baseline: 4 canonical workbench work items, `scope: workbench_work_items`, `buildVersion: wb-v1.0.0-buggy`.
+   - Fingerprint Binding: Cryptographically bound steps, tiers, tools, assertions, `fixtureScope`, and `expectedBaseline`.
+   - Approved by Operator via `POST /api/v1/investigations/{id}/plan/approve`.
+
+4. **Background Worker Execution & Two-Attempt Confirmation:**
+   - Claimed by Worker ID: `worker-SHARAN-33416` (Job ID: `163de46b-4f51-48eb-a7f3-c68d638e6466`).
+   - Mode: `AI_GROUNDED` with real Chromium browser context.
+   - Pre-flight baseline: Verified 4 initial items restored via `POST /api/test/reset-fixture`.
+   - Attempt 1: Executed 4 steps in 12.505s. Evaluated assertions: `wb-item-02` remained in DOM (3 elements), `wb-item-01` absent (0 elements). Finding: `VALID_DEFECT_DETECTED` (`REPORTED_FAILURE`).
+   - Post-attempt reset: Independent readback verified 100% fixture restoration.
+   - Attempt 2: Executed 4 steps in 11.582s. Observed identical failure signature. Finding: `VALID_DEFECT_DETECTED` (`REPORTED_FAILURE`).
+   - PairAssessor: Both valid runs reproduced the defect -> Final Verdict: `CONFIRMED_REPRODUCED`.
+
+5. **User Interface Verification:**
+   - Captured full-page screenshot via Playwright: `workbench-e2e-investigation-result.png`.
+   - Verified that the web UI displays:
+     - Dimension 1: Lifecycle State: `Completed`
+     - Dimension 2: Reproduction Verdict: `Confirmed Reproduced`
+     - Two-Run Deterministic Confirmation Record: `Attempt 1: Defect Detected`, `Attempt 2: Defect Detected`
+     - AI Synthesized Evidence Explanation: Factual summary explaining that both attempts matched the reported failure signature with identical assertion outcomes.
+
 ---
 
-## 7. Commits on Integration Branch
+## 8. Commits on Integration Branch
 
 The integration branch `codex/integrate-person-2-testingupdate` contains the following commits:
 
 1. `a02f2dc`: `merge: integrate Person 2 testingupdate branch (b16bb89434f982827dff31a95b37b73cff59c562)`
 2. `a51f540`: `fix(workbench): resolve integration defects in view, server, client, and verification controller`
 3. `03d3126`: `test(workbench): add real browser verification and integrated lifecycle journey suites`
+4. `d3b8a57`: `docs(workbench): document Stage P2-2.6 integration verification and test results`
+5. `fix/e2e`: `fix(workbench): complete full-journey runtime wiring, baseline comparator, and planner modal support`
 
 No commits were pushed to any remote repository.

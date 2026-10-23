@@ -114,6 +114,8 @@ export function calculateAuthoritativePlanFingerprint(rawPlan: unknown): string 
     maxAttempts: validated.maxAttempts,
     maxDurationMs: validated.maxDurationMs,
     requiresResetHook: validated.requiresResetHook,
+    fixtureScope: validated.fixtureScope ?? null,
+    expectedBaseline: validated.expectedBaseline ?? null,
   };
 
   const canonicalString = canonicalJsonStringify(canonicalPayload);

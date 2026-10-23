@@ -1,3 +1,4 @@
+import { INITIAL_WORKBENCH_FIXTURE } from '../../../demo-target/workbench/workbench-view';
 import { eq, and, desc, isNull, sql } from 'drizzle-orm';
 import {
   investigationsTable,
@@ -178,11 +179,17 @@ export class InvestigationWorkflowService {
       }
     }
 
+    const stepsFormatted = Array.isArray(report.suspectedSteps) && report.suspectedSteps.length > 0
+      ? `\n\nSuspected Steps to Reproduce:\n` + report.suspectedSteps.map((s, idx) => `${idx + 1}. ${s}`).join('\n')
+      : '';
+    const fullRawDescription = (report.rawDescription || report.bugDescription || '') + stepsFormatted;
+
     const plannerInput = {
       reportId: report.id,
       targetId: target.id,
       title: report.title,
-      rawDescription: report.rawDescription || report.bugDescription,
+      rawDescription: fullRawDescription,
+      suspectedSteps: report.suspectedSteps,
       knownFacts,
       missingFacts,
       clarificationStatus: (missingFacts.length > 0 ? 'PENDING_USER_ANSWER' : 'NOT_NEEDED') as
@@ -267,6 +274,25 @@ export class InvestigationWorkflowService {
       const nextVersion = (inv.planVersion || 0) + 1;
       const now = new Date().toISOString();
 
+      // Derive fixtureScope and expectedBaseline from target / proposal
+      const isWorkbench =
+        Boolean((target as any).fixtureScope === 'workbench_work_items') ||
+        (typeof target.baseUrl === 'string' && target.baseUrl.includes('/workbench')) ||
+        (proposal as any).fixtureScope === 'workbench_work_items';
+
+      const fixtureScope = isWorkbench
+        ? 'workbench_work_items'
+        : ((target as any).fixtureScope || (proposal as any).fixtureScope || undefined);
+
+      const expectedBaseline = isWorkbench
+        ? {
+            fixtureScope: 'workbench_work_items',
+            buildVersion: 'wb-v1.0.0-buggy',
+            itemCount: 4,
+            items: INITIAL_WORKBENCH_FIXTURE,
+          }
+        : ((proposal as any).expectedBaseline || undefined);
+
       const authoritativePlan: AuthoritativeExperimentPlan = {
         id: crypto.randomUUID(),
         investigationId: inv.id,
@@ -283,6 +309,8 @@ export class InvestigationWorkflowService {
         maxAttempts: 2,
         maxDurationMs: 120000,
         requiresResetHook: proposal.requiresResetHook,
+        fixtureScope,
+        expectedBaseline,
         planHash: '', // computed below
         createdAt: now,
       };

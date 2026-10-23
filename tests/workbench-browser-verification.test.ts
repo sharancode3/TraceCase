@@ -3,7 +3,9 @@ import { chromium, type Browser, type Page } from 'playwright';
 import { createDemoTargetServer } from '../demo-target/server';
 import path from 'node:path';
 
-const ARTIFACT_DIR = 'C:/Users/tms10/.gemini/antigravity/brain/ff1527dc-9295-49af-9f62-45312e3b7115';
+import fs from 'node:fs';
+const ARTIFACT_DIR = process.env.TEST_OUTPUT_DIR || path.join(process.cwd(), 'test-results', 'workbench');
+fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
 const TEST_SECRET = 'tc-browser-test-secret-2026';
 
 describe('Person 2: Workbench Live Playwright Browser Verification', () => {

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import http from 'node:http';
 import { TwoAttemptController } from '@/server/verification/two-attempt-controller';
@@ -19,6 +19,29 @@ import { IntegratedEvidenceReviewAgent } from '@/server/ai/integrated-adapters';
 import { MockTestDoubleModelProvider } from '@/server/ai/provider';
 
 describe('Person 1 & Person 2 Behavioral Regressions & Invariant Suite', () => {
+  let sharedLocalServer: http.Server;
+  let sharedPort: number = 0;
+  let sharedBaseUrl: string = 'http://127.0.0.1:3000';
+
+  beforeAll(async () => {
+    sharedLocalServer = http.createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<!DOCTYPE html><html><body><button id="submit-btn">Submit</button><button id="btn">Click me</button><input id="input-box" /></body></html>');
+    });
+    sharedPort = await new Promise<number>((resolve) => {
+      sharedLocalServer.listen(0, '127.0.0.1', () => {
+        const addr = sharedLocalServer.address();
+        resolve(typeof addr === 'object' && addr ? addr.port : 0);
+      });
+    });
+    sharedBaseUrl = `http://127.0.0.1:${sharedPort}`;
+  });
+
+  afterAll(async () => {
+    if (sharedLocalServer) {
+      await new Promise<void>((resolve) => sharedLocalServer.close(() => resolve()));
+    }
+  });
   let mockDb: Phase7TestDbMock;
   let leaseService: ExecutionLeaseService;
   const ownerId = 'usr-regression-test';
@@ -34,8 +57,8 @@ describe('Person 1 & Person 2 Behavioral Regressions & Invariant Suite', () => {
       id: targetId,
       ownerId,
       name: 'Regression Target',
-      baseUrl: 'http://127.0.0.1:3000',
-      allowedOrigins: ['http://127.0.0.1:3000'],
+      baseUrl: sharedBaseUrl,
+      allowedOrigins: [sharedBaseUrl],
       isSandbox: true,
       isSandboxVerified: true,
       environment: 'demo',
@@ -123,7 +146,7 @@ describe('Person 1 & Person 2 Behavioral Regressions & Invariant Suite', () => {
             stepIndex: 1,
             semanticAction: 'Navigate to target',
             toolKind: 'navigate',
-            value: 'http://127.0.0.1:3000',
+            value: sharedBaseUrl,
             tier: 'TIER_1_READ_ONLY',
             timeoutMs: 5000,
           },
@@ -198,8 +221,8 @@ describe('Person 1 & Person 2 Behavioral Regressions & Invariant Suite', () => {
     const safeTarget: SafeTargetProfile = {
       id: targetId,
       name: 'Safe Target',
-      baseUrl: 'http://127.0.0.1:3000',
-      allowedOrigins: ['http://127.0.0.1:3000'],
+      baseUrl: sharedBaseUrl,
+      allowedOrigins: [sharedBaseUrl],
       isSandboxVerified: true,
       environment: 'demo',
       hasResetCapability: false,
@@ -224,7 +247,7 @@ describe('Person 1 & Person 2 Behavioral Regressions & Invariant Suite', () => {
           stepIndex: 1,
           semanticAction: 'Navigate to target',
           toolKind: 'navigate',
-          value: 'http://127.0.0.1:3000',
+          value: sharedBaseUrl,
           tier: 'TIER_1_READ_ONLY',
           timeoutMs: 5000,
         },
@@ -281,8 +304,8 @@ describe('Person 1 & Person 2 Behavioral Regressions & Invariant Suite', () => {
     const safeTarget: SafeTargetProfile = {
       id: targetId,
       name: 'Safe Target',
-      baseUrl: 'http://127.0.0.1:3000',
-      allowedOrigins: ['http://127.0.0.1:3000'],
+      baseUrl: sharedBaseUrl,
+      allowedOrigins: [sharedBaseUrl],
       isSandboxVerified: true,
       environment: 'demo',
       hasResetCapability: false,
@@ -307,7 +330,7 @@ describe('Person 1 & Person 2 Behavioral Regressions & Invariant Suite', () => {
           stepIndex: 1,
           semanticAction: 'Navigate to target',
           toolKind: 'navigate',
-          value: 'http://127.0.0.1:3000',
+          value: sharedBaseUrl,
           tier: 'TIER_1_READ_ONLY',
           timeoutMs: 5000,
         },
@@ -373,8 +396,8 @@ describe('Person 1 & Person 2 Behavioral Regressions & Invariant Suite', () => {
     const safeTarget: SafeTargetProfile = {
       id: targetId,
       name: 'Safe Target',
-      baseUrl: 'http://127.0.0.1:3000',
-      allowedOrigins: ['http://127.0.0.1:3000'],
+      baseUrl: sharedBaseUrl,
+      allowedOrigins: [sharedBaseUrl],
       isSandboxVerified: true,
       environment: 'demo',
       hasResetCapability: false,
@@ -399,7 +422,7 @@ describe('Person 1 & Person 2 Behavioral Regressions & Invariant Suite', () => {
           stepIndex: 1,
           semanticAction: 'Navigate to target',
           toolKind: 'navigate',
-          value: 'http://127.0.0.1:3000',
+          value: sharedBaseUrl,
           tier: 'TIER_1_READ_ONLY',
           timeoutMs: 5000,
         },
@@ -505,7 +528,7 @@ describe('Person 1 & Person 2 Behavioral Regressions & Invariant Suite', () => {
       planPayload: {
         version: 1,
         planHash,
-        steps: [{ stepIndex: 1, semanticAction: 'Navigate to target', toolKind: 'navigate', value: 'http://127.0.0.1:3000', tier: 'TIER_1_READ_ONLY', timeoutMs: 5000 }],
+        steps: [{ stepIndex: 1, semanticAction: 'Navigate to target', toolKind: 'navigate', value: sharedBaseUrl, tier: 'TIER_1_READ_ONLY', timeoutMs: 5000 }],
         assertions: [],
         expectedBaseline: { taskCount: 2 },
       },

@@ -98,6 +98,51 @@ describe('P1-01: Fingerprint Determinism and Authoritative Approval Guard', () =
     expect(calculateAuthoritativePlanFingerprint(changedAssertionPlan)).not.toBe(hashOriginal);
   });
 
+  it('binds fixtureScope and expectedBaseline deterministically to authoritative plan fingerprint', () => {
+    const hashWithoutScope = calculateAuthoritativePlanFingerprint(basePlan);
+
+    const planWithScope: AuthoritativeExperimentPlan = {
+      ...basePlan,
+      fixtureScope: 'workbench_work_items',
+    };
+    const hashWithScope = calculateAuthoritativePlanFingerprint(planWithScope);
+    expect(hashWithScope).not.toBe(hashWithoutScope);
+
+    const planWithScopeAndBaselineA: AuthoritativeExperimentPlan = {
+      ...planWithScope,
+      expectedBaseline: {
+        itemCount: 4,
+        buildVersion: 'wb-v1.0.0-buggy',
+        items: [{ id: 'wb-item-01', title: 'Task 1' }],
+      },
+    };
+    const hashBaselineA = calculateAuthoritativePlanFingerprint(planWithScopeAndBaselineA);
+    expect(hashBaselineA).not.toBe(hashWithScope);
+
+    // Reordered keys in expectedBaseline must yield the EXACT same hash
+    const planWithScopeAndBaselineB: AuthoritativeExperimentPlan = {
+      ...planWithScope,
+      expectedBaseline: {
+        items: [{ title: 'Task 1', id: 'wb-item-01' }],
+        buildVersion: 'wb-v1.0.0-buggy',
+        itemCount: 4,
+      },
+    };
+    const hashBaselineB = calculateAuthoritativePlanFingerprint(planWithScopeAndBaselineB);
+    expect(hashBaselineA).toBe(hashBaselineB);
+
+    // Altered baseline content must change the hash
+    const planWithAlteredBaseline: AuthoritativeExperimentPlan = {
+      ...planWithScope,
+      expectedBaseline: {
+        itemCount: 3,
+        buildVersion: 'wb-v1.0.0-buggy',
+        items: [{ id: 'wb-item-01', title: 'Task 1' }],
+      },
+    };
+    expect(calculateAuthoritativePlanFingerprint(planWithAlteredBaseline)).not.toBe(hashBaselineA);
+  });
+
   it('strictly rejects incomplete or invalid authoritative payloads', () => {
     const incompletePlan = {
       version: 1,

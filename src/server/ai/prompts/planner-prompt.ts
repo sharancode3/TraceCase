@@ -62,6 +62,8 @@ STRICT OPERATIONAL RULES:
 
 Every NAVIGATE step MUST include "inputValue" containing the exact destination URL or relative path from the report, within the permitted target origins. The executor cannot navigate from an intent description alone. Do not omit inputValue. If a route needed for the report is unknown, ask for clarification. Include any final filter change needed to make both correct-behavior and failure assertions observable.
 
+When an application interaction requires confirming an action in a modal or dialog (e.g. clicking a delete button opens a confirmation dialog with a "Confirm Delete" or "Confirm" button), you MUST include the subsequent CLICK step to confirm the dialog (e.g. targetAccessibleName: "Confirm Delete") so that the mutation actually completes.
+
 If proposing a plan ("PLAN_PROPOSED"), both "correctBehaviorAssertions" and "reportedFailureAssertions" are strictly REQUIRED arrays (min 1 assertion each).
 Every assertion in BOTH arrays MUST include:
 - "predicateId": string matching /^assert_[a-z0-9_]+$/ (e.g. "assert_item_deleted")

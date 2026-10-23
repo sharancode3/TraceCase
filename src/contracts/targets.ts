@@ -13,6 +13,7 @@ export const TargetProfileSchema = z.object({
   testAccountRef: z.string().max(100).nullable().optional(),
   fixtureResetEndpoint: z.string().url().nullable().optional(),
   fixtureResetAuthSecret: z.string().nullable().optional(),
+  fixtureScope: z.string().nullable().optional(),
   environment: z.enum(['staging', 'development', 'demo', 'production']),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -32,6 +33,7 @@ export const SafeTargetProfileSchema = z.object({
   environment: z.enum(['staging', 'development', 'demo', 'production']),
   hasResetCapability: z.boolean(),
   hasTestAccountConfigured: z.boolean(),
+  fixtureScope: z.string().nullable().optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 }).strict();
@@ -49,6 +51,7 @@ export const SafeModelTargetContextSchema = z.object({
   isSandboxVerified: z.boolean(),
   environment: z.enum(['staging', 'development', 'demo', 'production']),
   hasResetCapability: z.boolean().optional(),
+  fixtureScope: z.string().optional(),
 }).strict();
 export type SafeModelTargetContext = z.infer<typeof SafeModelTargetContextSchema>;
 
@@ -67,6 +70,7 @@ export const TrustedTargetConfigSchema = z.object({
   testAccountRef: z.string().max(100).nullable().optional(),
   fixtureResetEndpoint: z.string().url().nullable().optional(),
   fixtureResetAuthSecret: z.string().nullable().optional(),
+  fixtureScope: z.string().nullable().optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -93,6 +97,7 @@ export const CreateTargetCommandSchema = z.object({
   isSandboxRequested: z.boolean().default(true),
   testAccountRef: z.string().trim().max(100).optional(),
   fixtureResetEndpoint: z.string().trim().url().optional(),
+  fixtureScope: z.string().trim().max(100).optional(),
   environment: z.enum(['staging', 'development', 'demo', 'production']).default('staging'),
 }).strict(); // Reject unexpected fields to protect server authority
 export type CreateTargetCommand = z.infer<typeof CreateTargetCommandSchema>;
@@ -111,6 +116,7 @@ export function projectSafeTargetProfile(
     allowedOrigins: Array.isArray(target.allowedOrigins) ? [...target.allowedOrigins] : [],
     isSandboxVerified: Boolean(target.isSandboxVerified ?? target.isSandbox ?? false),
     environment: target.environment,
+    fixtureScope: (target.fixtureScope as string) ?? (typeof target.baseUrl === 'string' && target.baseUrl.includes('/workbench') ? 'workbench_work_items' : undefined),
     hasResetCapability: Boolean(target.fixtureResetEndpoint),
     hasTestAccountConfigured: Boolean(target.testAccountRef),
     createdAt: target.createdAt instanceof Date ? target.createdAt.toISOString() : (target.createdAt ?? new Date().toISOString()),
@@ -132,6 +138,7 @@ export function projectSafeModelTargetContext(
     allowedOrigins: Array.isArray(target.allowedOrigins) ? [...target.allowedOrigins] : [],
     isSandboxVerified: Boolean(target.isSandboxVerified ?? target.isSandbox ?? false),
     environment: target.environment,
+    fixtureScope: (target.fixtureScope as string) ?? (typeof target.baseUrl === 'string' && target.baseUrl.includes('/workbench') ? 'workbench_work_items' : undefined),
     hasResetCapability: Boolean(
       target.fixtureResetEndpoint ||
       target.hasResetCapability ||

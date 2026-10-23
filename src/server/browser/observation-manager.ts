@@ -65,6 +65,7 @@ export class ObservationManager {
         const labelledBy = (el.getAttribute('aria-labelledby') || '').split(/\s+/)
           .map((id) => document.getElementById(id)?.textContent || '').join(' ').trim();
         const accessibleName = (ariaLabel || labelledBy || textContent).replace(/\s+/g, ' ').slice(0, 150);
+        const itemId = el.getAttribute('data-item-id') || el.getAttribute('data-task-id') || el.closest('[data-item-id]')?.getAttribute('data-item-id') || el.closest('[data-task-id]')?.getAttribute('data-task-id');
         const nameAttr = el.getAttribute('name') || '';
         const idAttr = el.id ? `#${el.id}` : '';
         const testId = el.getAttribute('data-testid') ? `[data-testid="${el.getAttribute('data-testid')}"]` : '';
@@ -73,6 +74,7 @@ export class ObservationManager {
         let selector = '';
         if (testId) selector = testId;
         else if (idAttr) selector = idAttr;
+        else if (el.getAttribute('data-item-id') && el.getAttribute('data-action')) selector = `${tagName}[data-action="${el.getAttribute('data-action')}"][data-item-id="${el.getAttribute('data-item-id')}"]`;
         else if (ariaLabel) selector = `${tagName}[aria-label=${JSON.stringify(ariaLabel)}]`;
         else if (nameAttr) selector = `${tagName}[name="${nameAttr}"]`;
         else if (textContent) selector = `${tagName}:has-text("${textContent.slice(0, 30)}")`;
@@ -81,7 +83,7 @@ export class ObservationManager {
         return {
           tagName,
           ariaRole,
-          textSnippet: accessibleName || undefined,
+          textSnippet: (itemId && !accessibleName.includes(itemId) ? `${accessibleName} [${itemId}]` : accessibleName) || undefined,
           isInteractive: isVisible,
           selector,
         };

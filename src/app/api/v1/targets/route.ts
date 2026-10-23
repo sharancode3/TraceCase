@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
 
     // For local targets on localhost / port 3005, auto-link reset endpoint and secret if not explicitly provided
     const isLocalDemo = parsed.data.baseUrl.includes('3005') || parsed.data.baseUrl.includes('localhost');
-    const defaultResetEndpoint = isLocalDemo ? `${parsed.data.baseUrl.replace(/\/+$/, '')}/api/test/reset-fixture` : null;
+    const defaultResetEndpoint = isLocalDemo ? `${new URL(parsed.data.baseUrl).origin}/api/test/reset-fixture` : null;
     const defaultSecretRef = isLocalDemo ? 'env:TARGET_RESET_SECRET' : null;
 
     const created = await targetsRepository.createTarget({
@@ -75,7 +75,10 @@ export async function POST(req: NextRequest) {
       createdBy: principal.id,
     });
 
-    const safeTarget = projectSafeTargetProfile(created as unknown as Record<string, unknown>);
+    const safeTarget = projectSafeTargetProfile({
+      ...(created as unknown as Record<string, unknown>),
+      fixtureScope: parsed.data.fixtureScope || (parsed.data.baseUrl.includes('/workbench') ? 'workbench_work_items' : undefined),
+    });
 
     return NextResponse.json(
       {

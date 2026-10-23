@@ -280,11 +280,16 @@ export class IntegratedReportClarificationAgent implements ReportClarificationAg
       randomUUID();
 
     const title = (reportObj.title as string) || 'Untitled Bug Report';
-    const description =
+    const baseDescription =
       (reportObj.rawDescription as string) ||
       (reportObj.bugDescription as string) ||
       (reportObj.rawInput as string) ||
       title;
+    const suspectedSteps = Array.isArray(reportObj.suspectedSteps) ? (reportObj.suspectedSteps as string[]) : [];
+    const description =
+      suspectedSteps.length > 0 && !baseDescription.includes('Suspected Steps')
+        ? `${baseDescription}\n\nSuspected Steps to Reproduce:\n${suspectedSteps.map((s, idx) => `${idx + 1}. ${s}`).join('\n')}`
+        : baseDescription;
 
     const environmentClues =
       (reportObj.browserEnvironment as string | undefined) ||

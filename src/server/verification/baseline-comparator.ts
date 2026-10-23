@@ -64,10 +64,12 @@ export class BaselineComparator {
     observedBaseline: Record<string, unknown>,
     customIgnoredKeys?: string[]
   ): BaselineComparisonResult {
-    const ignoredKeys =
-      customIgnoredKeys && customIgnoredKeys.length > 0
-        ? new Set(customIgnoredKeys.map((k) => k.toLowerCase()))
-        : new Set(BaselineComparator.DEFAULT_IGNORED_KEYS);
+    const ignoredKeys = new Set(BaselineComparator.DEFAULT_IGNORED_KEYS);
+    if (customIgnoredKeys && customIgnoredKeys.length > 0) {
+      for (const k of customIgnoredKeys) {
+        ignoredKeys.add(k.toLowerCase());
+      }
+    }
 
     const canonicalExpected = BaselineComparator.canonicalize(expectedBaseline, ignoredKeys);
     const canonicalObserved = BaselineComparator.canonicalize(observedBaseline, ignoredKeys);
