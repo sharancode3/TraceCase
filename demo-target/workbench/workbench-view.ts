@@ -1055,17 +1055,6 @@ export function renderWorkbenchHtml(options: RenderWorkbenchOptions): string {
       <span>Build: ${escapeHtml(buildVersion)}</span>
     </footer>
 
-    <!-- Delete Confirmation Modal Dialog -->
-    <div id="wb-delete-dialog" class="wb-dialog-backdrop" role="dialog" aria-modal="true" aria-labelledby="wb-dialog-title" aria-describedby="wb-dialog-desc" style="display: none;">
-      <div class="wb-dialog-box">
-        <h3 id="wb-dialog-title" class="dialog-title">Confirm Deletion</h3>
-        <p id="wb-dialog-desc" class="dialog-desc">Are you sure you want to delete this work item?</p>
-        <div class="dialog-actions">
-          <button type="button" id="wb-dialog-cancel-btn" class="wb-btn wb-btn-secondary">Cancel</button>
-          <button type="button" id="wb-dialog-confirm-btn" class="wb-btn wb-btn-delete">Confirm Delete</button>
-        </div>
-      </div>
-    </div>
   </div>
 
   <script>
@@ -1087,12 +1076,6 @@ export function renderWorkbenchHtml(options: RenderWorkbenchOptions): string {
       const errorToast = document.getElementById('wb-error-toast');
       const refreshBtn = document.getElementById('wb-refresh-btn');
 
-      // Delete confirmation dialog elements
-      const deleteDialog = document.getElementById('wb-delete-dialog');
-      const dialogDesc = document.getElementById('wb-dialog-desc');
-      const dialogCancelBtn = document.getElementById('wb-dialog-cancel-btn');
-      const dialogConfirmBtn = document.getElementById('wb-dialog-confirm-btn');
-      let pendingDeleteItemId = null;
 
       // Detail pane elements
       const detailEmpty = document.getElementById('wb-detail-empty');

@@ -1350,13 +1350,13 @@ describe('Person 2: TraceCase Workbench UI & View Generator (Stage P2-2.2)', () 
           items: INITIAL_WORKBENCH_FIXTURE,
         });
 
-        expect(html).toContain('id="wb-delete-dialog"');
+        expect(html).toContain('id="wb-confirm-modal"');
         expect(html).toContain('role="dialog"');
         expect(html).toContain('aria-modal="true"');
-        expect(html).toContain('id="wb-dialog-title"');
-        expect(html).toContain('id="wb-dialog-desc"');
-        expect(html).toContain('id="wb-dialog-cancel-btn"');
-        expect(html).toContain('id="wb-dialog-confirm-btn"');
+        expect(html).toContain('id="wb-confirm-title"');
+        expect(html).toContain('id="wb-confirm-desc"');
+        expect(html).toContain('id="wb-confirm-cancel-btn"');
+        expect(html).toContain('id="wb-confirm-delete-btn"');
       });
 
       it('propagates search parameter in delete request script and validates deletedItemId strictly', () => {
