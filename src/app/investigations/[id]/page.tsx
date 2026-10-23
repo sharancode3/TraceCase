@@ -566,6 +566,7 @@ export default function InvestigationDetailPage() {
               </Button>
             </Link>
             <Button
+              id="export-package-btn"
               size="sm"
               variant="primary"
               onClick={handleDownloadPackage}

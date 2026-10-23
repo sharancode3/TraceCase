@@ -56,6 +56,7 @@ export default function ClarificationPage() {
   // Recovery state: true if user answers were persisted but downstream planning failed
   const [answersSavedPlanningFailed, setAnswersSavedPlanningFailed] = React.useState(false);
   const [planningFailureMessage, setPlanningFailureMessage] = React.useState<string | null>(null);
+  const [targetId, setTargetId] = React.useState<string | null>(null);
 
   const loadData = React.useCallback(async () => {
     setUiStatus('LOADING');
@@ -90,6 +91,9 @@ export default function ClarificationPage() {
       return;
     }
 
+    if (invRes?.success && invRes.data?.targetId) {
+      setTargetId(invRes.data.targetId);
+    }
     const loadedQuestions = clarificationsRes.success ? clarificationsRes.data.questions : [];
     setQuestions(loadedQuestions);
     setInvestigationStatus(state.investigationReviewStatus || 'PENDING_PLANNING');
@@ -370,7 +374,7 @@ export default function ClarificationPage() {
               <RefreshCw className="w-3.5 h-3.5" />
               <span>Retry Plan Generation</span>
             </Button>
-            <Link href="/investigations/new">
+            <Link href={targetId ? `/investigations/new?targetId=${targetId}` : '/investigations/new'}>
               <Button variant="outline" className="text-xs h-9 px-4">
                 Submit Refined Report
               </Button>

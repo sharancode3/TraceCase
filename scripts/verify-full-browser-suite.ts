@@ -488,6 +488,19 @@ async function runFixedNegativeControlJourney(browser: Browser): Promise<string>
 async function runStage9EvidenceAndSecurityVerification(browser: Browser, positiveId: string) {
   log('STAGE-9', 'Starting Stage 9: Evidence Presentation, Export & Security Verification...');
 
+  // 0. Prove that the target actually emits the synthetic secret for redaction testing
+  log('STAGE-9', 'Proving synthetic secret emitted by target diagnostic endpoint...');
+  const secretRes = await fetch('http://localhost:3005/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  const secretJson = (await secretRes.json()) as any;
+  if (!secretJson?.diagnosticSessionToken?.includes('synthetic-jwt-token-xyz-9876')) {
+    throw new Error('Target diagnostic endpoint failed to emit synthetic secret fixture!');
+  }
+  log('STAGE-9', 'Confirmed: Target emits synthetic-jwt-token-xyz-9876 for live redaction verification.');
+
   const context = await browser.newContext({
     viewport: { width: 1280, height: 800 },
   });
@@ -508,65 +521,109 @@ async function runStage9EvidenceAndSecurityVerification(browser: Browser, positi
   await page.goto(`${BASE_URL}/investigations/${positiveId}`, { waitUntil: 'networkidle' });
   await dismissAnyOverlayModals(page);
 
-  // 3. Inspect Console Logs Tab for Secret Redaction
-  const consoleTab = page.locator('button:has-text("Console"), [role="tab"]:has-text("Console")');
-  if (await consoleTab.isVisible()) {
-    await dismissAnyOverlayModals(page);
-    await consoleTab.click({ force: true });
+  // 3. Inspect Console Logs Tab (Normal user click, NO force: true)
+  const consoleTab = page.locator('#tab-console');
+  await consoleTab.waitFor({ state: 'visible', timeout: 10000 });
+  await consoleTab.scrollIntoViewIfNeeded();
+  await consoleTab.click();
+  await page.waitForTimeout(600);
+
+  const consolePanel = page.locator('#panel-console');
+  await consolePanel.waitFor({ state: 'visible', timeout: 10000 });
+  const consoleText = await consolePanel.textContent();
+  log('STAGE-9', 'Inspecting console log content for secret scrubbing...');
+  if (!consoleText || consoleText.length === 0) {
+    throw new Error('Console log panel loaded empty!');
+  }
+  if (consoleText.includes('synthetic-jwt-token-xyz-9876')) {
+    throw new Error('SECURITY VIOLATION: Raw synthetic secret detected in UI console logs!');
+  }
+  log('STAGE-9', 'Verified: Console log panel loaded sanitized events with secret scrubbed.');
+
+  // 4. Inspect Network Traces Tab (Normal user click, NO force: true)
+  const networkTab = page.locator('#tab-network');
+  await networkTab.waitFor({ state: 'visible', timeout: 10000 });
+  await networkTab.scrollIntoViewIfNeeded();
+  await networkTab.click();
+  await page.waitForTimeout(600);
+
+  const networkPanel = page.locator('#panel-network');
+  await networkPanel.waitFor({ state: 'visible', timeout: 10000 });
+  const networkText = await networkPanel.textContent();
+  if (!networkText || networkText.length === 0) {
+    throw new Error('Network trace panel loaded empty!');
+  }
+  if (networkText.includes('synthetic-jwt-token-xyz-9876')) {
+    throw new Error('SECURITY VIOLATION: Raw synthetic secret detected in UI network traces!');
+  }
+  log('STAGE-9', 'Verified: Network trace panel loaded sanitized HTTP traces with secret scrubbed.');
+
+  // 5. Inspect Video Recording Tab (Normal user click, NO force: true)
+  const videoTab = page.locator('#tab-video');
+  await videoTab.waitFor({ state: 'visible', timeout: 10000 });
+  await videoTab.scrollIntoViewIfNeeded();
+  await videoTab.click();
+  await page.waitForTimeout(600);
+
+  const videoPanel = page.locator('#panel-video');
+  await videoPanel.waitFor({ state: 'visible', timeout: 10000 });
+  const videoText = await videoPanel.textContent();
+  if (!videoText?.includes('Captured — access restricted') && !videoText?.includes('withheld pending privacy review')) {
+    throw new Error('Truthful restricted recording presentation missing from video panel!');
+  }
+  log('STAGE-9', 'Verified: Video panel truthfully reports "Captured — access restricted".');
+
+  // 6. Test Attempt-Specific Telemetry Isolation (Attempt 1 vs Attempt 2)
+  log('STAGE-9', 'Verifying attempt-specific telemetry isolation...');
+  const att1Btn = page.locator('button:has-text("Attempt 1 (Initial Run)")');
+  const att2Btn = page.locator('button:has-text("Attempt 2 (Confirmation Run)")');
+  if (await att2Btn.isVisible()) {
+    await att2Btn.click();
     await page.waitForTimeout(500);
-    const consoleText = await page.locator('#panel-console').textContent();
-    log('STAGE-9', 'Inspecting console log content for secret scrubbing...');
-    if (consoleText?.includes('synthetic-jwt-token-xyz-9876')) {
-      throw new Error('SECURITY VIOLATION: Raw synthetic secret detected in UI console logs!');
+    log('STAGE-9', 'Switched to Attempt 2 telemetry view.');
+    if (await att1Btn.isVisible()) {
+      await att1Btn.click();
+      await page.waitForTimeout(500);
+      log('STAGE-9', 'Switched back to Attempt 1 telemetry view.');
     }
-    log('STAGE-9', 'Verified: Raw synthetic token is NOT present in console logs.');
   }
 
-  // 4. Inspect Network Traces Tab
-  const networkTab = page.locator('button:has-text("Network"), [role="tab"]:has-text("Network")');
-  if (await networkTab.isVisible()) {
-    await dismissAnyOverlayModals(page);
-    await networkTab.click({ force: true });
-    await page.waitForTimeout(500);
-    const networkText = await page.locator('#panel-network').textContent();
-    if (networkText?.includes('synthetic-jwt-token-xyz-9876')) {
-      throw new Error('SECURITY VIOLATION: Raw synthetic secret detected in UI network traces!');
-    }
-    log('STAGE-9', 'Verified: Raw synthetic token is NOT present in network traces.');
-  }
-
-  // 5. Capture Final Evidence Presentation
+  // 7. Capture Final Evidence Presentation
   await takeScreenshot(page, 'stage-09-evidence-presentation.png');
 
-  // 6. Test Export Reproduction Package
-  const exportBtn = page.locator('button:has-text("Export Package"), button:has-text("Download Package"), a:has-text("Export Package")');
-  if (await exportBtn.isVisible()) {
-    log('STAGE-9', 'Clicking Export Package button...');
-    const [download] = await Promise.all([
-      page.waitForEvent('download', { timeout: 10000 }).catch(() => null),
-      exportBtn.click({ force: true }),
-    ]);
-    if (download) {
-      const downloadPath = path.join(OUTPUT_DIR, `reproduction-package-${positiveId}.json`);
-      await download.saveAs(downloadPath);
-      log('STAGE-9', `Reproduction package downloaded to: ${downloadPath}`);
-    }
-  }
+  // 8. Test Export Reproduction Package (Normal user click, NO force: true, NO silent catch)
+  const exportBtn = page.locator('#export-package-btn');
+  await exportBtn.waitFor({ state: 'visible', timeout: 10000 });
+  await exportBtn.scrollIntoViewIfNeeded();
+  log('STAGE-9', 'Clicking Export Package button via normal user click...');
 
-  // Query API for reproduction results package with authenticated session
-  const cookies = await context.cookies();
-  const tcCookie = cookies.find((c) => c.name === 'tc_session');
-  const headers: Record<string, string> = {};
-  if (tcCookie) {
-    headers['Cookie'] = `tc_session=${tcCookie.value}`;
+  const downloadPromise = page.waitForEvent('download', { timeout: 15000 });
+  await exportBtn.click();
+  const download = await downloadPromise;
+
+  const downloadPath = path.join(OUTPUT_DIR, `reproduction-package-${positiveId}.json`);
+  await download.saveAs(downloadPath);
+  log('STAGE-9', `Reproduction package successfully downloaded to: ${downloadPath}`);
+
+  // Parse and authoritatively validate export package content
+  const exportContent = fs.readFileSync(downloadPath, 'utf8');
+  const pkg = JSON.parse(exportContent);
+  if (pkg.investigation?.id !== positiveId) {
+    throw new Error(`Export package ID mismatch: expected ${positiveId}, got ${pkg.investigation?.id}`);
   }
-  const res = await fetch(`${BASE_URL}/api/v1/investigations/${positiveId}/results`, { headers });
-  if (res.ok) {
-    const pkg = await res.json();
-    const pkgPath = path.join(OUTPUT_DIR, `reproduction-results-${positiveId}.json`);
-    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2), 'utf8');
-    log('STAGE-9', `Saved authoritative results payload to: ${pkgPath}`);
+  if (pkg.investigation?.reproductionVerdict !== 'CONFIRMED_REPRODUCED') {
+    throw new Error(`Export package verdict mismatch: ${pkg.investigation?.reproductionVerdict}`);
   }
+  if (!pkg.plan || !pkg.plan.id) {
+    throw new Error('Export package missing authoritative plan!');
+  }
+  if (!pkg.manifest || !Array.isArray(pkg.manifest.artifacts) || pkg.manifest.artifacts.length === 0) {
+    throw new Error('Export package missing artifact references in manifest!');
+  }
+  if (exportContent.includes('synthetic-jwt-token-xyz-9876')) {
+    throw new Error('SECURITY VIOLATION: Export package contains unredacted synthetic secret!');
+  }
+  log('STAGE-9', 'Authoritative reproduction package verified valid and clean of secret leaks.');
 
   await context.close();
   log('STAGE-9', 'Stage 9 Evidence Presentation, Export & Security Verification COMPLETED SUCCESSFULLY.');

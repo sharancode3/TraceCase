@@ -50,6 +50,7 @@ Before implementation, check the current versions of the [PRD](../docs/prd.md), 
 
 ## Integration and browser verification reports
 
+- [Visible Browser Acceptance & Usability Verification Report](integration/visible-browser-verification-report.md)
 - [Phase 2 Reliability, AI Integration, and Browser Verification Report](integration/phase-2-reliability-ai-and-browser-verification.md)
 - [Phase 2 Browser Acceptance Report](integration/phase-2-browser-acceptance-report.md)
 
