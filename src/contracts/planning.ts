@@ -139,6 +139,8 @@ export const AuthoritativeExperimentPlanSchema = z.object({
   requiresResetHook: z.boolean().default(true),
   planHash: z.string().regex(/^[a-f0-9]{64}$/i, 'Must be valid SHA-256 hex string'),
   createdAt: z.string().datetime(),
+  fixtureScope: z.string().optional(),
+  expectedBaseline: z.record(z.unknown()).optional(),
 });
 export type AuthoritativeExperimentPlan = z.infer<typeof AuthoritativeExperimentPlanSchema>;
 
@@ -160,6 +162,8 @@ export const ExperimentPlanSchema = z.object({
   requiresResetHook: z.boolean().default(true),
   planHash: z.string().regex(/^[a-f0-9]{64}$/i, 'Must be valid SHA-256 hex string'),
   createdAt: z.string().datetime(),
+  fixtureScope: z.string().optional(),
+  expectedBaseline: z.record(z.unknown()).optional(),
 });
 export type ExperimentPlan = z.infer<typeof ExperimentPlanSchema>;
 

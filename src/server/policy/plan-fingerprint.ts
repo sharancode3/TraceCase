@@ -60,6 +60,8 @@ export const AuthoritativePlanFingerprintPayloadSchema = z.object({
   maxAttempts: z.literal(2),
   maxDurationMs: z.number().int().positive(),
   requiresResetHook: z.boolean(),
+  fixtureScope: z.string().optional(),
+  expectedBaseline: z.record(z.unknown()).optional(),
 });
 export type AuthoritativePlanFingerprintPayload = z.infer<typeof AuthoritativePlanFingerprintPayloadSchema>;
 

@@ -98,7 +98,7 @@ export interface RenderWorkbenchOptions {
 export function renderWorkbenchHtml(options: RenderWorkbenchOptions): string {
   const buildVersion = options.buildVersion || 'wb-v1.0.0-buggy';
   const isSandbox = options.isSandbox ?? true;
-  const items = options.items && options.items.length > 0 ? options.items : INITIAL_WORKBENCH_FIXTURE;
+  const items = options.items !== undefined ? options.items : INITIAL_WORKBENCH_FIXTURE;
   const metrics = calculateWorkbenchMetrics(items);
 
   const serializedItems = JSON.stringify(items);
@@ -651,6 +651,46 @@ export function renderWorkbenchHtml(options: RenderWorkbenchOptions): string {
       padding-top: 1rem;
       border-top: 1px solid var(--border-subtle);
     }
+
+    /* Delete Confirmation Modal Dialog */
+    .wb-dialog-backdrop {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(15, 23, 42, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .wb-dialog-box {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      padding: 1.5rem;
+      max-width: 440px;
+      width: 90%;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+    }
+    .dialog-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--text-main);
+      margin-bottom: 0.5rem;
+    }
+    .dialog-desc {
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+      margin-bottom: 1.25rem;
+    }
+    .dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.75rem;
+    }
   </style>
 </head>
 <body>
@@ -764,7 +804,7 @@ export function renderWorkbenchHtml(options: RenderWorkbenchOptions): string {
           Loading queue data...
         </div>
 
-        <div id="wb-empty-state" class="wb-empty-state" role="status" style="display: none;" aria-live="polite">
+        <div id="wb-empty-state" class="wb-empty-state" role="status" style="display: ${items.length === 0 ? 'block' : 'none'};" aria-live="polite">
           <p>No work items match the current search and filter criteria.</p>
         </div>
 
@@ -895,6 +935,18 @@ export function renderWorkbenchHtml(options: RenderWorkbenchOptions): string {
       <span>Target Scope: workbench_work_items</span> &bull;
       <span>Build: ${escapeHtml(buildVersion)}</span>
     </footer>
+
+    <!-- Delete Confirmation Modal Dialog -->
+    <div id="wb-delete-dialog" class="wb-dialog-backdrop" role="dialog" aria-modal="true" aria-labelledby="wb-dialog-title" aria-describedby="wb-dialog-desc" style="display: none;">
+      <div class="wb-dialog-box">
+        <h3 id="wb-dialog-title" class="dialog-title">Confirm Deletion</h3>
+        <p id="wb-dialog-desc" class="dialog-desc">Are you sure you want to delete this work item?</p>
+        <div class="dialog-actions">
+          <button type="button" id="wb-dialog-cancel-btn" class="wb-btn wb-btn-secondary">Cancel</button>
+          <button type="button" id="wb-dialog-confirm-btn" class="wb-btn wb-btn-delete">Confirm Delete</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -912,6 +964,13 @@ export function renderWorkbenchHtml(options: RenderWorkbenchOptions): string {
       const activityList = document.getElementById('wb-activity-list');
       const errorToast = document.getElementById('wb-error-toast');
       const refreshBtn = document.getElementById('wb-refresh-btn');
+
+      // Delete confirmation dialog elements
+      const deleteDialog = document.getElementById('wb-delete-dialog');
+      const dialogDesc = document.getElementById('wb-dialog-desc');
+      const dialogCancelBtn = document.getElementById('wb-dialog-cancel-btn');
+      const dialogConfirmBtn = document.getElementById('wb-dialog-confirm-btn');
+      let pendingDeleteItemId = null;
 
       // Detail pane elements
       const detailEmpty = document.getElementById('wb-detail-empty');
@@ -974,18 +1033,85 @@ export function renderWorkbenchHtml(options: RenderWorkbenchOptions): string {
         if (badgeCompleted) badgeCompleted.textContent = completed;
       }
 
+      function escapeHtmlClient(str) {
+        if (str === null || str === undefined) return '';
+        return String(str)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#039;');
+      }
+
+      function createQueueItemElement(item) {
+        const li = document.createElement('li');
+        li.className = 'wb-queue-item ' + (item.completed ? 'status-completed' : 'status-active');
+        if (selectedItemId === item.id) {
+          li.classList.add('selected');
+        }
+        li.id = item.id;
+        li.setAttribute('data-item-id', item.id);
+        li.setAttribute('data-status', item.completed ? 'completed' : 'active');
+        li.setAttribute('data-priority', item.priority);
+        li.setAttribute('role', 'listitem');
+        li.setAttribute('tabindex', '0');
+
+        const createdDate = new Date(item.createdAt).toLocaleDateString();
+
+        li.innerHTML = '<div class="wb-item-main">' +
+          '<div class="wb-item-header">' +
+            '<span class="wb-item-id">' + escapeHtmlClient(item.id) + '</span>' +
+            '<span class="wb-status-pill ' + (item.completed ? 'pill-completed' : 'pill-active') + '">' +
+              (item.completed ? 'Completed' : 'Active') +
+            '</span>' +
+            '<span class="wb-priority-pill pill-' + escapeHtmlClient(item.priority.toLowerCase()) + '">' +
+              escapeHtmlClient(item.priority) +
+            '</span>' +
+          '</div>' +
+          '<h3 class="wb-item-title">' + escapeHtmlClient(item.title) + '</h3>' +
+          '<p class="wb-item-desc">' + escapeHtmlClient(item.description) + '</p>' +
+          '<div class="wb-item-meta">' +
+            '<span>Owner: <strong>' + escapeHtmlClient(item.owner) + '</strong></span>' +
+            '<span>Created: ' + createdDate + '</span>' +
+          '</div>' +
+        '</div>' +
+        '<div class="wb-item-actions">' +
+          '<button type="button" class="wb-btn wb-btn-details" data-action="view-details" data-item-id="' + escapeHtmlClient(item.id) + '" aria-label="View details for ' + escapeHtmlClient(item.title) + '">Details</button>' +
+          '<button type="button" class="wb-btn wb-btn-delete" data-action="delete" data-item-id="' + escapeHtmlClient(item.id) + '" aria-label="Delete ' + escapeHtmlClient(item.title) + '">Delete</button>' +
+        '</div>';
+
+        return li;
+      }
+
       function renderFilteredQueue() {
+        if (!queueList) return;
         const q = searchQuery.trim().toLowerCase();
         let visibleCount = 0;
 
-        document.querySelectorAll('.wb-queue-item').forEach(function(itemEl) {
-          const id = itemEl.getAttribute('data-item-id');
-          const item = items.find(function(i) { return i.id === id; });
-
-          if (!item) {
-            itemEl.style.display = 'none';
-            return;
+        // Reconcile DOM elements with data items array: remove items not present
+        const itemIds = new Set(items.map(function(i) { return i.id; }));
+        Array.from(queueList.children).forEach(function(el) {
+          if (el.classList && el.classList.contains('wb-queue-item')) {
+            const id = el.getAttribute('data-item-id');
+            if (!id || !itemIds.has(id)) {
+              el.remove();
+            }
           }
+        });
+
+        // Ensure each item has a corresponding DOM element in queueList
+        items.forEach(function(item) {
+          let el = document.getElementById(item.id);
+          if (!el || !queueList.contains(el)) {
+            el = createQueueItemElement(item);
+            queueList.appendChild(el);
+          }
+        });
+
+        // Filter and toggle visibility
+        items.forEach(function(item) {
+          const el = document.getElementById(item.id);
+          if (!el) return;
 
           let matchesFilter = true;
           if (currentFilter === 'active') {
@@ -1004,10 +1130,10 @@ export function renderWorkbenchHtml(options: RenderWorkbenchOptions): string {
           }
 
           if (matchesFilter && matchesSearch) {
-            itemEl.style.display = 'flex';
+            el.style.display = 'flex';
             visibleCount++;
           } else {
-            itemEl.style.display = 'none';
+            el.style.display = 'none';
           }
         });
 
@@ -1104,9 +1230,64 @@ export function renderWorkbenchHtml(options: RenderWorkbenchOptions): string {
         });
       }
 
+      // Delete confirmation modal dialog controls
+      function openDeleteDialog(itemId) {
+        pendingDeleteItemId = itemId;
+        const target = items.find(function(i) { return i.id === itemId; });
+        if (dialogDesc) {
+          dialogDesc.textContent = 'Are you sure you want to delete work item "' + (target ? target.title : itemId) + '" (' + itemId + ')? This action cannot be undone.';
+        }
+        if (deleteDialog) {
+          deleteDialog.style.display = 'flex';
+        }
+        if (dialogCancelBtn) {
+          dialogCancelBtn.focus();
+        }
+      }
+
+      function closeDeleteDialog() {
+        pendingDeleteItemId = null;
+        if (deleteDialog) {
+          deleteDialog.style.display = 'none';
+        }
+        if (dialogConfirmBtn) {
+          dialogConfirmBtn.disabled = false;
+          dialogConfirmBtn.textContent = 'Confirm Delete';
+        }
+        if (dialogCancelBtn) {
+          dialogCancelBtn.disabled = false;
+        }
+      }
+
+      if (dialogCancelBtn) {
+        dialogCancelBtn.addEventListener('click', closeDeleteDialog);
+      }
+
+      if (dialogConfirmBtn) {
+        dialogConfirmBtn.addEventListener('click', async function() {
+          if (!pendingDeleteItemId) return;
+          dialogConfirmBtn.disabled = true;
+          dialogConfirmBtn.textContent = 'Deleting...';
+          if (dialogCancelBtn) dialogCancelBtn.disabled = true;
+
+          const idToDelete = pendingDeleteItemId;
+          try {
+            await executeDelete(idToDelete);
+          } finally {
+            closeDeleteDialog();
+          }
+        });
+      }
+
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && deleteDialog && deleteDialog.style.display === 'flex') {
+          closeDeleteDialog();
+        }
+      });
+
       // Action Handlers on Queue List (Delegated)
       if (queueList) {
-        queueList.addEventListener('click', async function(e) {
+        queueList.addEventListener('click', function(e) {
           const actionBtn = e.target.closest('[data-action]');
           if (!actionBtn) return;
 
@@ -1116,7 +1297,7 @@ export function renderWorkbenchHtml(options: RenderWorkbenchOptions): string {
           if (action === 'view-details') {
             selectItem(itemId);
           } else if (action === 'delete') {
-            await executeDelete(itemId);
+            openDeleteDialog(itemId);
           }
         });
 
@@ -1134,9 +1315,9 @@ export function renderWorkbenchHtml(options: RenderWorkbenchOptions): string {
 
       // Detail Delete Button Handler
       if (detailDeleteBtn) {
-        detailDeleteBtn.addEventListener('click', async function() {
+        detailDeleteBtn.addEventListener('click', function() {
           if (selectedItemId) {
-            await executeDelete(selectedItemId);
+            openDeleteDialog(selectedItemId);
           }
         });
       }
@@ -1149,14 +1330,25 @@ export function renderWorkbenchHtml(options: RenderWorkbenchOptions): string {
         logActivity('DELETE', 'Requesting deletion for ' + itemId + ' (active filter: ' + currentFilter + ')...', 'tag-delete');
 
         try {
-          const res = await fetch('/api/workbench/items/' + encodeURIComponent(itemId) + '?filter=' + encodeURIComponent(currentFilter) + '&scope=workbench_work_items', {
+          let deleteUrl = '/api/workbench/items/' + encodeURIComponent(itemId) + '?filter=' + encodeURIComponent(currentFilter) + '&scope=workbench_work_items';
+          if (searchQuery.trim()) {
+            deleteUrl += '&search=' + encodeURIComponent(searchQuery.trim());
+          }
+
+          const res = await fetch(deleteUrl, {
             method: 'DELETE',
           });
 
           if (res.ok) {
-            const result = await res.json().catch(function() { return {}; });
-            const deletedId = result.deletedItemId || itemId;
-            const deletedTitle = result.deletedItemTitle || itemId;
+            const result = await res.json().catch(function() { return null; });
+            if (!result || typeof result !== 'object' || !result.deletedItemId) {
+              showError('Malformed response from server during deletion.');
+              logActivity('ERROR', 'Malformed deletion response for ' + itemId, 'tag-error');
+              return;
+            }
+
+            const deletedId = result.deletedItemId;
+            const deletedTitle = result.deletedItemTitle || deletedId;
 
             // Remove deleted entity from client representation
             items = items.filter(function(i) { return i.id !== deletedId; });

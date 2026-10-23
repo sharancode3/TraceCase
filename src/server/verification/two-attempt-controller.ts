@@ -274,6 +274,7 @@ export class TwoAttemptController {
             target: safeTarget,
             expectedBaseline: baselineForComparison,
             resetAuthSecret: resolvedSecret,
+            fixtureScope: (plan as unknown as { fixtureScope?: string }).fixtureScope || 'default',
           });
 
           const observed = preflight.observedBaseline as Record<string, unknown> | undefined;

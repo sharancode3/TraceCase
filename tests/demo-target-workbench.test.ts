@@ -6,7 +6,7 @@ import {
 } from '../demo-target/workbench/workbench-view';
 import { createDemoTargetServer } from '../demo-target/server';
 import { DemoTargetStore } from '../demo-target/store';
-import { DemoTargetClient } from '../demo-target/client';
+import { DemoTargetClient, FixtureReadbackResultSchema } from '../demo-target/client';
 import { BaselineComparator } from '../src/server/verification/baseline-comparator';
 import type { FixtureResetReceipt, FixtureReadbackResult } from '../demo-target/types';
 
@@ -914,6 +914,185 @@ describe('Person 2: TraceCase Workbench UI & View Generator (Stage P2-2.2)', () 
         await client.resetFixture('workbench_work_items');
         const finalReadback = await client.readbackFixture('workbench_work_items');
         expect(finalReadback.itemCount).toBe(4);
+      });
+    });
+  });
+
+  describe('Person 2 Integration Defect Regression Suite', () => {
+    describe('Defect 1: Empty-State Fabrication Safeguard', () => {
+      it('truthfully renders empty queue without fabricating INITIAL_WORKBENCH_FIXTURE when items is empty', () => {
+        const html = renderWorkbenchHtml({
+          buildVersion: 'wb-v1.0.0-buggy',
+          isSandbox: true,
+          items: [],
+        });
+
+        // Must display empty state
+        expect(html).toContain('id="wb-empty-state" class="wb-empty-state" role="status" style="display: block;"');
+        // Visible queue count should be 0
+        expect(html).toContain('id="queue-visible-count">0</span>');
+        // Summary metrics should all be 0
+        expect(html).toContain('id="metric-total-val">0</span>');
+        expect(html).toContain('id="metric-active-val">0</span>');
+        expect(html).toContain('id="metric-completed-val">0</span>');
+        expect(html).toContain('id="metric-critical-val">0</span>');
+        // Must not contain any initial fixture items
+        expect(html).not.toContain('id="wb-item-01"');
+        expect(html).not.toContain('id="wb-item-02"');
+        expect(html).not.toContain('id="wb-item-03"');
+        expect(html).not.toContain('id="wb-item-04"');
+      });
+    });
+
+    describe('Defect 2: Refresh DOM Reconciliation by Stable ID', () => {
+      it('contains client-side DOM reconciliation logic to recreate restored rows by stable ID', () => {
+        const html = renderWorkbenchHtml({
+          buildVersion: 'wb-v1.0.0-buggy',
+          isSandbox: true,
+          items: INITIAL_WORKBENCH_FIXTURE,
+        });
+
+        expect(html).toContain('function createQueueItemElement(');
+        expect(html).toContain('queueList.appendChild(el)');
+        expect(html).toContain('data-item-id');
+      });
+    });
+
+    describe('Defect 3: Discriminated Union Readback Validation', () => {
+      it('validates workbench_work_items scope strictly requiring WorkbenchItemSchema with all fields', () => {
+        const validWorkbenchPayload = {
+          fixtureScope: 'workbench_work_items',
+          buildVersion: 'wb-v1.0.0-buggy',
+          itemCount: 1,
+          items: [
+            {
+              id: 'wb-item-01',
+              title: 'Review Security Compliance Checklist',
+              description: 'Audit quarterly compliance logs against SOC2 Type II criteria.',
+              completed: true,
+              priority: 'High',
+              owner: 'Sarah Connor',
+              createdAt: '2026-10-21T09:00:00.000Z',
+            },
+          ],
+          verifiedAt: '2026-10-23T12:00:00.000Z',
+        };
+
+        const parsed = FixtureReadbackResultSchema.parse(validWorkbenchPayload);
+        expect(parsed.fixtureScope).toBe('workbench_work_items');
+        expect(parsed.items[0]).toHaveProperty('description');
+        expect(parsed.items[0]).toHaveProperty('priority', 'High');
+        expect(parsed.items[0]).toHaveProperty('owner', 'Sarah Connor');
+      });
+
+      it('rejects workbench readback if item is missing workbench-specific fields', () => {
+        const invalidWorkbenchPayload = {
+          fixtureScope: 'workbench_work_items',
+          buildVersion: 'wb-v1.0.0-buggy',
+          itemCount: 1,
+          items: [
+            {
+              id: 'task-a',
+              title: 'Legacy task missing description and priority',
+              completed: false,
+              createdAt: '2026-10-21T09:00:00.000Z',
+            },
+          ],
+          verifiedAt: '2026-10-23T12:00:00.000Z',
+        };
+
+        expect(() => FixtureReadbackResultSchema.parse(invalidWorkbenchPayload)).toThrow();
+      });
+
+      it('validates task scopes requiring TaskItemSchema', () => {
+        const validTaskPayload = {
+          fixtureScope: 'two_tasks_one_completed',
+          buildVersion: 'v1.0.0-buggy',
+          itemCount: 2,
+          items: [
+            { id: 'task-a', title: 'Task A', completed: true, createdAt: '2026-10-21T09:00:00.000Z' },
+            { id: 'task-b', title: 'Task B', completed: false, createdAt: '2026-10-21T09:00:00.000Z' },
+          ],
+          verifiedAt: '2026-10-23T12:00:00.000Z',
+        };
+
+        const parsed = FixtureReadbackResultSchema.parse(validTaskPayload);
+        expect(parsed.fixtureScope).toBe('two_tasks_one_completed');
+        expect(parsed.items).toHaveLength(2);
+      });
+    });
+
+    describe('Defect 4: Fixture-Scope Normalization & Legacy Fixture Isolation', () => {
+      let app: ReturnType<typeof createDemoTargetServer>;
+      let baseUrl: string;
+
+      beforeAll(async () => {
+        app = createDemoTargetServer({
+          port: 0,
+          resetSecret: 'tc-test-secret-2026',
+          bugModeActive: true,
+          buildVersion: 'wb-v1.0.0-buggy',
+        });
+        const port = await app.start(0, '127.0.0.1');
+        baseUrl = `http://127.0.0.1:${port}`;
+      });
+
+      afterAll(async () => {
+        await app.stop();
+      });
+
+      it('normalizes scope=default to workbench_work_items and does not mutate task store', async () => {
+        // Query workbench items with scope=default
+        const res = await fetch(`${baseUrl}/api/workbench/items?scope=default`);
+        expect(res.status).toBe(200);
+        const data = await res.json();
+        // Should return workbench items, not legacy tasks
+        expect(data.items).toHaveLength(4);
+        expect(data.items[0].id).toBe('wb-item-01');
+
+        // Verify legacy tasks remain untouched
+        const tasksRes = await fetch(`${baseUrl}/api/tasks`);
+        expect(tasksRes.status).toBe(200);
+        const tasksData = await tasksRes.json();
+        expect(tasksData.tasks).toHaveLength(2);
+        expect(tasksData.tasks[0].id).toBe('task-a');
+      });
+
+      it('rejects arbitrary invalid scopes with HTTP 400 INVALID_SCOPE', async () => {
+        const res = await fetch(`${baseUrl}/api/workbench/items?scope=some_random_scope`);
+        expect(res.status).toBe(400);
+        const data = await res.json();
+        expect(data.error.code).toBe('INVALID_SCOPE');
+      });
+    });
+
+    describe('Defect 5: Deletion Confirmation Dialog & Search Query Propagation', () => {
+      it('renders accessible delete confirmation modal dialog markup in generated HTML', () => {
+        const html = renderWorkbenchHtml({
+          buildVersion: 'wb-v1.0.0-buggy',
+          isSandbox: true,
+          items: INITIAL_WORKBENCH_FIXTURE,
+        });
+
+        expect(html).toContain('id="wb-delete-dialog"');
+        expect(html).toContain('role="dialog"');
+        expect(html).toContain('aria-modal="true"');
+        expect(html).toContain('id="wb-dialog-title"');
+        expect(html).toContain('id="wb-dialog-desc"');
+        expect(html).toContain('id="wb-dialog-cancel-btn"');
+        expect(html).toContain('id="wb-dialog-confirm-btn"');
+      });
+
+      it('propagates search parameter in delete request script and validates deletedItemId strictly', () => {
+        const html = renderWorkbenchHtml({
+          buildVersion: 'wb-v1.0.0-buggy',
+          isSandbox: true,
+          items: INITIAL_WORKBENCH_FIXTURE,
+        });
+
+        expect(html).toContain('&search=');
+        expect(html).toContain('!result.deletedItemId');
+        expect(html).toContain('Malformed response from server during deletion');
       });
     });
   });

@@ -50,19 +50,31 @@ export const FixtureResetReceiptSchema = z.object({
   buildVersion: z.string().min(1),
 });
 
-export const FixtureReadbackResultSchema = z.object({
+export const TaskFixtureReadbackResultSchema = z.object({
   fixtureScope: z.enum([
     'two_tasks_one_completed',
     'three_tasks_multi_status',
     'auth_test_user',
-    'workbench_work_items',
     'default',
   ]),
   buildVersion: z.string().min(1),
   itemCount: z.number().int().min(0),
-  items: z.array(z.union([TaskItemSchema, WorkbenchItemSchema])),
+  items: z.array(TaskItemSchema),
   verifiedAt: z.string().min(1),
 });
+
+export const WorkbenchFixtureReadbackResultSchema = z.object({
+  fixtureScope: z.literal('workbench_work_items'),
+  buildVersion: z.string().min(1),
+  itemCount: z.number().int().min(0),
+  items: z.array(WorkbenchItemSchema),
+  verifiedAt: z.string().min(1),
+});
+
+export const FixtureReadbackResultSchema = z.discriminatedUnion('fixtureScope', [
+  TaskFixtureReadbackResultSchema,
+  WorkbenchFixtureReadbackResultSchema,
+]);
 
 export const CleanupReceiptSchema = z.object({
   success: z.boolean(),

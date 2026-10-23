@@ -254,6 +254,9 @@ export function createDemoTargetServer(configOverride?: Partial<DemoTargetConfig
           return;
         }
 
+        // Normalize scope to 'workbench_work_items' to strictly protect legacy task fixtures
+        const scope: SupportedFixtureScope = 'workbench_work_items';
+
         if (rawFilter !== 'all' && rawFilter !== 'active' && rawFilter !== 'completed') {
           sendJson(400, {
             error: {
@@ -264,8 +267,8 @@ export function createDemoTargetServer(configOverride?: Partial<DemoTargetConfig
           return;
         }
 
-        const filtered = store.getWorkbenchItems(rawScope as SupportedFixtureScope, rawFilter, rawSearch);
-        const allItems = store.getWorkbenchItems(rawScope as SupportedFixtureScope, 'all');
+        const filtered = store.getWorkbenchItems(scope, rawFilter, rawSearch);
+        const allItems = store.getWorkbenchItems(scope, 'all');
 
         sendJson(200, {
           items: filtered,
@@ -293,6 +296,9 @@ export function createDemoTargetServer(configOverride?: Partial<DemoTargetConfig
           return;
         }
 
+        // Normalize scope to 'workbench_work_items' to strictly protect legacy task fixtures
+        const scope: SupportedFixtureScope = 'workbench_work_items';
+
         if (rawFilter !== 'all' && rawFilter !== 'active' && rawFilter !== 'completed') {
           sendJson(400, {
             error: {
@@ -303,7 +309,7 @@ export function createDemoTargetServer(configOverride?: Partial<DemoTargetConfig
           return;
         }
 
-        const result = store.deleteWorkbenchItem(rawScope as SupportedFixtureScope, itemId, rawFilter, rawSearch);
+        const result = store.deleteWorkbenchItem(scope, itemId, rawFilter, rawSearch);
         if (!result.deletedItemId) {
           sendJson(404, { error: { code: 'ITEM_NOT_FOUND', message: `Work item '${itemId}' not found.` } });
           return;

@@ -45,6 +45,26 @@ async function readBoundedResponseBody(
   return { text: fullBuffer.toString('utf8') };
 }
 
+function resolveTargetApiUrl(baseUrl: string, endpointPath: string): string {
+  try {
+    return new URL(endpointPath, baseUrl).toString();
+  } catch {
+    return `${baseUrl.replace(/\/+$/, '')}${endpointPath}`;
+  }
+}
+
+function appendScopeParam(url: string, scope?: string): string {
+  if (!scope || url.includes('scope=')) return url;
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set('scope', scope);
+    return parsed.toString();
+  } catch {
+    const delim = url.includes('?') ? '&' : '?';
+    return `${url}${delim}scope=${encodeURIComponent(scope)}`;
+  }
+}
+
 export interface CoordinateResetParams {
   target: SafeTargetProfile;
   investigationId: string;
@@ -96,11 +116,16 @@ export class TargetResetClient {
     const resetEndpoint =
       params.resetEndpoint ||
       ((params.target as unknown as Record<string, unknown>).fixtureResetEndpoint as string | undefined) ||
-      `${params.target.baseUrl.replace(/\/+$/, '')}/api/test/reset-fixture`;
+      resolveTargetApiUrl(params.target.baseUrl, '/api/test/reset-fixture');
 
-    const targetBase = params.target.baseUrl.replace(/\/+$/, '');
-    const candidateReadback = params.readbackEndpoint || `${targetBase}/api/test/readback`;
-    const fallbackReadback = `${targetBase}/api/test/baseline`;
+    const baseCandidateReadback =
+      params.readbackEndpoint ||
+      ((params.target as unknown as Record<string, unknown>).baselineEndpoint as string | undefined) ||
+      resolveTargetApiUrl(params.target.baseUrl, '/api/test/readback');
+    const baseFallbackReadback = resolveTargetApiUrl(params.target.baseUrl, '/api/test/baseline');
+
+    const candidateReadback = appendScopeParam(baseCandidateReadback, params.fixtureScope);
+    const fallbackReadback = appendScopeParam(baseFallbackReadback, params.fixtureScope);
 
     // 1. Validate destination endpoints against TargetNetworkGuard outbound policy
     try {
@@ -339,6 +364,7 @@ export class TargetResetClient {
     expectedBaseline: Record<string, unknown>;
     readbackEndpoint?: string;
     resetAuthSecret?: string;
+    fixtureScope?: string;
     timeoutMs?: number;
   }): Promise<{
     isEquivalent: boolean;
@@ -350,12 +376,14 @@ export class TargetResetClient {
   }> {
     const networkGuard = new TargetNetworkGuard(params.target);
     const timeoutMs = params.timeoutMs ?? 10_000;
-    const targetBase = params.target.baseUrl.replace(/\/+$/, '');
-    const candidateReadback =
+    const baseCandidateReadback =
       params.readbackEndpoint ||
       ((params.target as unknown as Record<string, unknown>).baselineEndpoint as string | undefined) ||
-      `${targetBase}/api/test/readback`;
-    const fallbackReadback = `${targetBase}/api/test/baseline`;
+      resolveTargetApiUrl(params.target.baseUrl, '/api/test/readback');
+    const baseFallbackReadback = resolveTargetApiUrl(params.target.baseUrl, '/api/test/baseline');
+
+    const candidateReadback = appendScopeParam(baseCandidateReadback, params.fixtureScope);
+    const fallbackReadback = appendScopeParam(baseFallbackReadback, params.fixtureScope);
 
     try {
       networkGuard.assertUrlAllowed(candidateReadback);
