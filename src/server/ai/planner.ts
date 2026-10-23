@@ -1,4 +1,28 @@
+
+function determineTailoredExpectedOptions(title: string, description: string): string[] {
+  const combined = `${title} ${description}`.toLowerCase();
+  if (combined.includes('delete') || combined.includes('remove') || combined.includes('trash')) {
+    return [
+      'The selected item is permanently removed and unselected items remain unchanged',
+      'A confirmation notification appears and item is archived',
+      'The deletion operation is rejected with validation',
+    ];
+  }
+  if (combined.includes('cart') || combined.includes('quantity') || combined.includes('total') || combined.includes('price')) {
+    return [
+      'The subtotal updates to reflect the new quantity multiplied by unit price',
+      'The cart displays an updated line item and recalculates total',
+      'The quantity change is rejected if stock is insufficient',
+    ];
+  }
+  return [
+    'Action completes successfully and targeted item is updated',
+    'No change occurs and operation is safely rejected',
+    'Confirmation dialog or validation notification appears',
+  ];
+}
 import type { ReportAgentInput, ReportAgentOutput } from './contracts';
+import { inferClarificationPurpose } from '@/contracts/clarification';
 import { z } from 'zod';
 import { ReportAgentOutputSchema, stripModelAuthorityFields } from './contracts';
 import type { ModelProviderPort, AiUsageReport } from './provider';
@@ -186,11 +210,16 @@ export class ReportExperimentAgent {
         Boolean(input.rawReport.claimedExpectedBehavior && input.rawReport.claimedExpectedBehavior.trim().length > 0) ||
         Boolean(
           input.clarificationHistory &&
-            input.clarificationHistory.some(
-              (h) =>
-                h.questionText.toLowerCase().includes('expected') ||
-                h.questionId.toLowerCase().includes('expected')
-            )
+            input.clarificationHistory.some((h) => {
+              const purpose = (h as { purpose?: string }).purpose || inferClarificationPurpose(h.questionText);
+              const hasAnswer = Boolean((h.customText || h.selectedOption)?.trim());
+              return purpose === 'EXPECTED_BEHAVIOR' && hasAnswer;
+            })
+        ) ||
+        Boolean(
+          /(?:expected(?:s+behavior|s+outcome|s+result)?s*[:=-]|should(?:s+be|s+stay|s+remain|s+have|s+delete|s+disappear)|supposed to|intended(?:s+behavior|s+result)?s*[:=-])/i.test(
+            input.rawReport.description
+          )
         );
 
       if (!hasReportedExpectedBehavior) {
@@ -206,11 +235,8 @@ export class ReportExperimentAgent {
               questionId: 'q_clarify_expected_behavior',
               questionText: 'What is the intended correct behavior when this action is performed?',
               whyItMatters: 'To formulate deterministic verification assertion predicates without inventing expectations',
-              options: [
-                'Action completes successfully and targeted item is updated',
-                'No change occurs and operation is safely rejected',
-                'Confirmation dialog or validation notification appears',
-              ],
+              purpose: 'EXPECTED_BEHAVIOR',
+              options: determineTailoredExpectedOptions(input.rawReport.title, input.rawReport.description),
               blocksExecution: true,
             },
           ],

@@ -56,6 +56,32 @@ export default function NewReportPage() {
     return targets.find((t) => t.id === formData.targetId) || null;
   }, [targets, formData.targetId]);
 
+  const groupedTargets = React.useMemo(() => {
+    const cartTargets: SafeTargetProfile[] = [];
+    const workbenchBuggy: SafeTargetProfile[] = [];
+    const workbenchFixed: SafeTargetProfile[] = [];
+    const otherTargets: SafeTargetProfile[] = [];
+
+    for (const t of targets) {
+      if (t.baseUrl.includes(':3007') || t.name.toLowerCase().includes('cart')) {
+        cartTargets.push(t);
+      } else if (t.baseUrl.includes(':3006') || t.name.toLowerCase().includes('fixed')) {
+        workbenchFixed.push(t);
+      } else if (t.baseUrl.includes(':3005') || t.name.toLowerCase().includes('workbench') || t.name.toLowerCase().includes('buggy')) {
+        workbenchBuggy.push(t);
+      } else {
+        otherTargets.push(t);
+      }
+    }
+
+    return [
+      { label: `Shopping Cart Application (${cartTargets.length} available - Port 3007)`, items: cartTargets },
+      { label: `Workbench Buggy Target (${workbenchBuggy.length} available - Port 3005)`, items: workbenchBuggy },
+      { label: `Workbench Fixed Control (${workbenchFixed.length} available - Port 3006)`, items: workbenchFixed },
+      { label: `Other Registered Targets (${otherTargets.length} available)`, items: otherTargets },
+    ].filter((g) => g.items.length > 0);
+  }, [targets]);
+
   // Fetch target environments on mount & check durable URL recovery
   React.useEffect(() => {
     let isMounted = true;
@@ -591,12 +617,16 @@ export default function NewReportPage() {
                     <option value="">
                       {targets.length === 1
                         ? 'Select target application'
-                        : `Select a registered target (${targets.length} available)...`}
+                        : `Select a registered target (${targets.length} available across ${groupedTargets.length} categories)...`}
                     </option>
-                    {targets.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name} ({t.baseUrl}) — {t.environment.toUpperCase()} ({t.isSandboxVerified ? 'Sandbox' : 'Protected'})
-                      </option>
+                    {groupedTargets.map((group) => (
+                      <optgroup key={group.label} label={group.label}>
+                        {group.items.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name} &bull; {t.baseUrl} [ID: {t.id.slice(0, 8)}]
+                          </option>
+                        ))}
+                      </optgroup>
                     ))}
                   </select>
 

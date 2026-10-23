@@ -69,7 +69,7 @@ export class EvidenceReviewAgent {
           systemPrompt: REVIEWER_SYSTEM_PROMPT,
           userPrompt,
           temperature: 0.1,
-          maxTokens: 1024,
+          maxTokens: 2048,
           abortSignal: options?.abortSignal,
         },
         EvidenceReviewOutputSchema

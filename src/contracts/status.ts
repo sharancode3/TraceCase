@@ -55,6 +55,7 @@ export const AttemptValiditySchema = z.enum([
   'PENDING',
   'VALID_DEFECT_DETECTED',
   'VALID_CLEAN_RUN',
+  'VALID_UNEXPECTED_OUTCOME',
   'INVALID_TIMEOUT',
   'INVALID_CRASH',
   'INVALID_BLOCKED',

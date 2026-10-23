@@ -149,38 +149,13 @@ export class EvidencePipeline {
       let finalReadiness: EvidenceReadinessStatus;
       if (results.length === 0) {
         finalReadiness = 'STORAGE_SYNC_FAILED';
-      } else if (quarantinedCount > 0 && processedCount === 0) {
-        finalReadiness = 'QUARANTINED_LEAK_DETECTED';
-      } else if (processedCount > 0 && quarantinedCount === 0) {
-        if (params.requireFullTriad) {
-          // Identify all distinct executed attempts in this batch of capture references
-          const executedAttempts = Array.from(new Set(captureRefs.map((c) => c.attemptNumber))).filter(
-            (n): n is 1 | 2 => n === 1 || n === 2
-          );
-
-          let allAttemptsHaveTriad = executedAttempts.length > 0;
-          for (const attNum of executedAttempts) {
-            const attCaptureIds = new Set(
-              captureRefs.filter((c) => c.attemptNumber === attNum).map((c) => c.captureId)
-            );
-            const attArtifacts = results.filter((r) => attCaptureIds.has(r.artifactId));
-            const hasVideo = attArtifacts.some((r) => r.kind === 'VIDEO_RECORDING');
-            const hasShareableConsole = attArtifacts.some((r) => r.kind === 'CONSOLE_LOG' && r.isEligibleForSharing);
-            const hasShareableNetwork = attArtifacts.some((r) => r.kind === 'NETWORK_TRACE' && r.isEligibleForSharing);
-            const attHasTriad = hasVideo && hasShareableConsole && hasShareableNetwork;
-            if (!attHasTriad) {
-              allAttemptsHaveTriad = false;
-              break;
-            }
-          }
-
-          finalReadiness = allAttemptsHaveTriad ? 'PUBLIC_SAFE_READY' : 'PACKAGING_IN_PROGRESS';
+      } else {
+        const hasTrueQuarantine = results.some((r) => r.quarantineReason && r.quarantineReason.trim().length > 0);
+        if (hasTrueQuarantine) {
+          finalReadiness = 'QUARANTINED_LEAK_DETECTED';
         } else {
           finalReadiness = 'PUBLIC_SAFE_READY';
         }
-      } else {
-        // Partial success with some leaks/quarantines
-        finalReadiness = 'PACKAGING_IN_PROGRESS';
       }
 
       await db

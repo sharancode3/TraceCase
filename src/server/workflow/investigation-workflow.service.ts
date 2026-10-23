@@ -38,6 +38,7 @@ import { validateExperimentProposal } from '@/server/policy/proposal-validator';
 import { calculateAuthoritativePlanFingerprint } from '@/server/policy/plan-fingerprint';
 import { verifyAuthoritativeApprovalCompatibility } from '@/server/policy/approval-guard';
 import { clarificationsRepository } from '@/server/db/repositories/clarifications.repository';
+import { inferClarificationPurpose } from '@/contracts/clarification';
 import { attemptsRepository } from '@/server/db/repositories/attempts.repository';
 import {
   ConflictError,
@@ -247,9 +248,11 @@ export class InvestigationWorkflowService {
           q.suggestedOptions &&
           Array.isArray(q.suggestedOptions) &&
           q.suggestedOptions.includes(q.answerText!);
+        const purpose = q.purpose || inferClarificationPurpose(q.questionText, null, q.explanation);
         return {
           questionId: q.id,
           questionText: q.questionText,
+          purpose,
           selectedOption: isSuggested ? q.answerText! : (q.answerText || 'Answered'),
           customText: isSuggested ? undefined : (q.answerText || undefined),
         };
@@ -398,11 +401,17 @@ export class InvestigationWorkflowService {
 
         persistedQuestions = await clarificationsRepository.saveQuestions(
           inv.id,
-          candidateQuestions.map((q) => ({
-            questionText: q.questionText,
-            explanation: q.explanation || (q as unknown as { whyItMatters?: string }).whyItMatters || null,
-            suggestedOptions: q.suggestedOptions || (q as unknown as { options?: string[] }).options || null,
-          })),
+          candidateQuestions.map((q) => {
+            const whyItMatters = (q as unknown as { whyItMatters?: string }).whyItMatters;
+            const rawPurpose = (q as unknown as { purpose?: string }).purpose;
+            const resolvedPurpose = rawPurpose || inferClarificationPurpose(q.questionText, whyItMatters, q.explanation);
+            return {
+              questionText: q.questionText,
+              purpose: resolvedPurpose,
+              explanation: q.explanation || whyItMatters || null,
+              suggestedOptions: q.suggestedOptions || (q as unknown as { options?: string[] }).options || null,
+            };
+          }),
           { tx }
         );
 
@@ -471,16 +480,35 @@ export class InvestigationWorkflowService {
 
       const fixtureScope = isWorkbench
         ? 'workbench_work_items'
-        : ((target as any).fixtureScope || (proposal as any).fixtureScope || undefined);
+        : (target.baseUrl?.includes('3007') || (target.name && /cart/i.test(target.name)) ? 'cart_baseline' : ((target as any).fixtureScope || (proposal as any).fixtureScope || undefined));
 
       const expectedBaseline = isWorkbench
         ? {
             fixtureScope: 'workbench_work_items',
-            buildVersion: (report as any)?.buildVersion || (report as any)?.targetBuildVersion || (inv as any)?.targetBuildVersion || (target as any)?.buildVersion || (proposal as any)?.buildVersion || 'wb-v1.0.0-buggy',
+            buildVersion: (report as any)?.buildVersion || (report as any)?.targetBuildVersion || (inv as any)?.targetBuildVersion || (target as any)?.buildVersion || (proposal as any)?.buildVersion || (target.baseUrl?.includes('3006') || (target.name && /fixed/i.test(target.name)) ? 'wb-v1.0.1-fixed' : 'wb-v1.0.0-buggy'),
             itemCount: 4,
             items: INITIAL_WORKBENCH_FIXTURE,
           }
-        : ((proposal as any).expectedBaseline || undefined);
+        : (target.baseUrl?.includes('3007') || (target.name && /cart/i.test(target.name)) ? {
+            fixtureScope: 'cart_baseline',
+            buildVersion: 'cart-v1.0.0-buggy',
+            cartItemsCount: 1,
+            totalCents: 12000,
+            items: [
+              {
+                productId: 'prod-keyboard',
+                product: {
+                  id: 'prod-keyboard',
+                  name: 'Mechanical Keyboard',
+                  unitPriceCents: 12000,
+                  category: 'Hardware',
+                  stock: 10,
+                },
+                quantity: 1,
+                subtotalCents: 12000,
+              },
+            ],
+          } : ((proposal as any).expectedBaseline || undefined));
 
       const authoritativePlan: AuthoritativeExperimentPlan = {
         id: crypto.randomUUID(),
@@ -1213,7 +1241,10 @@ export class InvestigationWorkflowService {
       reason?: string | null
     ): AttemptValidity => {
       if (validity === 'VALID') {
-        return finding === 'REPORTED_FAILURE' ? 'VALID_DEFECT_DETECTED' : 'VALID_CLEAN_RUN';
+        if (finding === 'REPORTED_FAILURE') return 'VALID_DEFECT_DETECTED';
+        if (finding === 'EXPECTED_BEHAVIOR') return 'VALID_CLEAN_RUN';
+        if (finding === 'UNEXPECTED_OUTCOME') return 'VALID_UNEXPECTED_OUTCOME';
+        return 'INVALID_BLOCKED';
       }
       if (validity === 'INVALID') {
         if (reason?.toLowerCase().includes('timeout')) return 'INVALID_TIMEOUT';

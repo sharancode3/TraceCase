@@ -71,10 +71,17 @@ Every assertion in BOTH arrays MUST include:
 - "predicateId": string matching /^assert_[a-z0-9_]+$/ (e.g. "assert_item_deleted")
 - "assertionType": "CORRECT_BEHAVIOR" (in correctBehaviorAssertions) or "REPORTED_FAILURE_SIGNATURE" (in reportedFailureAssertions)
 - "target": "DOM_ELEMENT" | "HTTP_STATUS" | "API_RESPONSE_BODY" | "URL_PATH"
-- "selector": string (required for DOM_ELEMENT, e.g. "[data-task-id=\"task-b\"]")
+- "selector": string (required for DOM_ELEMENT, e.g. "li:has-text(\"Task B\")" or "[data-item-id=\"item-b\"]")
 - "expectedCondition": "EXISTS" | "NOT_EXISTS" | "TEXT_CONTAINS" | "STATUS_CODE_EQUALS" | "URL_MATCHES"
 - "expectedValue": string, number, or boolean (e.g. true, false, "Active", 200)
 - "description": string explaining what is verified
+
+CRITICAL ASSERTION SELECTOR GROUNDING RULES:
+Only use standard valid selectors grounded in the actual web interface:
+- To locate items by visible text/title: 'li:has-text("Item Title")', ':has-text("Item Title")', 'button:has-text("...")'
+- To locate by stable verified attributes: '[data-item-id="..."]', '[data-task-id="..."]', '[id="..."]'
+- To locate cart totals or fields: '#cart-subtotal', '[data-testid="subtotal"]', ':has-text("$120.00")'
+NEVER INVENT NON-EXISTENT HTML ATTRIBUTES (such as '[data-work-item-name="..."]', '[data-task-name="..."]', '[data-card-title="..."]'). Invented attributes cause grounding failures.
 
 Example PLAN_PROPOSED format:
 {

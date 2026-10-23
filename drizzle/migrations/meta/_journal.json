@@ -71,6 +71,13 @@
       "when": 1792750000000,
       "tag": "0009_clarification_round_index",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792800000000,
+      "tag": "0010_clarification_purpose",
+      "breakpoints": true
     }
   ]
 }

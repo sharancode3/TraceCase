@@ -18,6 +18,7 @@ import {
   ChevronRight,
   ArrowLeft,
   FileCode,
+  FileText,
   Loader2,
   AlertCircle,
   Lock,
@@ -108,6 +109,39 @@ export default function InvestigationDetailPage() {
   const [isExporting, setIsExporting] = React.useState(false);
   const [exportNotice, setExportNotice] = React.useState<string | null>(null);
   const [videoLoadError, setVideoLoadError] = React.useState(false);
+  const [isDownloadingPdf, setIsDownloadingPdf] = React.useState(false);
+  const [pdfNotice, setPdfNotice] = React.useState<string | null>(null);
+  const [pdfError, setPdfError] = React.useState<string | null>(null);
+  const [showReportPreview, setShowReportPreview] = React.useState(false);
+
+  const handleDownloadPdf = async () => {
+    if (!investigation) return;
+    setIsDownloadingPdf(true);
+    setPdfError(null);
+    setPdfNotice(null);
+    try {
+      const res = await fetch(`/api/v1/investigations/${investigation.id}/report/pdf?download=true`, {
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        throw new Error(`PDF generation returned HTTP ${res.status}: ${res.statusText}`);
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `tracecase-report-${investigation.id.slice(0, 8)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      setPdfNotice(`PDF report downloaded successfully (tracecase-report-${investigation.id.slice(0, 8)}.pdf).`);
+    } catch (err) {
+      setPdfError(`Failed to download PDF report: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
 
   // Investigation lookup state
   const [investigation, setInvestigation] = React.useState<InvestigationSnapshot | null>(null);
@@ -566,6 +600,29 @@ export default function InvestigationDetailPage() {
               </Button>
             </Link>
             <Button
+              id="preview-report-btn"
+              size="sm"
+              variant="outline"
+              onClick={() => setShowReportPreview(true)}
+              className="space-x-1.5"
+              aria-label="Preview investigation report"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>Preview Report</span>
+            </Button>
+            <Button
+              id="download-pdf-btn"
+              size="sm"
+              variant="outline"
+              onClick={handleDownloadPdf}
+              disabled={isDownloadingPdf}
+              className="space-x-1.5"
+              aria-label="Download investigation report as PDF"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>{isDownloadingPdf ? 'Generating PDF...' : 'Download PDF'}</span>
+            </Button>
+            <Button
               id="export-package-btn"
               size="sm"
               variant="primary"
@@ -594,6 +651,41 @@ export default function InvestigationDetailPage() {
             <button
               onClick={() => setExportNotice(null)}
               className="text-emerald-700 font-semibold text-xs ml-4 hover:underline"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+        {pdfNotice && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="mt-3 p-3 rounded-control bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-center justify-between"
+          >
+            <div className="flex items-center space-x-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{pdfNotice}</span>
+            </div>
+            <button
+              onClick={() => setPdfNotice(null)}
+              className="text-emerald-700 font-semibold text-xs ml-4 hover:underline"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+        {pdfError && (
+          <div
+            role="alert"
+            className="mt-3 p-3 rounded-control bg-rose-50 border border-rose-200 text-xs text-rose-800 flex items-center justify-between"
+          >
+            <div className="flex items-center space-x-2">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>{pdfError}</span>
+            </div>
+            <button
+              onClick={() => setPdfError(null)}
+              className="text-rose-700 font-semibold text-xs ml-4 hover:underline"
             >
               Dismiss
             </button>
@@ -765,6 +857,8 @@ export default function InvestigationDetailPage() {
                       ? 'Defect Detected'
                       : investigation.attempt1.validity === 'VALID_CLEAN_RUN'
                       ? 'Clean Run'
+                      : investigation.attempt1.validity === 'VALID_UNEXPECTED_OUTCOME'
+                      ? 'Unexpected Outcome'
                       : investigation.attempt1.validity}
                   </span>
                 ) : (
@@ -838,6 +932,8 @@ export default function InvestigationDetailPage() {
                       ? 'Defect Detected'
                       : investigation.attempt2.validity === 'VALID_CLEAN_RUN'
                       ? 'Clean Run'
+                      : investigation.attempt2.validity === 'VALID_UNEXPECTED_OUTCOME'
+                      ? 'Unexpected Outcome'
                       : investigation.attempt2.validity}
                   </span>
                 ) : (
@@ -1101,15 +1197,27 @@ export default function InvestigationDetailPage() {
                   <span>Reproduction Video</span>
                 </span>
                 <Badge variant={hasAnyVideo && !isQuarantined ? 'default' : 'outline'}>
-                  {isQuarantined ? 'Quarantined' : hasAnyVideo ? (videoArtifacts.length > 1 ? `${videoArtifacts.length} Runs (.webm)` : '.webm') : 'Unavailable'}
+                  {isQuarantined
+                    ? 'Quarantined'
+                    : hasAnyVideo
+                    ? (activeRealVideo?.storageTier === 'RESTRICTED_RAW'
+                        ? 'Restricted Viewport'
+                        : videoArtifacts.length > 1
+                        ? `${videoArtifacts.length} Runs (.webm)`
+                        : '.webm')
+                    : 'Unavailable'}
                 </Badge>
               </div>
               <div className="text-[11px] text-brand-muted mt-1.5">
                 {isQuarantined
                   ? 'Withheld (Security review pending)'
                   : hasAnyVideo
-                  ? (videoArtifacts.length > 1 ? 'Both attempt recordings captured' : '1280x720 Viewport Capture')
-                  : 'No video artifact available'}
+                  ? (activeRealVideo?.storageTier === 'RESTRICTED_RAW'
+                      ? 'Captured — access restricted to authorized tier'
+                      : videoArtifacts.length > 1
+                      ? 'Both attempt recordings captured'
+                      : '1280x720 Viewport Capture')
+                  : 'No video artifact captured'}
               </div>
             </button>
 
@@ -1678,6 +1786,63 @@ export default function InvestigationDetailPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Report Preview Modal */}
+      {showReportPreview && investigation && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="report-preview-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+        >
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden border border-neutral-divider">
+            <div className="p-4 border-b border-neutral-divider flex items-center justify-between bg-neutral-surface">
+              <div className="flex items-center space-x-2">
+                <FileText className="w-5 h-5 text-cobalt-action" />
+                <h3 id="report-preview-title" className="font-bold text-sm text-brand-navy">
+                  Investigation Report Preview &bull; {investigation.title}
+                </h3>
+              </div>
+              <div className="flex items-center space-x-2">
+                <a
+                  href={`/api/v1/investigations/${investigation.id}/report/pdf`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-cobalt-action font-semibold hover:underline px-2.5 py-1 border border-cobalt-action rounded flex items-center space-x-1"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Open PDF in New Tab</span>
+                </a>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={handleDownloadPdf}
+                  disabled={isDownloadingPdf}
+                  className="space-x-1.5"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>{isDownloadingPdf ? 'Downloading...' : 'Download PDF'}</span>
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowReportPreview(false)}
+                >
+                  Close
+                </Button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto p-2 bg-slate-100">
+              <iframe
+                src={`/api/v1/investigations/${investigation.id}/report/pdf`}
+                className="w-full h-[70vh] rounded border border-neutral-divider bg-white"
+                title="Investigation Report PDF Preview"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

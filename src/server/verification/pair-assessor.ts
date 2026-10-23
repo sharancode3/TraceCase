@@ -148,16 +148,16 @@ export class PairAssessor {
       };
     }
 
-    // Branch 4: Both runs valid but unexpected/different errors observed
+    // Branch 4: Both runs produced unexpected outcomes (locator grounding failure or unexpected state)
     if (
       isComparable &&
       att1.finding === 'UNEXPECTED_OUTCOME' &&
       att2?.finding === 'UNEXPECTED_OUTCOME'
     ) {
-      limitations.push('Neither expected behavior nor the reported failure was observed; unrelated application error detected.');
+      limitations.push('Neither expected behavior nor the reported failure was confirmed; ungrounded locator or unexpected outcome observed.');
       return {
         investigationId: params.investigationId,
-        verdict: 'INCONSISTENT_OBSERVATIONS',
+        verdict: 'INCONCLUSIVE',
         validAttemptCount,
         matchingAttemptCount,
         isComparable: true,
@@ -165,7 +165,7 @@ export class PairAssessor {
         attempt2Assessment: att2,
         resetReceipt: params.resetReceipt,
         summary:
-          'Inconsistent / unrelated observations: Application responded with unexpected outcomes distinct from the reported defect.',
+          'Inconclusive execution: Both runs produced identical unexpected outcomes distinct from the reported defect. The test could not reliably identify or measure the reported entities.',
         limitations,
         assessedAt,
       };

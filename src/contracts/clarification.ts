@@ -1,6 +1,84 @@
 import { z } from 'zod';
 
 /**
+ * Explicit typed clarification purpose ensuring factual association
+ * between clarification inquiries, answers, and planning models.
+ */
+export const ClarificationPurposeSchema = z.enum([
+  'EXPECTED_BEHAVIOR',
+  'FAILURE_OBSERVATION',
+  'TARGET_ENTITY',
+  'STEP_SEQUENCE',
+  'PRECONDITION',
+  'AMBIGUITY_CONFIRMATION',
+  'GENERAL_INQUIRY',
+]);
+export type ClarificationPurpose = z.infer<typeof ClarificationPurposeSchema>;
+
+/**
+ * Robustly infers semantic purpose for legacy questions lacking explicit purpose metadata.
+ */
+export function inferClarificationPurpose(
+  questionText: string,
+  whyItMatters?: string | null,
+  explanation?: string | null
+): ClarificationPurpose {
+  const combined = `${questionText || ''} ${whyItMatters || ''} ${explanation || ''}`.toLowerCase();
+  if (
+    combined.includes('expected') ||
+    combined.includes('intended correct') ||
+    combined.includes('intended behavior') ||
+    combined.includes('should happen') ||
+    combined.includes('supposed to happen') ||
+    combined.includes('expected behavior') ||
+    combined.includes('correct behavior')
+  ) {
+    return 'EXPECTED_BEHAVIOR';
+  }
+  if (
+    combined.includes('which element') ||
+    combined.includes('target control') ||
+    combined.includes('item were you') ||
+    combined.includes('which item') ||
+    combined.includes('which product') ||
+    combined.includes('which task')
+  ) {
+    return 'TARGET_ENTITY';
+  }
+  if (
+    combined.includes('what happened') ||
+    combined.includes('error message') ||
+    combined.includes('failure symptom') ||
+    combined.includes('what went wrong') ||
+    combined.includes('observed behavior')
+  ) {
+    return 'FAILURE_OBSERVATION';
+  }
+  if (
+    combined.includes('steps') ||
+    combined.includes('action sequence') ||
+    combined.includes('how to reproduce')
+  ) {
+    return 'STEP_SEQUENCE';
+  }
+  if (
+    combined.includes('prerequisite') ||
+    combined.includes('precondition') ||
+    combined.includes('starting state')
+  ) {
+    return 'PRECONDITION';
+  }
+  if (
+    combined.includes('ambiguous') ||
+    combined.includes('confirm') ||
+    combined.includes('did you mean')
+  ) {
+    return 'AMBIGUITY_CONFIRMATION';
+  }
+  return 'GENERAL_INQUIRY';
+}
+
+/**
  * Model-proposed clarification question (output from Luna Role 1).
  * Pure proposal without server-owned IDs, timestamps, or answer state.
  */
@@ -26,6 +104,7 @@ export const ClarificationQuestionSchema = z.object({
   questionIndex: z.number().int().nonnegative().default(0).optional(),
   roundIndex: z.number().int().positive().default(1).optional(),
   questionText: z.string().min(5).max(1000),
+  purpose: ClarificationPurposeSchema.or(z.string()).nullable().optional(),
   explanation: z.string().max(1000).nullable().optional(),
   contextExplanation: z.string().max(1000).nullable().optional(), // Backward compatibility alias
   suggestedOptions: z.array(z.string().min(1)).nullable().optional(),

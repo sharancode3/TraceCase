@@ -2,6 +2,7 @@ import { eq, and, asc } from 'drizzle-orm';
 import { clarificationQuestionsTable, investigationsTable } from '../schema';
 import { getDb, DbClient } from '../index';
 import { NotFoundError } from '@/server/workflow/workflow-errors';
+import { inferClarificationPurpose } from '@/contracts/clarification';
 
 export type ClarificationQuestionRecord = typeof clarificationQuestionsTable.$inferSelect;
 export type TxOrDb = Parameters<Parameters<DbClient['transaction']>[0]>[0] | DbClient;
@@ -23,6 +24,7 @@ export class ClarificationsRepository {
       questionText: string;
       questionIndex?: number;
       roundIndex?: number;
+      purpose?: string | null;
       explanation?: string | null;
       suggestedOptions?: string[] | null;
     }>,
@@ -80,6 +82,7 @@ export class ClarificationsRepository {
           questionIndex: assignedIdx,
           roundIndex: q.roundIndex ?? targetRound,
           questionText: q.questionText,
+          purpose: q.purpose || inferClarificationPurpose(q.questionText, null, q.explanation),
           explanation: q.explanation || null,
           suggestedOptions: q.suggestedOptions || null,
           isAnswered: false,

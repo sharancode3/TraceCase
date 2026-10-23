@@ -13,6 +13,7 @@ export class ObservationCollector {
     assertions: TypedAssertion[];
     evidenceCollector: EvidenceCollector;
     readbackState?: Record<string, unknown>;
+    initialWitnesses?: Map<string, number>;
   }): Promise<Map<string, CapturedAssertionObservation>> {
     const observations = new Map<string, CapturedAssertionObservation>();
     const page = params.page;
@@ -35,11 +36,21 @@ export class ObservationCollector {
               const locator = page.locator(assertion.subjectRef);
               const count = await locator.count();
 
+              const initCount = params.initialWitnesses?.get(assertion.id);
               observations.set(assertion.id, {
                 assertionId: assertion.id,
                 source: assertion.source,
                 status: count > 0 ? 'AVAILABLE' : 'NOT_FOUND',
                 elementCount: count,
+                initialWitnessCount: initCount,
+                initialWitnessStatus:
+                  initCount === undefined
+                    ? 'UNWITNESSED'
+                    : initCount === 1
+                    ? 'WITNESSED_PRESENT'
+                    : initCount > 1
+                    ? 'AMBIGUOUS'
+                    : 'WITNESSED_ABSENT',
                 observedValue: count,
                 pageUrl: currentUrl,
                 observedAt,

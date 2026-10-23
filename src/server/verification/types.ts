@@ -17,6 +17,8 @@ export interface CapturedAssertionObservation {
   acquisitionStatus?: 'ACQUIRED' | 'ACQUISITION_FAILED';
   observedValue?: unknown;
   elementCount?: number;
+  initialWitnessCount?: number;
+  initialWitnessStatus?: 'WITNESSED_PRESENT' | 'WITNESSED_ABSENT' | 'UNWITNESSED' | 'AMBIGUOUS';
   statusCode?: number;
   pageUrl?: string;
   observedAt: string;

@@ -133,6 +133,7 @@ export const ReportAgentInputSchema = z.object({
       z.object({
         questionId: z.string(),
         questionText: z.string(),
+        purpose: z.string().optional(),
         selectedOption: z.string(),
         customText: z.string().max(500).optional(),
       })
@@ -145,6 +146,7 @@ export const ClarificationQuestionProposalSchema = z.object({
   questionId: z.string().regex(/^q_[a-z0-9_]+$/),
   questionText: z.string().min(10).max(250),
   whyItMatters: z.string().max(200),
+  purpose: z.string().optional(),
   options: z.array(z.string().min(2).max(100)).min(2).max(4),
   blocksExecution: z.boolean().default(true),
 });
@@ -360,7 +362,7 @@ export type EvidenceReviewAgentInput = z.infer<typeof EvidenceReviewAgentInputSc
 export const EvidenceReviewOutputSchema = z.discriminatedUnion('variant', [
   z.object({
     variant: z.literal('REPORT_SYNTHESIZED'),
-    executiveSummary: z.string().max(500),
+    executiveSummary: z.string().max(1500),
     observedReproductionVerdict: z.enum([
       'CONFIRMED_REPRODUCED',
       'NOT_REPRODUCED',
@@ -368,13 +370,13 @@ export const EvidenceReviewOutputSchema = z.discriminatedUnion('variant', [
       'INCONCLUSIVE_EXECUTION_FAILURE',
     ]),
     attempt1Comparison: z.object({
-      summary: z.string().max(300),
+      summary: z.string().max(1000),
       failedAssertions: z.array(z.string()).default([]),
       matchingFailureObserved: z.boolean(),
     }),
     attempt2Comparison: z
       .object({
-        summary: z.string().max(300),
+        summary: z.string().max(1000),
         failedAssertions: z.array(z.string()).default([]),
         matchingFailureObserved: z.boolean(),
       })

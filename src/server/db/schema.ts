@@ -118,6 +118,7 @@ export const clarificationQuestionsTable = pgTable(
     questionIndex: integer('question_index').notNull(),
     roundIndex: integer('round_index').notNull().default(1),
     questionText: text('question_text').notNull(),
+    purpose: text('purpose'),
     explanation: text('explanation'),
     suggestedOptions: text('suggested_options').array(),
     isAnswered: boolean('is_answered').notNull().default(false),

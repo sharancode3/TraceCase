@@ -112,6 +112,7 @@ export class PlaywrightBrowserWorker implements BrowserWorkerPort {
     let mainPage: Page | null = null;
     let contextCrashed = false;
     let assertionObservations = new Map<string, CapturedAssertionObservation>();
+    const initialWitnesses = new Map<string, number>();
 
     const actionReceipts: ActionReceipt[] = [];
 
@@ -426,6 +427,26 @@ export class PlaywrightBrowserWorker implements BrowserWorkerPort {
           }
         }
 
+        // Positive identity witness capture prior to mutating / destructive actions
+        if (
+          initialWitnesses.size === 0 &&
+          (step.tier === 'TIER_4_DESTRUCTIVE' || step.tier === 'TIER_3_MUTATING_INTERACTION' || i > 0)
+        ) {
+          const planAssertions = (params.plan as AuthoritativeExperimentPlan).assertions;
+          if (Array.isArray(planAssertions)) {
+            for (const a of planAssertions) {
+              if (a.source === 'DOM_ELEMENT' || a.kind === 'ENTITY_PRESENCE' || a.source === 'DOM_TEXT') {
+                try {
+                  const cnt = await activePage.locator(a.subjectRef).count();
+                  initialWitnesses.set(a.id, cnt);
+                } catch {
+                  initialWitnesses.set(a.id, 0);
+                }
+              }
+            }
+          }
+        }
+
         if (shouldDispatch) {
           stepReceipt = await actionDispatcher.executeStep(activePage, step, {
             elementRef: elementRefToUse,
@@ -464,6 +485,7 @@ export class PlaywrightBrowserWorker implements BrowserWorkerPort {
             page: activePage,
             assertions: planAssertions,
             evidenceCollector,
+            initialWitnesses,
           });
         }
       }

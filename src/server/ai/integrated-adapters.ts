@@ -7,6 +7,7 @@ import type {
 } from '@/server/services/ports';
 import { ServiceUnavailableError } from '@/server/services/ports';
 import type { DraftReportIntake, ClarifiedReportContext } from '@/contracts/reports';
+import { inferClarificationPurpose } from '@/contracts/clarification';
 import type { SafeModelTargetContext, SafeTargetProfile } from '@/contracts/targets';
 import type {
   ReportPlannerOutput,
@@ -88,6 +89,15 @@ function mapPlanAssertionToTypedAssertion(
   let source: ObservationSource;
   let operator: TypedAssertionOperator;
 
+  // Ground invented / synthetic attribute selectors to standard text locators
+  let resolvedSelector = assertion.selector;
+  if (resolvedSelector) {
+    const inventedAttrMatch = resolvedSelector.match(/\[data-[a-z0-9_-]*(?:name|title|entity)=["']([^"']+)["']\]/i);
+    if (inventedAttrMatch) {
+      resolvedSelector = `:has-text("${inventedAttrMatch[1]}")`;
+    }
+  }
+
   // Validate and translate only combinations supported by the actual collector and evaluator
   if (assertion.target === 'DOM_ELEMENT') {
     if (assertion.expectedCondition === 'EXISTS') {
@@ -143,7 +153,7 @@ function mapPlanAssertionToTypedAssertion(
     kind,
     source,
     purpose,
-    subjectRef: assertion.selector || assertion.target,
+    subjectRef: resolvedSelector || assertion.target,
     operator,
     expectedValue: String(assertion.expectedValue),
     settlingPoint: 'AFTER_NETWORK_IDLE',
@@ -258,6 +268,7 @@ export class IntegratedReportClarificationAgent implements ReportClarificationAg
     clarificationHistory?: Array<{
       questionId: string;
       questionText: string;
+      purpose?: string;
       selectedOption: string;
       customText?: string;
     }>;
@@ -307,6 +318,7 @@ export class IntegratedReportClarificationAgent implements ReportClarificationAg
       clarificationHistory = params.clarificationHistory.map((h) => ({
         questionId: h.questionId,
         questionText: h.questionText,
+        purpose: h.purpose || inferClarificationPurpose(h.questionText),
         selectedOption: h.selectedOption || h.customText || 'Answered',
         customText: h.customText,
       }));
@@ -324,6 +336,15 @@ export class IntegratedReportClarificationAgent implements ReportClarificationAg
       }));
     }
 
+    const answeredExpectedClarification = clarificationHistory.find(
+      (h) =>
+        ((h as { purpose?: string }).purpose === 'EXPECTED_BEHAVIOR' || inferClarificationPurpose(h.questionText) === 'EXPECTED_BEHAVIOR') &&
+        Boolean((h.customText || h.selectedOption)?.trim())
+    );
+    const resolvedExpectedBehavior =
+      claimedExpectedBehavior ||
+      (answeredExpectedClarification ? (answeredExpectedClarification.customText || answeredExpectedClarification.selectedOption) : undefined);
+
     const safeInput: ReportAgentInput = {
       contractVersion: '1.0.0',
       investigationId,
@@ -338,7 +359,7 @@ export class IntegratedReportClarificationAgent implements ReportClarificationAg
         title,
         description,
         environmentClues,
-        claimedExpectedBehavior,
+        claimedExpectedBehavior: resolvedExpectedBehavior,
       },
       clarificationHistory,
     };

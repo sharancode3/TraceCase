@@ -71,7 +71,35 @@ export class DeterministicAssertionEvaluator {
         }
 
         if (assertion.operator === 'NOT_EXISTS') {
-          // NOT_EXISTS only succeeds if observation was successfully acquired and count is 0
+          // Positive identity witness verification:
+          // A missing entity cannot satisfy NOT_EXISTS without an initial positive identity witness.
+          const initCount = observation.initialWitnessCount;
+          if (initCount !== undefined && initCount === 0) {
+            return {
+              assertionId: assertion.id,
+              kind: assertion.kind,
+              purpose: assertion.purpose,
+              result: 'INVALID_EVALUATION',
+              expectedValue: '0 elements (with positive identity witness in initial baseline)',
+              observedValue: `${count} elements (0 witnessed initially)`,
+              details:
+                'Grounding failure: Target entity was never witnessed present in baseline DOM prior to action. An ungrounded or invented selector returning zero cannot satisfy NOT_EXISTS.',
+              evaluatedAt,
+            };
+          }
+          if (initCount !== undefined && initCount > 1) {
+            return {
+              assertionId: assertion.id,
+              kind: assertion.kind,
+              purpose: assertion.purpose,
+              result: 'INVALID_EVALUATION',
+              expectedValue: '1 unique element initially',
+              observedValue: `${initCount} elements in initial state`,
+              details: `Ambiguity failure: Selector matched ${initCount} duplicate elements in baseline DOM. Cannot unambiguously verify deletion.`,
+              evaluatedAt,
+            };
+          }
+
           const satisfied = count === 0;
           return {
             assertionId: assertion.id,
@@ -80,7 +108,11 @@ export class DeterministicAssertionEvaluator {
             result: satisfied ? 'SATISFIED' : 'NOT_SATISFIED',
             expectedValue: '0 elements',
             observedValue: `${count} elements`,
-            details: satisfied ? 'Target element is confirmed absent.' : 'Target element unexpectedly exists.',
+            details: satisfied
+              ? (initCount !== undefined && initCount > 0
+                  ? `Target element witnessed in initial state (${initCount}) is now confirmed absent (0).`
+                  : 'Target element is confirmed absent.')
+              : 'Target element unexpectedly exists.',
             evaluatedAt,
           };
         }
