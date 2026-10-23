@@ -25,6 +25,16 @@ export const TaskItemSchema = z.object({
   createdAt: z.string(),
 });
 
+export const WorkbenchItemSchema = z.object({
+  id: z.string().min(1),
+  title: z.string(),
+  description: z.string(),
+  completed: z.boolean(),
+  priority: z.enum(['Critical', 'High', 'Medium', 'Low']),
+  owner: z.string(),
+  createdAt: z.string(),
+});
+
 export const FixtureResetReceiptSchema = z.object({
   success: z.boolean(),
   receiptId: z.string().min(1),
@@ -33,6 +43,7 @@ export const FixtureResetReceiptSchema = z.object({
     'two_tasks_one_completed',
     'three_tasks_multi_status',
     'auth_test_user',
+    'workbench_work_items',
     'default',
   ]),
   itemsRestored: z.number().int().min(0),
@@ -44,11 +55,12 @@ export const FixtureReadbackResultSchema = z.object({
     'two_tasks_one_completed',
     'three_tasks_multi_status',
     'auth_test_user',
+    'workbench_work_items',
     'default',
   ]),
   buildVersion: z.string().min(1),
   itemCount: z.number().int().min(0),
-  items: z.array(TaskItemSchema),
+  items: z.array(z.union([TaskItemSchema, WorkbenchItemSchema])),
   verifiedAt: z.string().min(1),
 });
 

@@ -3,6 +3,11 @@ import { URL } from 'node:url';
 import { DemoTargetStore } from './store';
 import { loadDemoTargetConfig, type DemoTargetConfig } from './config';
 import type { SupportedFixtureScope } from './types';
+import {
+  renderWorkbenchHtml,
+  calculateWorkbenchMetrics,
+  INITIAL_WORKBENCH_FIXTURE,
+} from './workbench/workbench-view';
 
 /**
  * ============================================================================
@@ -71,12 +76,12 @@ export function createDemoTargetServer(configOverride?: Partial<DemoTargetConfig
       if (!config.resetSecret || config.resetSecret.trim().length === 0) {
         return false;
       }
-      const headerAuth =
-        req.headers['x-tracecase-reset-auth'] ||
-        (req.headers['authorization']?.startsWith('Bearer ')
-          ? req.headers['authorization'].slice(7)
-          : undefined);
-      return typeof headerAuth === 'string' && headerAuth.trim().length > 0 && headerAuth === config.resetSecret;
+      const rawAuth = req.headers['x-tracecase-reset-auth'] || req.headers['authorization'];
+      if (typeof rawAuth !== 'string') {
+        return false;
+      }
+      const headerAuth = rawAuth.startsWith('Bearer ') ? rawAuth.slice(7) : rawAuth;
+      return headerAuth.trim().length > 0 && headerAuth === config.resetSecret;
     };
 
     try {
@@ -193,6 +198,24 @@ export function createDemoTargetServer(configOverride?: Partial<DemoTargetConfig
       }
 
       // ----------------------------------------------------------------------
+      // 1b. TRACECASE WORKBENCH WEB USER INTERFACE (Accessible HTML)
+      // ----------------------------------------------------------------------
+      if (
+        method === 'GET' &&
+        (pathname === '/workbench' || pathname === '/workbench/' || pathname === '/workbench/index.html')
+      ) {
+        const items = store.getWorkbenchItems('workbench_work_items');
+        const html = renderWorkbenchHtml({
+          buildVersion: config.buildVersion,
+          isSandbox: config.isSandbox,
+          items,
+        });
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(html);
+        return;
+      }
+
+      // ----------------------------------------------------------------------
       // 2. PUBLIC API: GET /api/tasks
       // ----------------------------------------------------------------------
       if (method === 'GET' && pathname === '/api/tasks') {
@@ -215,6 +238,82 @@ export function createDemoTargetServer(configOverride?: Partial<DemoTargetConfig
         }
 
         sendJson(200, { tasks: store.getTasks(rawScope, rawFilter) });
+        return;
+      }
+
+      // ----------------------------------------------------------------------
+      // 2b. PUBLIC API: GET /api/workbench/items
+      // ----------------------------------------------------------------------
+      if (method === 'GET' && pathname === '/api/workbench/items') {
+        const rawScope = parsedUrl.searchParams.get('scope') || 'workbench_work_items';
+        const rawFilter = parsedUrl.searchParams.get('filter') || 'all';
+        const rawSearch = (parsedUrl.searchParams.get('search') || '').trim();
+
+        if (rawScope !== 'workbench_work_items' && rawScope !== 'default') {
+          sendJson(400, { error: { code: 'INVALID_SCOPE', message: `Unknown scope: ${rawScope}` } });
+          return;
+        }
+
+        if (rawFilter !== 'all' && rawFilter !== 'active' && rawFilter !== 'completed') {
+          sendJson(400, {
+            error: {
+              code: 'INVALID_FILTER',
+              message: `Invalid filter '${rawFilter}'. Must be one of: all, active, completed.`,
+            },
+          });
+          return;
+        }
+
+        const filtered = store.getWorkbenchItems(rawScope as SupportedFixtureScope, rawFilter, rawSearch);
+        const allItems = store.getWorkbenchItems(rawScope as SupportedFixtureScope, 'all');
+
+        sendJson(200, {
+          items: filtered,
+          metrics: calculateWorkbenchMetrics(allItems),
+        });
+        return;
+      }
+
+      // ----------------------------------------------------------------------
+      // 2c. PUBLIC API: DELETE /api/workbench/items/:id
+      // ----------------------------------------------------------------------
+      if (method === 'DELETE' && pathname.startsWith('/api/workbench/items/')) {
+        const itemId = pathname.slice('/api/workbench/items/'.length);
+        const rawScope = parsedUrl.searchParams.get('scope') || 'workbench_work_items';
+        const rawFilter = parsedUrl.searchParams.get('filter') || 'all';
+        const rawSearch = (parsedUrl.searchParams.get('search') || '').trim();
+
+        if (!itemId || itemId.trim().length === 0) {
+          sendJson(400, { error: { code: 'INVALID_ITEM_ID', message: 'Item ID must not be empty.' } });
+          return;
+        }
+
+        if (rawScope !== 'workbench_work_items' && rawScope !== 'default') {
+          sendJson(400, { error: { code: 'INVALID_SCOPE', message: `Unknown scope: ${rawScope}` } });
+          return;
+        }
+
+        if (rawFilter !== 'all' && rawFilter !== 'active' && rawFilter !== 'completed') {
+          sendJson(400, {
+            error: {
+              code: 'INVALID_FILTER',
+              message: `Invalid filter '${rawFilter}'. Must be one of: all, active, completed.`,
+            },
+          });
+          return;
+        }
+
+        const result = store.deleteWorkbenchItem(rawScope as SupportedFixtureScope, itemId, rawFilter, rawSearch);
+        if (!result.deletedItemId) {
+          sendJson(404, { error: { code: 'ITEM_NOT_FOUND', message: `Work item '${itemId}' not found.` } });
+          return;
+        }
+
+        sendJson(200, {
+          success: true,
+          deletedItemId: result.deletedItemId,
+          deletedItemTitle: result.deletedItemTitle,
+        });
         return;
       }
 
