@@ -329,22 +329,22 @@ export default function ClarificationPage() {
 
       {/* STATE 5: CANNOT PROCEED */}
       {uiStatus === 'CANNOT_PROCEED' && (
-        <Card className="p-8 border-amber-200 bg-amber-50/40 text-center space-y-4">
+        <Card className="p-8 border-amber-200 bg-amber-50/40 text-center space-y-5">
           <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center mx-auto text-amber-700">
             <AlertTriangle className="w-6 h-6" aria-hidden="true" />
           </div>
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             <h2 className="text-base font-bold text-brand-navy">Unable to formulate a safe experiment plan</h2>
             <p className="text-xs text-amber-900 max-w-md mx-auto leading-relaxed">
               {cannotProceedReason ||
                 'Autonomous planning could not construct a safe, verifiable reproduction plan within policy bounds.'}
             </p>
             {cannotProceedPrereqs.length > 0 && (
-              <div className="pt-3 text-left max-w-md mx-auto">
-                <span className="text-[11px] font-semibold text-amber-900 block mb-1">
-                  Missing prerequisites:
+              <div className="pt-3 text-left max-w-md mx-auto bg-white/70 p-3 rounded-control border border-amber-200/60">
+                <span className="text-[11px] font-semibold text-amber-950 block mb-1">
+                  Missing details needed:
                 </span>
-                <ul className="list-disc list-inside text-xs text-amber-800 space-y-0.5">
+                <ul className="list-disc list-inside text-xs text-amber-900 space-y-0.5">
                   {cannotProceedPrereqs.map((item, idx) => (
                     <li key={idx}>{item}</li>
                   ))}
@@ -352,10 +352,32 @@ export default function ClarificationPage() {
               </div>
             )}
           </div>
-          <div className="pt-3">
+
+          <div className="p-3 bg-lavender-surface/50 border border-lavender-accent/40 rounded-control text-left max-w-md mx-auto space-y-1">
+            <span className="text-[11px] font-bold text-cobalt-action block">How to skip clarification:</span>
+            <p className="text-[11px] text-brand-muted leading-relaxed">
+              When filing a bug report, describing the step-by-step actions (e.g. filter to Active, click delete on Task B) and stating both expected and unexpected behavior allows TraceCase to generate a plan directly without clarification questions.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+            <Button
+              variant="primary"
+              onClick={handleRetryPlanningOnly}
+              className="space-x-1.5 text-xs h-9 px-4"
+              id="retry-plan-btn"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Retry Plan Generation</span>
+            </Button>
+            <Link href="/investigations/new">
+              <Button variant="outline" className="text-xs h-9 px-4">
+                Submit Refined Report
+              </Button>
+            </Link>
             <Link href={`/investigations/${id}`}>
-              <Button variant="outline" className="text-xs">
-                Back to Investigation Overview
+              <Button variant="ghost" className="text-xs h-9 px-3 text-brand-muted hover:text-brand-navy">
+                Investigation Overview
               </Button>
             </Link>
           </div>

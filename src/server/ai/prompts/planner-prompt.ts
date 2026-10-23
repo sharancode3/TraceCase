@@ -39,6 +39,8 @@ STRICT OPERATIONAL RULES:
      4. Reported failure behavior or signature is known.
      5. Key entities or items involved are identifiable.
      Do NOT ask clarification questions for facts or entities already supplied in the report!
+     For Workbench or task management defects describing deletion, filtering, search, or status changes, formulate "PLAN_PROPOSED" immediately without unnecessary clarification rounds.
+     If clarification history contains prior answers, synthesize "PLAN_PROPOSED" directly incorporating those answers. NEVER re-ask questions that were already answered.
 
    - Choose "NEEDS_CLARIFICATION" when:
      The report concerns an in-domain issue on the target application, BUT critical facts needed for an executable experiment are genuinely missing:
@@ -234,6 +236,7 @@ ${input.rawReport.claimedExpectedBehavior ? `Claimed Expected Behavior: ${input.
 
 Respond with a valid JSON object only. Ensure the top-level property "variant" is set.
 - If the report supplies identifiable actions, intended correct behavior, failure signature, and entities -> choose "PLAN_PROPOSED". Do NOT ask clarification questions for facts already supplied in the report! Ensure both correctBehaviorAssertions and reportedFailureAssertions have distinct testable conditions.
+- If clarification history contains answers from prior questions, combine them with the report and choose "PLAN_PROPOSED". Do NOT repeat questions already answered.
 - If intended correct behavior, failure symptom, relevant entity, or necessary prerequisites remain genuinely unknown -> choose "NEEDS_CLARIFICATION" targeting the missing fact (each question MUST provide between 2 and 4 distinct options).
 - If the report explicitly requests testing non-web systems (printers, quantum hardware, external databases) -> choose "UNSUPPORTED_CLAIM".`;
 }

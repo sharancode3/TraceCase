@@ -249,11 +249,18 @@ async function runBuggyPositiveJourney(browser: Browser): Promise<string> {
   // Handle clarification if required
   if (currentUrl.includes('/clarify')) {
     log('STAGE-5', 'Investigation requested clarification. Answering via UI...');
-    await page.waitForSelector('textarea, button[type="submit"]', { timeout: 15000 });
+    await page.waitForSelector('textarea, button[type="submit"], button:has-text("Submit Answers")', { timeout: 15000 });
+    const optionBtns = page.locator('.space-y-1\.5 button');
+    const optCount = await optionBtns.count();
+    if (optCount > 0) {
+      for (let i = 0; i < optCount; i++) {
+        await optionBtns.nth(i).click().catch(() => {});
+      }
+    }
     const textareas = page.locator('textarea');
     const count = await textareas.count();
     for (let i = 0; i < count; i++) {
-      await textareas.nth(i).fill('Filtered on Active items, clicked delete on wb-item-02, confirmed deletion.');
+      await textareas.nth(i).fill('Filtered on Active items, clicked delete on wb-item-02, confirmed deletion.').catch(() => {});
     }
     const answerSubmitBtn = page.locator('button:has-text("Submit Answers"), button:has-text("Proceed")');
     await answerSubmitBtn.click();
@@ -409,10 +416,17 @@ async function runFixedNegativeControlJourney(browser: Browser): Promise<string>
   // Wait for approve page
   await page.waitForURL(/\/investigations\/[^/]+\/(approve|clarify)/, { timeout: 60000 });
   if (page.url().includes('/clarify')) {
+    const optionBtns = page.locator('.space-y-1\.5 button');
+    const optCount = await optionBtns.count();
+    if (optCount > 0) {
+      for (let i = 0; i < optCount; i++) {
+        await optionBtns.nth(i).click().catch(() => {});
+      }
+    }
     const textareas = page.locator('textarea');
     const count = await textareas.count();
     for (let i = 0; i < count; i++) {
-      await textareas.nth(i).fill('Filtered on Active items, clicked delete on wb-item-02, confirmed deletion.');
+      await textareas.nth(i).fill('Filtered on Active items, clicked delete on wb-item-02, confirmed deletion.').catch(() => {});
     }
     const answerSubmitBtn = page.locator('button:has-text("Submit Answers"), button:has-text("Proceed")');
     await answerSubmitBtn.click();

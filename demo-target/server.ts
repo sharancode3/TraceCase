@@ -88,7 +88,33 @@ export function createDemoTargetServer(configOverride?: Partial<DemoTargetConfig
       // ----------------------------------------------------------------------
       // 1. PUBLIC WEB USER INTERFACE (Accessible HTML)
       // ----------------------------------------------------------------------
-      if (method === 'GET' && (pathname === '/' || pathname === '/index.html')) {
+      if (
+        method === 'GET' &&
+        (pathname === '/' || pathname === '/index.html' || pathname === '/legacy' || pathname === '/tasks')
+      ) {
+        const isWorkbenchBuild = config.buildVersion.startsWith('wb-');
+        const wantsLegacy =
+          pathname === '/legacy' ||
+          pathname === '/tasks' ||
+          parsedUrl.searchParams.get('view') === 'legacy' ||
+          parsedUrl.searchParams.get('mode') === 'legacy';
+        const wantsWorkbench =
+          parsedUrl.searchParams.get('view') === 'workbench' ||
+          parsedUrl.searchParams.get('mode') === 'workbench';
+
+        // When running in Workbench build mode, serve the Workbench UI by default at root
+        if ((isWorkbenchBuild && !wantsLegacy) || wantsWorkbench) {
+          const items = store.getWorkbenchItems('workbench_work_items');
+          const html = renderWorkbenchHtml({
+            buildVersion: config.buildVersion,
+            isSandbox: config.isSandbox,
+            items,
+          });
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.end(html);
+          return;
+        }
+
         const scope = (parsedUrl.searchParams.get('scope') as SupportedFixtureScope) || 'default';
         const tasks = store.getTasks(store.isValidScope(scope) ? scope : 'default', 'all');
 

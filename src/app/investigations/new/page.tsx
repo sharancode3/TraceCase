@@ -668,7 +668,7 @@ export default function NewReportPage() {
             <div className="p-3.5 rounded-control bg-lavender-surface/60 border border-cobalt-action/20 text-xs text-brand-navy flex items-start space-x-2.5">
               <Info className="w-4 h-4 text-cobalt-action shrink-0 mt-0.5" />
               <div className="leading-relaxed">
-                <strong className="font-semibold text-brand-deepPurple">Uncertainty is completely okay:</strong> You do not need to know exact reproduction steps, root causes, or build commit hashes. Autonomous planning will clarify any missing preconditions and explore deterministic reproduction steps before proposing a test plan.
+                <strong className="font-semibold text-brand-deepPurple">Uncertainty is completely okay:</strong> You do not need to know exact reproduction steps or technical selectors. If you already know the user actions (e.g. click Active filter, then delete Task B), include them in your description so TraceCase can formulate a testable plan directly without clarification questions.
               </div>
             </div>
 

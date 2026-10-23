@@ -163,15 +163,11 @@ export class EvidencePipeline {
             const attCaptureIds = new Set(
               captureRefs.filter((c) => c.attemptNumber === attNum).map((c) => c.captureId)
             );
-            const attShareableKinds = new Set(
-              results
-                .filter((r) => r.isEligibleForSharing && attCaptureIds.has(r.artifactId))
-                .map((r) => r.kind)
-            );
-            const attHasTriad =
-              attShareableKinds.has('VIDEO_RECORDING') &&
-              attShareableKinds.has('CONSOLE_LOG') &&
-              attShareableKinds.has('NETWORK_TRACE');
+            const attArtifacts = results.filter((r) => attCaptureIds.has(r.artifactId));
+            const hasVideo = attArtifacts.some((r) => r.kind === 'VIDEO_RECORDING');
+            const hasShareableConsole = attArtifacts.some((r) => r.kind === 'CONSOLE_LOG' && r.isEligibleForSharing);
+            const hasShareableNetwork = attArtifacts.some((r) => r.kind === 'NETWORK_TRACE' && r.isEligibleForSharing);
+            const attHasTriad = hasVideo && hasShareableConsole && hasShareableNetwork;
             if (!attHasTriad) {
               allAttemptsHaveTriad = false;
               break;

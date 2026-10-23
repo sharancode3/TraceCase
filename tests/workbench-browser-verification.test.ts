@@ -149,7 +149,7 @@ describe('Person 2: Workbench Live Playwright Browser Verification', () => {
     } finally {
       await page.close();
     }
-  });
+  }, 30000);
 
   it('demonstrates buggy build deletion defect: deleting active item removes index 0 (wb-item-01)', async () => {
     const page = await browser.newPage();

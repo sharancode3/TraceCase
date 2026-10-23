@@ -48,6 +48,11 @@ TraceCase reproduces a reported bug; it does not auto-fix code or crawl arbitrar
 
 Before implementation, check the current versions of the [PRD](../docs/prd.md), [TRD](../docs/trd.md), [problem-statement traceability matrix](../docs/ps-requirements-traceability-matrix.md), [UI/UX specification](../docs/ui-ux-specification.md), [workflow specification](../docs/workflow-and-state-machine-specification.md), [database design](../docs/database-design-and-erd.md), [system architecture](../docs/system-architecture.md), [agent/tool contracts](../docs/agent-and-tool-contracts.md), [API/event contracts](../docs/api-and-event-contracts.md), and [verification/evidence/safety specification](../docs/verification-evidence-and-safety-specification.md). Draft specifications describe intent; source and current runtime evidence determine what exists.
 
+## Integration and browser verification reports
+
+- [Phase 2 Reliability, AI Integration, and Browser Verification Report](integration/phase-2-reliability-ai-and-browser-verification.md)
+- [Phase 2 Browser Acceptance Report](integration/phase-2-browser-acceptance-report.md)
+
 ## Repository layout
 
 ```text

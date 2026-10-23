@@ -53,6 +53,7 @@ import {
   requestPlanning,
   type ArtifactItem,
 } from '@/features/investigations/api-client';
+import { executePlanningTransition } from '@/features/investigations/planning-orchestration';
 import type { AuthoritativeExperimentPlan } from '@/contracts/planning';
 
 export default function InvestigationDetailPage() {
@@ -78,11 +79,26 @@ export default function InvestigationDetailPage() {
     setPlanning(true);
     setPlanningError(null);
     try {
-      const result = await requestPlanning(id);
-      if (!result.success) { setPlanningError(result.error.message); return; }
-      if (result.data.status === 'UNABLE_TO_PROCEED') { setPlanningError(result.data.reason || 'Unable to plan this report.'); return; }
-      router.push(`/investigations/${id}/${result.data.status === 'CLARIFICATION_NEEDED' ? 'clarify' : 'approve'}`);
-    } finally { setPlanning(false); }
+      const transition = await executePlanningTransition({ investigationId: id });
+      if (transition.outcome === 'PROPOSAL_READY') {
+        router.push(transition.navigationTarget);
+        return;
+      }
+      if (transition.outcome === 'CLARIFICATION_NEEDED') {
+        router.push(transition.navigationTarget);
+        return;
+      }
+      if (transition.outcome === 'UNABLE_TO_PROCEED') {
+        setPlanningError(transition.reason || 'Unable to plan this report.');
+        return;
+      }
+      if (transition.outcome === 'ERROR') {
+        setPlanningError(transition.message);
+        return;
+      }
+    } finally {
+      setPlanning(false);
+    }
   };
 
   const [activeTab, setActiveTab] = React.useState<'video' | 'console' | 'network'>('video');
@@ -162,7 +178,7 @@ export default function InvestigationDetailPage() {
       // 1. Console log artifact for selected attempt
       const consoleArtifact =
         realArtifacts.find((a) => a.kind === 'CONSOLE_LOG' && a.attemptNumber === selectedAttempt) ||
-        realArtifacts.find((a) => a.kind === 'CONSOLE_LOG');
+        realArtifacts.find((a) => a.kind === 'CONSOLE_LOG' && (a.attemptNumber === null || a.attemptNumber === undefined));
 
       if (!consoleArtifact) {
         setRealConsoleLogs([]);
@@ -238,7 +254,7 @@ export default function InvestigationDetailPage() {
       // 2. Network trace artifact for selected attempt
       const networkArtifact =
         realArtifacts.find((a) => a.kind === 'NETWORK_TRACE' && a.attemptNumber === selectedAttempt) ||
-        realArtifacts.find((a) => a.kind === 'NETWORK_TRACE');
+        realArtifacts.find((a) => a.kind === 'NETWORK_TRACE' && (a.attemptNumber === null || a.attemptNumber === undefined));
 
       if (!networkArtifact) {
         setRealNetworkTraces([]);
@@ -322,7 +338,7 @@ export default function InvestigationDetailPage() {
   const activeRealVideo = React.useMemo(() => {
     if (videoArtifacts.length === 0) return null;
     const match = videoArtifacts.find((a) => a.attemptNumber === selectedAttempt);
-    return match || videoArtifacts[0];
+    return match || videoArtifacts.find((a) => a.attemptNumber === null || a.attemptNumber === undefined) || null;
   }, [videoArtifacts, selectedAttempt]);
 
   const videoArtifact = activeRealVideo
@@ -1292,7 +1308,7 @@ export default function InvestigationDetailPage() {
                       {isQuarantined
                         ? 'Video Quarantined in RESTRICTED_RAW Storage'
                         : restrictedRecordingCount > 0
-                        ? 'Browser Recording Captured (RESTRICTED_RAW)'
+                        ? 'Captured — access restricted'
                         : videoLoadError
                         ? 'Local Media Storage Offline'
                         : 'No Playable Video Available'}

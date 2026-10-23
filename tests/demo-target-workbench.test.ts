@@ -205,14 +205,20 @@ describe('Person 2: TraceCase Workbench UI & View Generator (Stage P2-2.2)', () 
       expect(errScope.error.code).toBe('INVALID_SCOPE');
     });
 
-    it('preserves 100% backward compatibility for legacy root application at GET /', async () => {
+    it('serves Workbench at root GET / for workbench builds, or legacy tasks when requested', async () => {
       const res = await fetch(`${baseUrl}/`);
       expect(res.status).toBe(200);
       const body = await res.text();
-      expect(body).toContain('Task Management Demo');
-      expect(body).toContain('task-a');
-      expect(body).toContain('task-b');
-      expect(body).not.toContain('TraceCase Workbench');
+      expect(body).toContain('TraceCase Workbench');
+      expect(body).toContain('wb-item-01');
+      expect(body).toContain('wb-item-02');
+
+      const legacyRes = await fetch(`${baseUrl}/?view=legacy`);
+      expect(legacyRes.status).toBe(200);
+      const legacyBody = await legacyRes.text();
+      expect(legacyBody).toContain('Task Management Demo');
+      expect(legacyBody).toContain('task-a');
+      expect(legacyBody).toContain('task-b');
     });
 
     it('preserves 100% backward compatibility for legacy tasks API on GET /api/tasks', async () => {

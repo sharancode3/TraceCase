@@ -16,7 +16,7 @@ import {
 import {
   ReportPlannerOutputSchema,
 } from '@/contracts/ai';
-import { TxOrDb } from '@/server/db/repositories/clarifications.repository';
+import { TxOrDb, ClarificationQuestionRecord } from '@/server/db/repositories/clarifications.repository';
 import {
   ActionTier,
   InvestigationLifecycleStatus,
@@ -319,39 +319,120 @@ export class InvestigationWorkflowService {
         const key = q.questionText.trim().toLowerCase();
         return !answeredQuestionTexts.has(key);
       });
-      const questionsToPersist = candidateQuestions.length > 0 ? candidateQuestions : plannerOutput.questions;
 
-      // Server-assigned append-only ordering: do NOT forward model-local questionIndex
-      const persistedQuestions = await clarificationsRepository.saveQuestions(
-        inv.id,
-        questionsToPersist.map((q) => ({
-          questionText: q.questionText,
-          explanation: q.explanation || (q as unknown as { whyItMatters?: string }).whyItMatters || null,
-          suggestedOptions: q.suggestedOptions || (q as unknown as { options?: string[] }).options || null,
-        }))
-      );
+      // If all questions were already answered, do not repeat them to the user
+      if (candidateQuestions.length === 0) {
+        const pendingQuestions = questions.filter((q) => !q.isAnswered);
+        if (pendingQuestions.length > 0) {
+          return {
+            status: 'CLARIFICATION_NEEDED' as const,
+            questions: pendingQuestions,
+            workflowRevision: inv.workflowRevision,
+          };
+        }
 
-      const nextRev = initialWorkflowRevision + 1;
-      const [updatedInv] = await db
-        .update(investigationsTable)
-        .set({
-          reviewStatus: 'CLARIFICATION_PENDING',
-          workflowRevision: nextRev,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(investigationsTable.id, inv.id),
-            eq(investigationsTable.workflowRevision, initialWorkflowRevision)
+        const nextRev = initialWorkflowRevision + 1;
+        const [updatedInv] = await db
+          .update(investigationsTable)
+          .set({
+            reviewStatus: 'BLOCKED',
+            workflowRevision: nextRev,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(investigationsTable.id, inv.id),
+              eq(investigationsTable.workflowRevision, initialWorkflowRevision)
+            )
           )
-        )
-        .returning();
+          .returning();
 
-      if (!updatedInv || updatedInv.lifecycleStatus === 'CANCELLED') {
-        throw new ConflictError(
-          `Investigation workflow revision changed concurrently during planning (expected rev ${initialWorkflowRevision}).`,
-          'CONCURRENT_WORKFLOW_MUTATION'
+        if (!updatedInv || updatedInv.lifecycleStatus === 'CANCELLED') {
+          throw new ConflictError(
+            `Investigation workflow revision changed concurrently during planning (expected rev ${initialWorkflowRevision}).`,
+            'CONCURRENT_WORKFLOW_MUTATION'
+          );
+        }
+
+        await this.emitEvent(inv.id, 'PLANNING_BLOCKED', {
+          reason: 'No new clarification questions could be formulated from the report and existing answers. Please provide more specific bug details.',
+          missingPrerequisites: ['Sufficient defect steps and observable assertion criteria could not be established.'],
+        });
+
+        return {
+          status: 'UNABLE_TO_PROCEED' as const,
+          reason: 'No new clarification questions could be formulated from the report and existing answers. Please provide more specific bug details.',
+          missingPrerequisites: ['Sufficient defect steps and observable assertion criteria could not be established.'],
+          workflowRevision: nextRev,
+        };
+      }
+
+      // Single database transaction boundary for question persistence and parent state update
+      const nextRev = initialWorkflowRevision + 1;
+      let persistedQuestions: typeof questions = [];
+
+      const runClarificationTx = async (tx: TxOrDb) => {
+        if (typeof tx.select === 'function') {
+          const invQuery = tx
+            .select({
+              id: investigationsTable.id,
+              workflowRevision: investigationsTable.workflowRevision,
+              lifecycleStatus: investigationsTable.lifecycleStatus,
+            })
+            .from(investigationsTable)
+            .where(
+              and(
+                eq(investigationsTable.id, inv.id),
+                eq(investigationsTable.workflowRevision, initialWorkflowRevision)
+              )
+            );
+          const [lockedInv] = typeof invQuery.for === 'function' ? await invQuery.for('update') : await invQuery;
+
+          if (!lockedInv || lockedInv.lifecycleStatus === 'CANCELLED') {
+            throw new ConflictError(
+              `Investigation workflow revision changed concurrently during planning (expected rev ${initialWorkflowRevision}).`,
+              'CONCURRENT_WORKFLOW_MUTATION'
+            );
+          }
+        }
+
+        persistedQuestions = await clarificationsRepository.saveQuestions(
+          inv.id,
+          candidateQuestions.map((q) => ({
+            questionText: q.questionText,
+            explanation: q.explanation || (q as unknown as { whyItMatters?: string }).whyItMatters || null,
+            suggestedOptions: q.suggestedOptions || (q as unknown as { options?: string[] }).options || null,
+          })),
+          { tx }
         );
+
+        const [updated] = await tx
+          .update(investigationsTable)
+          .set({
+            reviewStatus: 'CLARIFICATION_PENDING',
+            workflowRevision: nextRev,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(investigationsTable.id, inv.id),
+              eq(investigationsTable.workflowRevision, initialWorkflowRevision)
+            )
+          )
+          .returning();
+
+        if (!updated || updated.lifecycleStatus === 'CANCELLED') {
+          throw new ConflictError(
+            `Investigation workflow revision changed concurrently during planning (expected rev ${initialWorkflowRevision}).`,
+            'CONCURRENT_WORKFLOW_MUTATION'
+          );
+        }
+      };
+
+      if (typeof db.transaction === 'function') {
+        await db.transaction(runClarificationTx);
+      } else {
+        await runClarificationTx(db);
       }
 
       await this.emitEvent(inv.id, 'CLARIFICATION_REQUESTED', {
@@ -578,32 +659,71 @@ export class InvestigationWorkflowService {
       }
     }
 
-    const answered = await clarificationsRepository.batchAnswerQuestions(
-      inv.id,
-      params.answers,
-      params.ownerId
-    );
-
     const nextRev = initialWorkflowRevision + 1;
-    const [updatedInv] = await db
-      .update(investigationsTable)
-      .set({
-        workflowRevision: nextRev,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(investigationsTable.id, inv.id),
-          eq(investigationsTable.workflowRevision, initialWorkflowRevision)
-        )
-      )
-      .returning();
+    let answered: ClarificationQuestionRecord[] = [];
 
-    if (!updatedInv || updatedInv.lifecycleStatus === 'CANCELLED') {
-      throw new ConflictError(
-        `Investigation workflow revision changed concurrently during answer submission (expected rev ${initialWorkflowRevision}).`,
-        'CONCURRENT_WORKFLOW_MUTATION'
-      );
+    const runAnswerTx = async (tx: TxOrDb) => {
+      if (typeof tx.select === 'function') {
+        const invQuery = tx
+          .select({
+            id: investigationsTable.id,
+            workflowRevision: investigationsTable.workflowRevision,
+            lifecycleStatus: investigationsTable.lifecycleStatus,
+          })
+          .from(investigationsTable)
+          .where(
+            and(
+              eq(investigationsTable.id, inv.id),
+              eq(investigationsTable.workflowRevision, initialWorkflowRevision)
+            )
+          );
+        const [lockedInv] = typeof invQuery.for === 'function' ? await invQuery.for('update') : await invQuery;
+
+        if (!lockedInv || lockedInv.lifecycleStatus === 'CANCELLED') {
+          throw new ConflictError(
+            `Investigation workflow revision changed concurrently during answer submission (expected rev ${initialWorkflowRevision}).`,
+            'CONCURRENT_WORKFLOW_MUTATION'
+          );
+        }
+      }
+
+      for (const a of params.answers) {
+        const row = await clarificationsRepository.answerQuestion(
+          a.questionId,
+          inv.id,
+          a.answerText,
+          params.ownerId,
+          tx
+        );
+        answered.push(row);
+      }
+
+      const [updatedInv] = await tx
+        .update(investigationsTable)
+        .set({
+          workflowRevision: nextRev,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(investigationsTable.id, inv.id),
+            eq(investigationsTable.workflowRevision, initialWorkflowRevision)
+          )
+        )
+        .returning();
+
+      if (!updatedInv || updatedInv.lifecycleStatus === 'CANCELLED') {
+        throw new ConflictError(
+          `Investigation workflow revision changed concurrently during answer submission (expected rev ${initialWorkflowRevision}).`,
+          'CONCURRENT_WORKFLOW_MUTATION'
+        );
+      }
+    };
+
+    if (typeof db.transaction === 'function') {
+      await db.transaction(runAnswerTx);
+    } else {
+      await runAnswerTx(db);
     }
 
     await this.emitEvent(inv.id, 'CLARIFICATION_ANSWERED', {
