@@ -24,6 +24,7 @@ describe('P1-01: API Scaffold Truthfulness and Safety Boundaries', () => {
     beforeEach(() => {
       (process.env as Record<string, string | undefined>).NODE_ENV = 'test';
       process.env.DEV_PREVIEW_MODE = 'false';
+      process.env.DATABASE_URL = 'postgres://invalid:invalid@127.0.0.1:59999/unreachable';
       _resetCachedEnvForTesting();
       setCustomPrincipalResolverForTesting(async (req: Request) => {
         const auth = req.headers.get('authorization');

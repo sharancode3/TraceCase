@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { CreateTargetCommandSchema, projectSafeTargetProfile } from '@/contracts/targets';
+import {
+  CreateTargetCommandSchema,
+  projectSafeTargetProfile,
+  parseAndNormalizeTargetUrl,
+} from '@/contracts/targets';
 import { requireAuthenticatedPrincipal, AuthenticationError, AuthorizationError } from '@/server/auth';
 import { createSafeError } from '@/contracts/errors';
 import { targetsRepository } from '@/server/db/repositories/targets.repository';
 
 export async function GET(req: NextRequest) {
-  // If preview is active, return sanitized synthetic catalog (F-03: zero secrets leaked)
-  
-
   try {
     const principal = await requireAuthenticatedPrincipal(req);
 
@@ -45,7 +46,40 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    
+    // Server-side authoritative URL & SSRF validation
+    const urlCheck = parseAndNormalizeTargetUrl(parsed.data.baseUrl);
+    if (!urlCheck.isValid || !urlCheck.normalizedOrigin) {
+      return NextResponse.json(
+        createSafeError('VALIDATION_FAILED', 'INVALID_TARGET_URL', urlCheck.error || 'Invalid target baseUrl'),
+        { status: 400 }
+      );
+    }
+
+    // Validate any extra allowed origins against SSRF and parse rules
+    const validatedOrigins = new Set<string>([urlCheck.normalizedOrigin]);
+    if (parsed.data.allowedOrigins && parsed.data.allowedOrigins.length > 0) {
+      for (const originStr of parsed.data.allowedOrigins) {
+        const originCheck = parseAndNormalizeTargetUrl(originStr);
+        if (!originCheck.isValid || !originCheck.normalizedOrigin) {
+          return NextResponse.json(
+            createSafeError('VALIDATION_FAILED', 'INVALID_ALLOWED_ORIGIN', originCheck.error || `Invalid allowed origin '${originStr}'`),
+            { status: 400 }
+          );
+        }
+        validatedOrigins.add(originCheck.normalizedOrigin);
+      }
+    }
+
+    // Validate fixture reset endpoint if provided
+    if (parsed.data.fixtureResetEndpoint) {
+      const resetCheck = parseAndNormalizeTargetUrl(parsed.data.fixtureResetEndpoint);
+      if (!resetCheck.isValid) {
+        return NextResponse.json(
+          createSafeError('VALIDATION_FAILED', 'INVALID_RESET_ENDPOINT', resetCheck.error || 'Invalid fixture reset hook URL'),
+          { status: 400 }
+        );
+      }
+    }
 
     // Live mode: requires authenticated principal and real persistence
     const principal = await requireAuthenticatedPrincipal(req);
@@ -57,15 +91,15 @@ export async function POST(req: NextRequest) {
     const isSandboxVerified = isSandboxRequested && !isProduction && isLocalDev;
 
     // For local targets on localhost / port 3005, auto-link reset endpoint and secret if not explicitly provided
-    const isLocalDemo = parsed.data.baseUrl.includes('3005') || parsed.data.baseUrl.includes('localhost');
-    const defaultResetEndpoint = isLocalDemo ? `${new URL(parsed.data.baseUrl).origin}/api/test/reset-fixture` : null;
+    const isLocalDemo = urlCheck.normalizedOrigin.includes('3005') || urlCheck.normalizedOrigin.includes('3006') || urlCheck.normalizedOrigin.includes('localhost');
+    const defaultResetEndpoint = isLocalDemo ? `${urlCheck.normalizedOrigin}/api/test/reset-fixture` : null;
     const defaultSecretRef = isLocalDemo ? 'env:TARGET_RESET_SECRET' : null;
 
     const created = await targetsRepository.createTarget({
       ownerId: principal.id,
       name: parsed.data.name,
-      baseUrl: parsed.data.baseUrl,
-      allowedOrigins: parsed.data.allowedOrigins,
+      baseUrl: urlCheck.normalizedBaseUrl || parsed.data.baseUrl,
+      allowedOrigins: Array.from(validatedOrigins),
       isSandbox: isSandboxRequested,
       isSandboxVerified,
       testAccountRef: parsed.data.testAccountRef,

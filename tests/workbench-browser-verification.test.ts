@@ -132,15 +132,15 @@ describe('Person 2: Workbench Live Playwright Browser Verification', () => {
       await page.click('[data-item-id="wb-item-02"] [data-action="delete"]');
 
       // Dialog must be visible
-      await page.waitForSelector('#wb-delete-dialog', { state: 'visible' });
-      expect(await page.textContent('#wb-dialog-desc')).toContain('wb-item-02');
+      await page.waitForSelector('#wb-confirm-modal', { state: 'visible' });
+      expect(await page.textContent('#wb-confirm-item-id')).toContain('wb-item-02');
 
       // Capture screenshot of delete dialog
       await page.screenshot({ path: path.join(ARTIFACT_DIR, 'workbench-delete-dialog.png') });
 
       // Click Cancel
-      await page.click('#wb-dialog-cancel-btn');
-      await page.waitForSelector('#wb-delete-dialog', { state: 'hidden' });
+      await page.click('#wb-confirm-cancel-btn');
+      await page.waitForSelector('#wb-confirm-modal', { state: 'hidden' });
 
       // All 4 items remain present
       expect(await page.textContent('#metric-total-val')).toBe('4');
@@ -167,11 +167,11 @@ describe('Person 2: Workbench Live Playwright Browser Verification', () => {
 
       // 2. Click Delete on wb-item-02
       await page.click('[data-item-id="wb-item-02"] [data-action="delete"]');
-      await page.waitForSelector('#wb-delete-dialog', { state: 'visible' });
+      await page.waitForSelector('#wb-confirm-modal', { state: 'visible' });
 
       // 3. Confirm Delete
-      await page.click('#wb-dialog-confirm-btn');
-      await page.waitForSelector('#wb-delete-dialog', { state: 'hidden' });
+      await page.click('#wb-confirm-delete-btn');
+      await page.waitForSelector('#wb-confirm-modal', { state: 'hidden' });
 
       // In buggy build:
       // Array splice removed index 0 from raw array -> wb-item-01 ("Review Security Compliance Checklist") was deleted!
@@ -235,11 +235,11 @@ describe('Person 2: Workbench Live Playwright Browser Verification', () => {
 
       // 2. Click Delete on wb-item-02
       await page.click('[data-item-id="wb-item-02"] [data-action="delete"]');
-      await page.waitForSelector('#wb-delete-dialog', { state: 'visible' });
+      await page.waitForSelector('#wb-confirm-modal', { state: 'visible' });
 
       // 3. Confirm Delete
-      await page.click('#wb-dialog-confirm-btn');
-      await page.waitForSelector('#wb-delete-dialog', { state: 'hidden' });
+      await page.click('#wb-confirm-delete-btn');
+      await page.waitForSelector('#wb-confirm-modal', { state: 'hidden' });
 
       // In fixed build:
       // wb-item-02 IS deleted!

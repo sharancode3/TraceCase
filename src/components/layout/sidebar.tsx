@@ -3,34 +3,103 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, Target, PlusCircle, ShieldCheck } from 'lucide-react';
+import {
+  LayoutDashboard,
+  Target,
+  PlusCircle,
+  PlayCircle,
+  UserCheck,
+  LogIn,
+  LogOut,
+} from 'lucide-react';
 import { cn } from '../ui/button';
+import { useTour } from '@/components/guide/tour-context';
+import { TraceCaseLogo } from '@/components/ui/logo';
 
 const NAV_ITEMS = [
-  { label: 'Investigations', href: '/', icon: LayoutDashboard },
-  { label: 'Target Environments', href: '/targets', icon: Target },
-  { label: 'Submit Bug Report', href: '/investigations/new', icon: PlusCircle },
+  { id: 'nav-investigations', label: 'Investigations', href: '/', icon: LayoutDashboard },
+  { id: 'nav-targets', label: 'Target Environments', href: '/targets', icon: Target },
+  { id: 'nav-new-report', label: 'Submit Bug Report', href: '/investigations/new', icon: PlusCircle },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { startTour, openPrompt } = useTour();
+  const [operator, setOperator] = React.useState<string | null>(null);
+  const [isSigningIn, setIsSigningIn] = React.useState(false);
+
+  React.useEffect(() => {
+    let isMounted = true;
+    fetch('/api/dev/session')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (isMounted && data?.principal?.email) {
+          setOperator(data.principal.email);
+        }
+      })
+      .catch(() => {});
+
+    const handleAuthChange = (e: Event) => {
+      const custom = e as CustomEvent<{ operator: string | null }>;
+      if (isMounted) {
+        setOperator(custom.detail?.operator || null);
+      }
+    };
+    window.addEventListener('tracecase:auth-state-change', handleAuthChange);
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener('tracecase:auth-state-change', handleAuthChange);
+    };
+  }, []);
+
+  const handleDevSignIn = async () => {
+    setIsSigningIn(true);
+    try {
+      const res = await fetch('/api/dev/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'operator@tracecase.local', role: 'operator' }),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        const email = json.principal?.email || 'operator@tracecase.local';
+        setOperator(email);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('tracecase:auth-state-change', { detail: { operator: email } }));
+        }
+        openPrompt();
+      }
+    } catch {
+      // Best-effort dev login
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
+
+  const handleDevSignOut = async () => {
+    try {
+      await fetch('/api/dev/session', { method: 'DELETE' });
+      setOperator(null);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('tracecase:auth-state-change', { detail: { operator: null } }));
+      }
+    } catch {
+      // Best-effort dev logout
+    }
+  };
 
   return (
-    <aside className="hidden md:flex md:w-64 border-r border-neutral-divider/80 bg-white flex-col justify-between shrink-0 min-h-screen">
-      <div>
+    <aside className="hidden md:flex md:w-64 border-r border-neutral-divider/80 bg-white flex-col justify-between shrink-0 h-full max-h-full select-none">
+      <div className="flex flex-col min-h-0">
         {/* Brand Header */}
-        <div className="p-6 border-b border-neutral-divider/50 flex items-center space-x-3">
-          <div className="w-9 h-9 rounded-control bg-cobalt-action flex items-center justify-center text-white font-bold text-base shadow-sm">
-            TC
-          </div>
-          <div>
-            <div className="font-bold text-base text-brand-navy tracking-tight">TraceCase</div>
-            <div className="text-[11px] text-brand-muted font-medium">Reproduction Engine</div>
-          </div>
+        <div className="px-5 py-4 border-b border-neutral-divider/50 flex items-center space-x-3 shrink-0">
+          <TraceCaseLogo size={26} color="#4767DB" />
+          <span className="font-bold text-base text-brand-navy tracking-tight">TraceCase</span>
         </div>
 
         {/* Navigation Items */}
-        <nav className="p-4 space-y-1.5" aria-label="Main Navigation">
+        <nav className="p-3 space-y-1.5" aria-label="Main Navigation">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
@@ -38,11 +107,12 @@ export function Sidebar() {
             return (
               <Link
                 key={item.href}
+                id={item.id}
                 href={item.href}
                 className={cn(
-                  'flex items-center space-x-3 px-3.5 py-2.5 rounded-control text-sm font-medium transition-all',
+                  'flex items-center space-x-3 px-3 py-2.5 rounded-control text-sm font-medium transition-all',
                   isActive
-                    ? 'bg-lavender-surface text-cobalt-action font-semibold'
+                    ? 'bg-lavender-surface text-cobalt-action font-semibold shadow-xs'
                     : 'text-brand-navy hover:bg-neutral-surface hover:text-brand-deepPurple'
                 )}
               >
@@ -51,22 +121,47 @@ export function Sidebar() {
               </Link>
             );
           })}
+
+          <div className="pt-2">
+            <button
+              id="sidebar-take-demo-btn"
+              onClick={() => startTour(0)}
+              className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-control text-sm font-semibold text-cobalt-action bg-lavender-subtle hover:bg-lavender-surface border border-lavender-accent/40 transition-all shadow-xs cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cobalt-action"
+            >
+              <PlayCircle className="w-4 h-4 text-cobalt-action shrink-0" />
+              <span>Take a Demo</span>
+            </button>
+          </div>
         </nav>
       </div>
 
-      {/* Footer Info Box */}
-      <div className="p-4 m-4 rounded-card bg-lavender-surface/60 border border-lavender-accent/40 space-y-2">
-        <div className="flex items-center space-x-2 text-xs font-semibold text-brand-deepPurple">
-          <ShieldCheck className="w-3.5 h-3.5 text-cobalt-action" />
-          <span>Approved browser investigations</span>
-        </div>
-        <p className="text-[11px] text-brand-muted leading-relaxed">
-          Review each experiment plan before starting. Destructive tests require a verified sandbox.
-        </p>
-        <div className="pt-1 flex items-center justify-between text-[10px] text-brand-muted">
-          <span>Two attempts required</span>
-          <span className="text-cobalt-action font-medium">Evidence captured</span>
-        </div>
+      {/* Operator Auth Button */}
+      <div className="p-3 border-t border-neutral-divider/60 shrink-0">
+        {operator ? (
+          <button
+            id="sidebar-operator-btn"
+            onClick={handleDevSignOut}
+            title="Click to sign out"
+            aria-label="Sign out of operator session"
+            className="w-full flex items-center justify-between px-3 py-2.5 rounded-control bg-lavender-surface/50 hover:bg-lavender-surface border border-lavender-accent/40 text-xs text-brand-deepPurple transition-all cursor-pointer group shadow-xs"
+          >
+            <div className="flex items-center space-x-2 truncate">
+              <UserCheck className="w-4 h-4 text-cobalt-action group-hover:text-cobalt-action/80 transition-colors shrink-0" />
+              <span className="font-mono text-xs truncate">{operator}</span>
+            </div>
+            <LogOut className="w-3.5 h-3.5 text-brand-muted group-hover:text-brand-navy ml-1.5 transition-colors shrink-0" />
+          </button>
+        ) : (
+          <button
+            id="sidebar-signin-btn"
+            onClick={handleDevSignIn}
+            disabled={isSigningIn}
+            className="w-full flex items-center justify-center space-x-2 px-3 py-2.5 rounded-control bg-cobalt-action hover:bg-cobalt-hover text-white text-sm font-semibold transition-all shadow-sm cursor-pointer"
+          >
+            <LogIn className="w-4 h-4" />
+            <span>{isSigningIn ? 'Signing in...' : 'Sign in (Local Dev)'}</span>
+          </button>
+        )}
       </div>
     </aside>
   );

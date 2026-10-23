@@ -174,6 +174,7 @@ export const RequestPlanningCommandSchema = z.object({
   investigationId: z.string().uuid('Valid investigation ID is required'),
   userGuidance: z.string().trim().max(1000).optional(),
   expectedWorkflowRevision: z.number().int().positive().optional(),
+  idempotencyKey: z.string().trim().max(128).optional(),
 }).strict();
 export type RequestPlanningCommand = z.infer<typeof RequestPlanningCommandSchema>;
 

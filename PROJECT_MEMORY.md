@@ -72,6 +72,128 @@ Earlier in this conversation, type checking, linting, all 15 existing tests, and
 - Quality Gates: G0 passed, G1 passed, G2 passed, G3 passed for local Qwen development (blocked on live key for OpenAI Luna production), G4 passed, G5 truthfully audited (offline due to inactive Docker daemon / host PostgreSQL 5432).
 - Protected References: zero remote pushes, zero PRs, zero modifications to protected references (`main`, `person-1`, `person-2`, `origin/person3`, `integration/person-1-person-2`, `integration-in-progress`).
 
+**Phase 2 Stage B (P1-2.1: Target Registration and Readiness Clarity):** Completed locally.
+- Redesigned target registration around mental model: "Add a test site once, then choose it whenever you file a report."
+- Implemented shared URL normalization (`parseAndNormalizeTargetUrl`) with protocol checks, credentials stripping, cloud metadata IP SSRF protection, and real-time client-side origin preview.
+- Added duplicate origin detection with non-destructive notice and quick reuse CTA.
+- Moved extra allowed origins, fixture reset endpoint, test account ref, and sandbox classification request into a collapsible advanced section with plain-language help.
+- Truthfully displayed only server-returned readiness facts on target cards (sandbox verified vs requested vs protected, reachability inside container during test runs, fixture reset hook status, test account status).
+- Ensured form values are preserved on errors; strictly prohibited passwords in target profiles.
+- Added direct CTA: "Create a report for this target" linking to `/investigations/new?targetId=...` and wired target pre-selection.
+- Added dedicated test suite `tests/person-1/phase-2/target-registration.test.ts` (10/10 passed).
+- Documented in `implementation-stages/person-1/phase-2-b-handoff.md`.
+
+**Phase 2 Stage C (Target Reuse & Exact Report Selection):** Completed locally.
+- Added safe return path validator `sanitizeInternalReturnPath` preventing open redirects or external URLs.
+- Implemented intentional variant confirmation on duplicate normalized origin in `src/app/targets/page.tsx` without automatic deduplication, merging, or renaming of existing records.
+- Updated `src/app/investigations/new/page.tsx` to validate incoming `targetId`, require visible selection when multiple targets exist, preselect single targets with visible identity, provide an actionable return path when zero targets exist, and fail closed without silent selection or leakage on invalid/unauthorized target IDs.
+- Added dedicated test suite `tests/person-1/phase-2/target-selection-and-reuse.test.ts` (10/10 passed).
+- Documented in `implementation-stages/person-1/phase-2-c-handoff.md`.
+
+**Phase 2 Stage D (P1-2.2 (part 2): Short, Resilient Report Intake):** Completed locally.
+- Form structured with primary fields only: selected saved target, concise bug title (min 3 chars), description of what went wrong (min 5 chars).
+- Added prominent "Uncertainty is completely okay" guidance callout explaining that autonomous planning resolves missing preconditions.
+- Placed expected/observed behaviors, suspected reproduction steps, browser/build metadata, and paste diagnostics inside collapsible progressive disclosure.
+- Cleanly displaced misleading attachment file picker with honest paste-diagnostics textarea; distinguished reporter-supplied environment notes from actual worker observations.
+- Fully preserved form inputs across validation, authentication, and network failures.
+- In-flight submit disabled to prevent duplicate submissions and immediately re-enabled after recoverable errors.
+- Added dedicated test suite `tests/person-1/phase-2/report-intake-resilience.test.ts` (7/7 passed).
+- Documented in `implementation-stages/person-1/phase-2-d-handoff.md`.
+
+**Phase 2 Stage E (P1-2.2 (part 3): Durable Report Save and Safe Planning Retries):** Completed locally.
+- Decoupled report creation and planning into separate operations with authoritative `investigationId` retention.
+- Added prominent status banner: "Report saved; preparing a plan." with spinner during autonomous planning.
+- Planning retries reuse that investigation ID and never create another report.
+- Added command idempotency to `POST /api/v1/reports` via `executeWithIdempotency` and `extractIdempotencyKey`.
+- Implemented centralized typed planning orchestrator (`src/features/investigations/planning-orchestration.ts`).
+- Gated proposal navigation to `/approve` on authoritative verification of the persisted experiment plan revision via `fetchPlan(id)`.
+- Handled `PROPOSAL_READY`, `CLARIFICATION_NEEDED`, `UNABLE_TO_PROCEED`, and `ERROR` explicitly with sanitized, safe messages.
+- Updated URL with `?investigationId=...` for durable browser reload recovery without storing sensitive reports in client storage.
+- Added dedicated test suite `tests/person-1/phase-2/durable-save-and-planning-retry.test.ts` (8/8 passed).
+**Phase 2 Stage F (P1-2.3 (part 1): Concurrency-Safe Clarification Ordering and Persistence):** Completed locally.
+- Resolved unique constraint violation (`clarification_questions_inv_idx_idx`) caused by model-local 0-indexed question arrays in subsequent planning rounds.
+- Implemented server-assigned append-only ordering on `clarification_questions`: model-local indices are disregarded in favor of monotonic server sequence allocation.
+- Enforced concurrency-safe allocation using PostgreSQL/Drizzle row lock (`FOR UPDATE` on `investigationsTable`) inside atomic database transactions before querying `MAX(question_index)` and bulk inserting.
+- Added additive, forward-compatible column `round_index` (default `1`) and composite index on `(investigation_id, round_index)` via migration `0009_clarification_round_index.sql`.
+- Preserved `uniqueIndex('clarification_questions_inv_idx_idx')`, existing answers, and historical records without destructive renumbering or table truncation.
+- Added authoritative command replay protection: pending clarifications with unanswered questions return existing questions without re-prompting or duplicating rows; genuine new rounds append after prior questions are answered.
+- Added dedicated test suite `tests/person-1/phase-2/clarification-ordering-and-concurrency.test.ts` (6/6 passed, 65/65 total in Phase 2).
+- Documented in `implementation-stages/person-1/phase-2-f-handoff.md`.
+
+**Phase 2 Stage G (P1-2.3 (part 2): Grounded Luna Planning and Recoverable Answer Transitions):** Completed locally.
+- Assembled planning fact ledger from saved bug report, authorized target metadata, and persisted answers with explicit provenance (`[Target Config]`, `[Reporter Claim]`, `[User Clarification Round X QY]`), keeping reporter claims, target configuration, model interpretation, and browser observations distinct.
+- Avoided repeating answered questions by filtering out identical question texts in subsequent planning rounds.
+- Enforced authoritative clarification policy limit (`MAX_CLARIFICATION_ROUNDS = 3`), transitioning the investigation to `UNABLE_TO_PROCEED` (reviewStatus `BLOCKED`) when exceeded.
+- Added strict runtime validation of planner output using `ReportPlannerOutputSchema.safeParse`, preventing malformed model output from reaching proposal or approval.
+- Decoupled external model execution from database transactions: calls to `planner.generateProposal` occur strictly outside transactions.
+- Protected against competing delayed planner responses overwriting newer state using optimistic revision checks (`where and(eq(id), eq(workflowRevision, initialWorkflowRevision))`).
+- Validated answer submissions: verified target investigation association, non-empty text, question existence, and prohibited answering questions belonging to prior completed rounds.
+- Ensured user answers survive downstream planning failures (such as provider timeouts or network faults), enabling safe retries without resubmitting answers.
+- Atomically persisted immutable experiment proposals with canonical SHA-256 fingerprinting before setting `reviewStatus: 'PROPOSAL_READY'`.
+- Dedicated test suite `tests/person-1/phase-2/grounded-planning-and-answer-transitions.test.ts` (9/9 passed, 74/74 total in Phase 2 across 10 test files).
+- Documented in `implementation-stages/person-1/phase-2-g-handoff.md`.
+
+**Phase 2 Stage H (P1-2.3 (part 3): Honest Clarification UI and Navigation):** Completed locally.
+- Retitled clarification view to “Clarify report details.” Removed developer-internal labels (`Luna Role 1`) and misleading `Preview Mode` badge.
+- Added explicit user guidance: clarification answers prepare a safe reproduction plan and are not interactive chat asked during execution.
+- Gated option buttons strictly on server-provided `suggestedOptions`; preserved exact option string contracts with free-text fallback; zero synthetic options invented.
+- Associated answers strictly with persisted question UUIDs (`q.id`), avoiding array position mismatches.
+- Implemented eight distinct UI states: `LOADING`, `FETCH_FAILED`, `NO_PENDING_QUESTIONS`, `QUESTIONS_READY`, `SUBMITTING`, `PLANNING`, `PROPOSAL_READY`, `CANNOT_PROCEED`.
+- Fetch failures are visibly rendered as failures with actionable retry controls — never converted into an empty success checkmark.
+- Answer-save-success / replanning-failure recovery: users are not forced to re-type or resubmit accepted answers; dedicated "Retry planning now" button triggers planning directly.
+- Strict proposal verification gate: "Go to plan review" is visible/navigable only after `hasAuthoritativeProposal` verifies a valid persisted plan revision (`version > 0`, non-empty `planHash`, and valid assertions).
+- Multi-round history presentation: questions grouped by `roundIndex` with badges (`Answered` vs `Needs your input`) and preserved accepted answers clearly displayed.
+- Draft preservation across recoverable network or validation failures; full keyboard accessibility and semantic headings.
+- Dedicated test suite `tests/person-1/phase-2/clarification-ui-and-navigation.test.ts` (17/17 passed, 91/91 total in Phase 2 across 11 test files).
+- Documented in `implementation-stages/person-1/phase-2-h-handoff.md`.
+
+**Phase 2 Stage I (P1-2.4: First-Use Guide and Permanent Help):** Completed locally.
+- Authoritative 6-step journey defined in `src/components/guide/first-use-guide-content.ts`: (1) register authorized test target once, (2) file report against saved target, (3) answer specific planning questions when needed, (4) review and explicitly approve plan, (5) separately start bounded investigation, (6) inspect two-attempt outcomes and available evidence.
+- Every walkthrough step stamped with `Walkthrough example — not a live investigation`.
+- Explicit target vs. server boundary: demo-target is a separate application running at its configured URL (`http://localhost:3005`); registration does not host, deploy, or start it.
+- Explicit reproduction vs. patching boundary: TraceCase attempts defect reproduction and packages verifiable evidence; it does not patch target source code.
+- 3 independent status dimensions legend: Lifecycle Completion (`COMPLETED` != bug found), Reproduction Verdict (`CONFIRMED_REPRODUCED`, `NOT_REPRODUCED`, `INCONCLUSIVE`), and Evidence Readiness (`AVAILABLE`, `PROCESSING`, `EMPTY`, `RESTRICTED`), plus distinction rule.
+- Accessible walkthrough modal (`FirstUseGuideModal`) with tablist navigation, keyboard controls (`Escape`, `ArrowLeft`, `ArrowRight`), illustrative reference callouts, and collapsible status legend.
+- Permanent discoverability: "How to use TraceCase" button in desktop header (`#header-how-to-use-btn`), mobile menu drawer (`#header-mobile-how-to-use-btn`), and sidebar navigation (`#sidebar-how-to-use-btn`).
+- Dismissible/reopenable compact dashboard guide banner (`#dashboard-guide-banner`) and reopen strip (`#dashboard-guide-reopen-bar`) using `localStorage` preference keys (`tracecase_guide_banner_dismissed`, `tracecase_guide_dismissed`).
+- Zero operational side effects: guide interactions do not call Luna, start browsers/workers, trigger jobs, reset targets, consume credits, or inject fake investigations into the dashboard.
+- Dedicated test suite `tests/person-1/phase-2/first-use-guide.test.ts` (10/10 passed, 101/101 total across 12 test files in Phase 2).
+- Documented in `implementation-stages/person-1/phase-2-i-handoff.md`.
+
+**Phase 2 Stage J (P1-2.5: Unify Status and Enforce Real Approval/Start Gates):** Completed locally.
+- Unified status presentation across dashboard, investigation detail, and plan review into three independent dimensions: execution lifecycle, reproduction verdict, and evidence readiness.
+- Enforced strict rule that "Completed" never equates to "Confirmed" (`isReproductionConfirmed`).
+- Implemented centralized contract-driven `getNextPermittedAction` helper guiding operators with truthful next actions for `DRAFT`, `CLARIFICATION_PENDING`, `AWAITING_APPROVAL`, `APPROVED`, `QUEUED`/`RUNNING`, `COMPLETED` (inconclusive vs confirmed), and evidence packaging.
+- Updated plan review to render authoritative current plan revisions, target metadata, semantic steps with safety tiers (`TIER_1_READ_ONLY` through `TIER_4_DESTRUCTIVE`), deterministic assertions, expected observations, mutation warnings, and sandbox verification gates.
+- Bound approval cryptographically to the exact revision and SHA-256 hash using `ApprovePlanCommandSchema`.
+- Implemented obsolete approval invalidation: flags when prior approval was granted for an obsolete revision or mismatched hash and requires explicit re-authorization.
+- Added API client support and UI modals for plan rejection (`rejectInvestigationPlan`) and approval revocation (`revokeInvestigationPlan`) with mandatory operator justification reasons.
+- Strictly decoupled approval from execution start: approval marks review status `APPROVED` without auto-starting; execution launch requires a separate guarded user action calling `/start` with valid planVersion and planHash.
+- Preserved all server-side ownership, revision, sandbox, and dispatch guards. Truthfully handled missing plans (404), unauthorized states (401/403), duplicate clicks, and transitions without synthetic plan substitution.
+- Dedicated test suite `tests/person-1/phase-2/status-and-approval-gates.test.ts` (20/20 passed, 121/121 total across 13 test files in Phase 2).
+- Documented in `implementation-stages/person-1/phase-2-j-handoff.md`.
+
+**Phase 2 Stage K (P1-2.6: Actual Attempts, Results and Evidence Presentation):** Completed locally.
+- Rendered actual two-attempt structure when records exist: Attempt 1 & 2 execution states, reset & baseline readback receipt outcome (expected vs observed state hash, discrepancies, transport success), assertion observations table, target environment and build version.
+- When only one attempt exists or Attempt 2 is blocked (e.g. unexecuted due to clean pass, reset failure, or mutation uncertainty), explicitly and honestly explained the reason; zero synthetic second attempts, receipts, or artificial durations manufactured.
+- Kept deterministic reproduction verdict (`CONFIRMED_REPRODUCED`, `NOT_REPRODUCED`, `INCONCLUSIVE`) strictly separate from AI narrative/hypotheses (`Evidence Explanation (AI-Synthesized Hypotheses)`).
+- Distinguished empty console logs, unavailable video, processing evidence, restricted artifacts, and retrieval failure using actual API semantics (`LOADING`, `FAILED`, `RESTRICTED`, `EMPTY`, `READY`).
+- Fetch failure explicitly warns that failure to retrieve telemetry does NOT imply zero errors occurred.
+- Delivered artifact metadata and content through dedicated authenticated route (`GET /api/v1/investigations/[id]/results`) checking principal authorization, sanitizing descriptors, withholding raw storage keys, and zero fallback to sample data.
+- Preserved restricted raw artifact protections: raw video/logs kept in `RESTRICTED_RAW` storage tier, sanitized derivatives in `PUBLIC_SAFE`, and scrubbed URLs (`publicUrl: null`) in exports for restricted media.
+- Reproduction export packaging (`buildReproductionPackage`) bound strictly to real persisted plans and authorized manifests, with explicit `exportDisclosure` disclosing missing plans or missing/quarantined artifacts without fabricated fallbacks.
+- Dedicated test suite `tests/person-1/phase-2/attempts-results-and-evidence.test.ts` (11/11 passed, 132/132 total across 14 test files in Phase 2).
+- Documented in `implementation-stages/person-1/phase-2-k-handoff.md`.
+
+**Phase 2 Stage L (Browser-Free Integration Verification and Final Delivery):** Completed locally.
+- Established an explicit safe test allowlist excluding all browser launches, live provider calls, worker daemon executions, and diagnostic queue dispatchers.
+- Executed 216 browser-free tests across 23 test suites covering all changed boundaries (target registration/reuse, resilient intake, durable save, concurrency-safe clarification ordering, grounded planning, honest clarification UI, first-use onboarding guide, status & approval gates, actual attempt & evidence presentation, JWT auth, repositories, and evidence storage). Zero test failures.
+- Real PostgreSQL 5432 verified reachable via driver query in `tests/person-1/phase-4/real-db-integration.test.ts` (`tracecase` database); unit testing used deterministic in-memory doubles (`ClarificationDbMock`, `ApiTestDbMock`, `InMemoryDbMock`) without mutating shared operational records.
+- Verified TypeScript typechecking (`tsc --noEmit`, 0 errors), ESLint (`next lint`, 0 warnings/errors), worker compilation (`tsup`, bundled in 1.88s), and full production Next.js compilation (`next build`, all 31 routes generated).
+- Prepared comprehensive final handoff in `implementation-stages/person-1/phase-2-final-handoff.md` detailing phase-by-phase status, changed files and contracts, unapplied migrations, check commands, real database vs doubles, known blockers, and a deferred runtime checklist.
+- Browser verification not run, per instruction.
+
+
 
 ## Agreed Person 1 phases
 

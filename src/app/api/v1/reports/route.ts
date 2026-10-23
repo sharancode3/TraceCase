@@ -5,13 +5,18 @@ import {
   CreateReportCommand,
   DraftReportIntake,
 } from '@/contracts/reports';
-import { requireAuthenticatedPrincipal, AuthenticationError, AuthorizationError } from '@/server/auth';
+import { requireAuthenticatedPrincipal } from '@/server/auth';
 import { createSafeError } from '@/contracts/errors';
 import { reportsRepository } from '@/server/db/repositories/reports.repository';
+import {
+  extractIdempotencyKey,
+  executeWithIdempotency,
+  handleWorkflowError,
+} from '@/server/workflow/workflow-http';
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
 
     // Support either full CreateReportCommand or DraftReportIntake
     const fullParsed = CreateReportCommandSchema.safeParse(body);
@@ -39,47 +44,45 @@ export async function POST(req: NextRequest) {
     const bugDescription = 'bugDescription' in payload ? payload.bugDescription : payload.rawDescription;
     const rawDescription = 'rawDescription' in payload ? payload.rawDescription : undefined;
 
-    // In preview mode, return explicitly simulated report creation
-    
-
     // Live mode: requires authenticated principal
     const principal = await requireAuthenticatedPrincipal(req);
+    const idempotencyKey = extractIdempotencyKey(req, body);
 
-    const { report, investigation } = await reportsRepository.createReportWithInvestigation({
-      ownerId: principal.id,
-      targetId: payload.targetId,
-      title: payload.title,
-      bugDescription,
-      rawDescription,
-      expectedBehavior: payload.expectedBehavior || null,
-      observedBehavior: payload.observedBehavior || null,
-      suspectedSteps: payload.suspectedSteps || null,
-      browserEnvironment: payload.browserEnvironment || null,
-      buildVersion: payload.buildVersion || null,
-      createdBy: principal.id,
-    });
+    return await executeWithIdempotency({
+      principalId: principal.id,
+      idempotencyKey,
+      resourceId: payload.targetId,
+      commandName: 'CREATE_REPORT',
+      payload,
+      handler: async () => {
+        const { report, investigation } = await reportsRepository.createReportWithInvestigation({
+          ownerId: principal.id,
+          targetId: payload.targetId,
+          title: payload.title,
+          bugDescription,
+          rawDescription,
+          expectedBehavior: payload.expectedBehavior || null,
+          observedBehavior: payload.observedBehavior || null,
+          suspectedSteps: payload.suspectedSteps || null,
+          browserEnvironment: payload.browserEnvironment || null,
+          buildVersion: payload.buildVersion || null,
+          createdBy: principal.id,
+        });
 
-    return NextResponse.json(
-      {
-        data: {
-          ...report,
-          investigationId: investigation.id,
-        },
-        created: true,
-        mode: 'live',
+        return {
+          status: 201,
+          body: {
+            data: {
+              ...report,
+              investigationId: investigation.id,
+            },
+            created: true,
+            mode: 'live',
+          },
+        };
       },
-      { status: 201 }
-    );
+    });
   } catch (error) {
-    if (error instanceof AuthenticationError) {
-      return NextResponse.json(error.envelope, { status: 401 });
-    }
-    if (error instanceof AuthorizationError) {
-      return NextResponse.json(error.envelope, { status: 403 });
-    }
-    return NextResponse.json(
-      createSafeError('SERVICE_NOT_CONFIGURED', 'DATABASE_UNAVAILABLE', error instanceof Error ? error.message : 'Database write unavailable'),
-      { status: 503 }
-    );
+    return handleWorkflowError(error);
   }
 }

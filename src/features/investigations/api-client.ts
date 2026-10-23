@@ -12,11 +12,15 @@ import {
 } from '@/contracts/reports';
 import {
   type ApprovePlanCommand,
+  type RejectPlanCommand,
+  type RevokeApprovalCommand,
   type StartInvestigationCommand,
   type CancelInvestigationCommand,
   type RequestPlanningCommand,
   type AuthoritativeExperimentPlan,
   ApprovePlanCommandSchema,
+  RejectPlanCommandSchema,
+  RevokeApprovalCommandSchema,
   StartInvestigationCommandSchema,
   CancelInvestigationCommandSchema,
 } from '@/contracts/planning';
@@ -30,6 +34,7 @@ import {
   SafeErrorEnvelopeSchema,
 } from '@/contracts/errors';
 import type { InvestigationSnapshot } from '@/contracts/investigations';
+export type { InvestigationSnapshot };
 import type { InvestigationProgressEvent } from '@/contracts/events';
 
 let clientAuthToken: string | null = null;
@@ -102,11 +107,14 @@ export interface CancelExecutionResult {
 export interface ClarificationQuestionItem {
   id: string;
   investigationId: string;
+  questionIndex?: number;
+  roundIndex?: number;
   questionText: string;
   suggestedOptions?: string[];
   explanation?: string;
   isAnswered: boolean;
   answerText?: string | null;
+  answeredAt?: string | null;
   createdAt: string;
 }
 
@@ -322,7 +330,7 @@ export async function submitTarget(
  */
 export async function submitBugReport(
   command: CreateReportCommand | DraftReportIntake,
-  options?: { headers?: Record<string, string>; fetchFn?: typeof fetch }
+  options?: { headers?: Record<string, string>; fetchFn?: typeof fetch; idempotencyKey?: string }
 ): Promise<ApiResponse<CreatedReportResult>> {
   const fullValidation = CreateReportCommandSchema.safeParse(command);
   const draftValidation = fullValidation.success ? null : DraftReportIntakeSchema.safeParse(command);
@@ -344,13 +352,24 @@ export async function submitBugReport(
     };
   }
 
-  const validatedData = fullValidation.success ? fullValidation.data : draftValidation!.data;
+  const validatedData = fullValidation.success
+    ? fullValidation.data
+    : draftValidation && draftValidation.success
+    ? draftValidation.data
+    : command;
   const fetcher = options?.fetchFn || fetch;
+  const idempotencyHeaders: Record<string, string> = {};
+  const effectiveKey = options?.idempotencyKey || ('idempotencyKey' in validatedData ? validatedData.idempotencyKey : undefined);
+  if (effectiveKey) {
+    idempotencyHeaders['X-Idempotency-Key'] = effectiveKey;
+  }
+
   try {
     const res = await fetcher('/api/v1/reports', {
       method: 'POST',
       headers: buildRequestHeaders({
         'Content-Type': 'application/json',
+        ...idempotencyHeaders,
         ...(options?.headers || {}),
       }),
       body: JSON.stringify(validatedData),
@@ -481,6 +500,69 @@ export async function fetchInvestigation(
         code: 'NETWORK_ERROR',
         category: 'INTERNAL_ERROR',
         message: err instanceof Error ? err.message : 'Network connection failure while fetching investigation',
+      },
+      status: 0,
+    };
+  }
+}
+
+export interface InvestigationResultsData {
+  investigationId: string;
+  snapshot: InvestigationSnapshot;
+  environment: string;
+  buildVersion: string | null;
+  attempts: {
+    attempt1: InvestigationSnapshot['attempt1'];
+    attempt2: InvestigationSnapshot['attempt2'];
+  };
+  resetReceipt: InvestigationSnapshot['resetReceipt'];
+  assertionEvaluations: InvestigationSnapshot['assertionEvaluations'];
+  artifacts: ArtifactItem[];
+  restrictedRecordingCount: number;
+}
+
+/**
+ * Fetches authoritative results, attempts, reset receipt, and assertion evaluations from GET /api/v1/investigations/[id]/results
+ */
+export async function fetchInvestigationResults(
+  id: string,
+  options?: { headers?: Record<string, string>; fetchFn?: typeof fetch; signal?: AbortSignal }
+): Promise<ApiResponse<InvestigationResultsData>> {
+  const fetcher = options?.fetchFn || fetch;
+  try {
+    const res = await fetcher(`/api/v1/investigations/${encodeURIComponent(id)}/results`, {
+      method: 'GET',
+      headers: buildRequestHeaders(options?.headers),
+      signal: options?.signal,
+    });
+
+    const json = await res.json().catch(() => null);
+
+    if (!res.ok) {
+      return {
+        success: false,
+        error: {
+          code: json?.error?.code || 'FETCH_RESULTS_FAILED',
+          category: json?.error?.category || 'INTERNAL_ERROR',
+          message: extractErrorMessage(res, json),
+          details: json?.error?.details,
+        },
+        status: res.status,
+      };
+    }
+
+    return {
+      success: true,
+      data: json.data,
+      mode: json.mode,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: {
+        code: 'NETWORK_ERROR',
+        category: 'INTERNAL_ERROR',
+        message: err instanceof Error ? err.message : 'Network connection failure while fetching results',
       },
       status: 0,
     };
@@ -667,6 +749,138 @@ export async function approveInvestigationPlan(
         code: 'NETWORK_ERROR',
         category: 'INTERNAL_ERROR',
         message: err instanceof Error ? err.message : 'Network connection failure while submitting approval',
+      },
+      status: 0,
+    };
+  }
+}
+
+/**
+ * Rejects a proposed experiment plan via POST /api/v1/investigations/[id]/reject
+ */
+export async function rejectInvestigationPlan(
+  id: string,
+  command: RejectPlanCommand,
+  options?: { headers?: Record<string, string>; fetchFn?: typeof fetch }
+): Promise<ApiResponse<{ status: string; workflowRevision: number }>> {
+  const validation = RejectPlanCommandSchema.safeParse(command);
+  if (!validation.success) {
+    return {
+      success: false,
+      error: {
+        code: 'CLIENT_VALIDATION_ERROR',
+        category: 'VALIDATION_FAILED',
+        message: validation.error.errors[0]?.message || 'Validation error in plan rejection payload',
+        details: validation.error.format(),
+      },
+      status: 400,
+    };
+  }
+
+  const fetcher = options?.fetchFn || fetch;
+  try {
+    const res = await fetcher(`/api/v1/investigations/${encodeURIComponent(id)}/reject`, {
+      method: 'POST',
+      headers: buildRequestHeaders({
+        'Content-Type': 'application/json',
+        ...(options?.headers || {}),
+      }),
+      body: JSON.stringify(validation.data),
+    });
+
+    const json = await res.json().catch(() => null);
+
+    if (!res.ok) {
+      return {
+        success: false,
+        error: {
+          code: json?.error?.code || 'REJECT_PLAN_FAILED',
+          category: json?.error?.category || 'INTERNAL_ERROR',
+          message: extractErrorMessage(res, json),
+          details: json?.error?.details,
+        },
+        status: res.status,
+      };
+    }
+
+    return {
+      success: true,
+      data: json.data || json.body || json,
+      message: json.message,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: {
+        code: 'NETWORK_ERROR',
+        category: 'INTERNAL_ERROR',
+        message: err instanceof Error ? err.message : 'Network failure while rejecting plan',
+      },
+      status: 0,
+    };
+  }
+}
+
+/**
+ * Revokes previously granted approval via POST /api/v1/investigations/[id]/revoke
+ */
+export async function revokeInvestigationPlan(
+  id: string,
+  command: RevokeApprovalCommand,
+  options?: { headers?: Record<string, string>; fetchFn?: typeof fetch }
+): Promise<ApiResponse<{ status: string; workflowRevision: number }>> {
+  const validation = RevokeApprovalCommandSchema.safeParse(command);
+  if (!validation.success) {
+    return {
+      success: false,
+      error: {
+        code: 'CLIENT_VALIDATION_ERROR',
+        category: 'VALIDATION_FAILED',
+        message: validation.error.errors[0]?.message || 'Validation error in plan revocation payload',
+        details: validation.error.format(),
+      },
+      status: 400,
+    };
+  }
+
+  const fetcher = options?.fetchFn || fetch;
+  try {
+    const res = await fetcher(`/api/v1/investigations/${encodeURIComponent(id)}/revoke`, {
+      method: 'POST',
+      headers: buildRequestHeaders({
+        'Content-Type': 'application/json',
+        ...(options?.headers || {}),
+      }),
+      body: JSON.stringify(validation.data),
+    });
+
+    const json = await res.json().catch(() => null);
+
+    if (!res.ok) {
+      return {
+        success: false,
+        error: {
+          code: json?.error?.code || 'REVOKE_APPROVAL_FAILED',
+          category: json?.error?.category || 'INTERNAL_ERROR',
+          message: extractErrorMessage(res, json),
+          details: json?.error?.details,
+        },
+        status: res.status,
+      };
+    }
+
+    return {
+      success: true,
+      data: json.data || json.body || json,
+      message: json.message,
+    };
+  } catch (err) {
+    return {
+      success: false,
+      error: {
+        code: 'NETWORK_ERROR',
+        category: 'INTERNAL_ERROR',
+        message: err instanceof Error ? err.message : 'Network failure while revoking plan approval',
       },
       status: 0,
     };
@@ -865,18 +1079,25 @@ export async function fetchInvestigationEvents(
 export async function requestPlanning(
   id: string,
   command?: Partial<RequestPlanningCommand>,
-  options?: { headers?: Record<string, string>; fetchFn?: typeof fetch }
+  options?: { headers?: Record<string, string>; fetchFn?: typeof fetch; idempotencyKey?: string }
 ): Promise<ApiResponse<RequestPlanningResult>> {
   const fetcher = options?.fetchFn || fetch;
   const payload = {
     investigationId: id,
     ...(command || {}),
   };
+  const idempotencyHeaders: Record<string, string> = {};
+  const effectiveKey = options?.idempotencyKey || (command as { idempotencyKey?: string } | undefined)?.idempotencyKey;
+  if (effectiveKey) {
+    idempotencyHeaders['X-Idempotency-Key'] = effectiveKey;
+  }
+
   try {
     const res = await fetcher(`/api/v1/investigations/${encodeURIComponent(id)}/plan`, {
       method: 'POST',
       headers: buildRequestHeaders({
         'Content-Type': 'application/json',
+        ...idempotencyHeaders,
         ...(options?.headers || {}),
       }),
       body: JSON.stringify(payload),

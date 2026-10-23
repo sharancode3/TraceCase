@@ -1,6 +1,6 @@
 import type { InvestigationSnapshot } from '@/contracts/investigations';
 import type { ExperimentPlan, AuthoritativeExperimentPlan } from '@/contracts/planning';
-import type { EvidenceManifest } from '@/contracts/evidence';
+import type { EvidenceManifest, AuthorizedArtifactDescriptor } from '@/contracts/evidence';
 import type { EvidenceReadinessStatus } from '@/contracts/status';
 
 export interface ConsoleLogEntry {
@@ -34,6 +34,14 @@ export interface ReproductionPackage {
   exportedAt: string;
   sourceEnvironment: 'development-preview' | 'live-engine';
   securityNotice: string;
+  exportDisclosure: {
+    isPlanPersisted: boolean;
+    missingPlanNotice?: string;
+    isManifestComplete: boolean;
+    missingArtifactKinds?: string[];
+    restrictedArtifactCount: number;
+    quarantineNotice?: string;
+  };
   investigation: {
     id: string;
     reportId: string;
@@ -43,6 +51,8 @@ export interface ReproductionPackage {
       name: string;
       baseUrl: string;
       isSandbox: boolean;
+      environment?: string | null;
+      buildVersion?: string | null;
     };
     lifecycleStatus: string;
     reproductionVerdict: string;
@@ -54,6 +64,8 @@ export interface ReproductionPackage {
   attempts: {
     attempt1: InvestigationSnapshot['attempt1'];
     attempt2: InvestigationSnapshot['attempt2'];
+    resetReceipt?: InvestigationSnapshot['resetReceipt'];
+    assertionEvaluations?: InvestigationSnapshot['assertionEvaluations'];
   };
   approvedPlan: {
     version: number | null;
@@ -280,11 +292,23 @@ export function buildReproductionPackage(params: {
   investigation: InvestigationSnapshot;
   plan?: ExperimentPlan | AuthoritativeExperimentPlan | null;
   manifest?: EvidenceManifest | null;
+  artifacts?: Array<AuthorizedArtifactDescriptor | EvidenceManifest['artifacts'][number]>;
 }): ReproductionPackage {
   const { investigation, plan, manifest } = params;
   const isQuarantined =
     investigation.evidenceReadiness === 'QUARANTINED_LEAK_DETECTED' ||
     manifest?.readinessStatus === 'QUARANTINED_LEAK_DETECTED';
+
+  const rawArtifacts = params.artifacts || manifest?.artifacts || [];
+  const restrictedArtifactCount = rawArtifacts.filter(
+    (a) => a.storageTier === 'RESTRICTED_RAW' || isQuarantined
+  ).length;
+
+  const presentKinds = new Set(rawArtifacts.map((a) => a.kind));
+  const missingArtifactKinds: string[] = [];
+  if (!presentKinds.has('VIDEO_RECORDING')) missingArtifactKinds.push('VIDEO_RECORDING');
+  if (!presentKinds.has('CONSOLE_LOG')) missingArtifactKinds.push('CONSOLE_LOG');
+  if (!presentKinds.has('NETWORK_TRACE')) missingArtifactKinds.push('NETWORK_TRACE');
 
   return {
     traceCasePackageVersion: '1.0.0',
@@ -293,6 +317,18 @@ export function buildReproductionPackage(params: {
     securityNotice: isQuarantined
       ? 'SECURITY NOTICE: Evidence is quarantined due to detected sensitive tokens or credentials (TC-INV-009). Raw restricted media and authorization headers are excluded from this export bundle.'
       : 'Text logs and network traces are scrubbed via in-stream redaction (TC-INV-009). Recorded video displays raw browser viewport pixels. Restricted raw artifacts and credentials are excluded from this package.',
+    exportDisclosure: {
+      isPlanPersisted: Boolean(plan && (plan.version || plan.planHash)),
+      missingPlanNotice: !plan
+        ? 'No persisted experiment plan attached to export bundle. Export reflects partial record.'
+        : undefined,
+      isManifestComplete: Boolean(manifest?.triadComplete),
+      missingArtifactKinds: missingArtifactKinds.length > 0 ? missingArtifactKinds : undefined,
+      restrictedArtifactCount,
+      quarantineNotice: isQuarantined
+        ? 'Active quarantine in effect: in-stream inspection detected sensitive credentials. Raw media is isolated in RESTRICTED_RAW storage.'
+        : undefined,
+    },
     investigation: {
       id: investigation.id,
       reportId: investigation.reportId,
@@ -302,6 +338,8 @@ export function buildReproductionPackage(params: {
         name: investigation.targetName,
         baseUrl: sanitizeUrl(investigation.targetUrl),
         isSandbox: investigation.isSandbox,
+        environment: investigation.targetEnvironment || null,
+        buildVersion: investigation.targetBuildVersion || null,
       },
       lifecycleStatus: investigation.lifecycleStatus,
       reproductionVerdict: investigation.reproductionVerdict,
@@ -313,13 +351,15 @@ export function buildReproductionPackage(params: {
     attempts: {
       attempt1: investigation.attempt1,
       attempt2: investigation.attempt2,
+      resetReceipt: investigation.resetReceipt || null,
+      assertionEvaluations: investigation.assertionEvaluations || [],
     },
     approvedPlan: {
       version: investigation.planVersion ?? plan?.version ?? null,
       planHash: investigation.planHash ?? plan?.planHash ?? null,
-      isApproved: investigation.isApproved,
-      approvedBy: investigation.approvedBy,
-      approvedAt: investigation.approvedAt,
+      isApproved: Boolean(investigation.isApproved),
+      approvedBy: investigation.approvedBy ?? null,
+      approvedAt: investigation.approvedAt ?? null,
       targetUrl: plan?.targetUrl ? sanitizeUrl(plan.targetUrl) : undefined,
       steps: plan?.steps?.map((s) => ({
         stepIndex: s.stepIndex,
@@ -346,24 +386,23 @@ export function buildReproductionPackage(params: {
       hasConsoleLog: manifest?.hasConsoleLog ?? false,
       hasNetworkTrace: manifest?.hasNetworkTrace ?? false,
       secretScrubbingVerified: manifest?.secretScrubbingVerified ?? false,
-      artifacts:
-        manifest?.artifacts?.map((a) => {
-          const isRestricted = a.storageTier === 'RESTRICTED_RAW' || isQuarantined;
-          return {
-            id: a.id,
-            attemptNumber: a.attemptNumber,
-            kind: a.kind,
-            storageTier: a.storageTier,
-            fileName: a.fileName,
-            mimeType: a.mimeType,
-            sizeBytes: a.sizeBytes,
-            sha256Checksum: a.sha256Checksum,
-            redactionApplied: a.redactionApplied,
-            // Quarantined or restricted artifacts must NEVER expose a downloadable publicUrl
-            publicUrl: isRestricted ? null : a.publicUrl,
-            createdAt: a.createdAt,
-          };
-        }) ?? [],
+      artifacts: rawArtifacts.map((a) => {
+        const isRestricted = a.storageTier === 'RESTRICTED_RAW' || isQuarantined;
+        const publicUrl = a.publicUrl || null;
+        return {
+          id: a.id,
+          attemptNumber: a.attemptNumber ?? null,
+          kind: a.kind,
+          storageTier: a.storageTier,
+          fileName: a.fileName,
+          mimeType: 'mimeType' in a && typeof a.mimeType === 'string' ? a.mimeType : 'application/octet-stream',
+          sizeBytes: a.sizeBytes,
+          sha256Checksum: a.sha256Checksum,
+          redactionApplied: 'redactionApplied' in a ? Boolean(a.redactionApplied) : true,
+          publicUrl: isRestricted ? null : publicUrl,
+          createdAt: a.createdAt,
+        };
+      }),
     },
   };
 }

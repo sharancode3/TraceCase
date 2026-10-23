@@ -5,10 +5,15 @@ import { z } from 'zod';
  * Pure proposal without server-owned IDs, timestamps, or answer state.
  */
 export const ProposedClarificationQuestionSchema = z.object({
+  questionId: z.string().optional(),
   questionIndex: z.number().int().nonnegative().optional(),
   questionText: z.string().trim().min(5, 'Question text must be at least 5 characters').max(1000),
   explanation: z.string().trim().max(1000).optional(),
+  whyItMatters: z.string().trim().max(1000).optional(),
+  purpose: z.string().trim().max(1000).optional(),
   suggestedOptions: z.array(z.string().trim().min(1)).max(10).optional(),
+  options: z.array(z.string().trim().min(1)).max(10).optional(),
+  blocksExecution: z.boolean().optional(),
 }).strict();
 export type ProposedClarificationQuestion = z.infer<typeof ProposedClarificationQuestionSchema>;
 
@@ -19,6 +24,7 @@ export const ClarificationQuestionSchema = z.object({
   id: z.string().uuid(),
   investigationId: z.string().uuid(),
   questionIndex: z.number().int().nonnegative().default(0).optional(),
+  roundIndex: z.number().int().positive().default(1).optional(),
   questionText: z.string().min(5).max(1000),
   explanation: z.string().max(1000).nullable().optional(),
   contextExplanation: z.string().max(1000).nullable().optional(), // Backward compatibility alias

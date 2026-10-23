@@ -62,7 +62,7 @@ async function main() {
         'Navigate to http://localhost:3005/workbench',
         'Click on Active filter button (#wb-filter-active)',
         'Click delete button on wb-item-02 ("Implement Audit Log Retention Policy")',
-        'Confirm deletion in the modal dialog by clicking Confirm Delete (#wb-confirm-delete)',
+        'Confirm deletion in the modal dialog by clicking Confirm Delete (#wb-confirm-delete-btn)',
       ],
       buildVersion: 'wb-v1.0.0-buggy',
     }),

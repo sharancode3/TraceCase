@@ -91,8 +91,8 @@ describe('P1-03: End-to-End Investigation Workflow and Clarification Journey', (
     // 1. First planning invocation: model requests clarifications
     const mockClarificationPlanner: ReportClarificationAgentPort = {
       async generateProposal(params) {
-        const report = params.report as any;
-        if (!report.knownFacts || Object.keys(report.knownFacts).length === 0) {
+        const hasUserClarifications = params.clarificationHistory && params.clarificationHistory.length > 0;
+        if (!hasUserClarifications) {
           return {
             status: 'CLARIFICATION_NEEDED',
             preliminaryUnderstanding: 'Checkout failure reported during cart flow',
