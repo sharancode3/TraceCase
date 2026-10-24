@@ -10,8 +10,8 @@ export function ThemeToggle() {
   React.useEffect(() => {
     setMounted(true);
     const saved = localStorage.getItem('tc-theme');
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    const initial = saved === 'dark' || (!saved && prefersDark) ? 'dark' : 'light';
+    // Light theme is the strict default unless user explicitly chose dark
+    const initial = saved === 'dark' ? 'dark' : 'light';
     setTheme(initial);
     if (initial === 'dark') {
       document.documentElement.classList.add('dark');

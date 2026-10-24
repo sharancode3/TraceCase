@@ -34,6 +34,13 @@ export default function RootLayout({
 
   return (
     <html lang="en" suppressHydrationWarning className={`h-full ${dmSans.variable}`}>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{if(localStorage.getItem('tc-theme')==='dark'){document.documentElement.classList.add('dark');}else{document.documentElement.classList.remove('dark');}}catch(e){}`,
+          }}
+        />
+      </head>
       <body className="h-screen max-h-screen overflow-hidden bg-canvas dark:bg-slate-950 text-brand-navy dark:text-slate-100 flex flex-col antialiased transition-colors duration-150">
         <TourProvider>
           <OnboardingTour />
