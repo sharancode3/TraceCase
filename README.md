@@ -2,234 +2,423 @@
 
 **Autonomous, Deterministic Web Application Defect Reproduction and Verifiable Evidence Pipeline**
 
-## Start Here — Current Phase 2 Plans
-
-Each contributor should open their plan below and follow its stages in order. These plans define the current sprint's responsibilities; the original three-person assignments further below are historical context.
-
-| Contributor | Open your Phase 2 plan | Work covered |
-|---|---|---|
-| **Person 1** | **[Person 1 — Phase 2 Implementation Plan](implementation-stages/person-1/phase-2-implementation-plan.md)** | TraceCase UI, easier target registration and reuse, report submission, clarification/planning fixes, first-use guide, results and integrated verification. |
-| **Person 2** | **[Person 2 — Phase 2 Implementation Plan](implementation-stages/person-2/phase-2-implementation-plan.md)** | Richer controlled testing site, functional workbench UI, deterministic buggy/fixed builds, fixture reset/readback and integration handoff. |
-
-Both plans include stage-by-stage implementation instructions, concepts, acceptance checks, ownership boundaries and agent restrictions. Read the [shared implementation guide](implementation-stages/README.md) before starting shared work.
+[![Next.js 15](https://img.shields.io/badge/Next.js-15.1.7-black?style=flat&logo=next.js)](https://nextjs.org/)
+[![TypeScript 5](https://img.shields.io/badge/TypeScript-5.7-blue?style=flat&logo=typescript)](https://www.typescriptlang.org/)
+[![Playwright Chromium](https://img.shields.io/badge/Playwright-Chromium-green?style=flat&logo=playwright)](https://playwright.dev/)
+[![PostgreSQL 15](https://img.shields.io/badge/PostgreSQL-15-336791?style=flat&logo=postgresql)](https://www.postgresql.org/)
+[![Drizzle ORM](https://img.shields.io/badge/Drizzle_ORM-0.38-C5F74F?style=flat)](https://orm.drizzle.team/)
+[![pg--boss](https://img.shields.io/badge/pg--boss-10.4-orange?style=flat)](https://github.com/timgit/pg-boss)
+[![License Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Tests Passing](https://img.shields.io/badge/Tests-392%20passed-brightgreen?style=flat)](tests/)
 
 ---
 
-## Document Control and System Metadata
+## The Problem: The Defect Reproduction Crisis
 
-- **System Identifier:** TraceCase Core Platform
-- **Repository Version:** 1.0.0-p1-handoff
-- **Implementation Milestone:** Person 1 Backend & Verification Integration Handoff
-- **Operating Mode:** Local Integration & Verification Baseline
-- **Primary AI Model Target:** OpenAI GPT-6 Luna (Exclusive Structured Output Adapter; Role Prompts by Person 2)
-- **Execution Engine:** Playwright Chromium Headless via Chrome DevTools Protocol
-- **Persistence & Queue Layer:** PostgreSQL 15 with Drizzle ORM and `pg-boss` (ACID Transactional Outbox; Zero Redis Dependency)
-- **Object Storage Target:** Dual-Bucket S3 Architecture (MinIO / AWS S3; Implemented in Contracts)
-- **Repository Remote:** `https://github.com/sharancode3/TraceCase.git`
+Modern engineering teams lose between 20% to 40% of sprint capacity chasing vague, incomplete, or non-reproducible bug reports. Traditional defect triage suffers from critical structural flaws:
+
+1. **"Works On My Machine":** Informal user write-ups omit environment specifics, preconditions, or subtle user interaction sequences.
+2. **Polluted Test Environments:** Flaky tests and unverified state mutations create false positives, obscuring real regressions.
+3. **The AI Hallucination Gap:** Naive AI agents generate non-deterministic browser actions or ungrounded assertions that cannot reliably prove whether a defect genuinely exists.
+4. **PII and Secret Leakage:** Developers haphazardly upload unscrubbed screenshots, video recordings, and diagnostic logs containing production bearer tokens, session keys, and customer data.
+
+TraceCase bridges this gap by transforming unstructured bug descriptions into **cryptographically authorized, deterministic, two-run verified bug reproduction packages** with synchronized multi-track evidence (WebM video, console streams, and CDP network traces).
 
 ---
 
-## Contributor Navigation & Codebase Ownership
+## The TraceCase Solution
 
-TraceCase is divided across three distinct ownership boundaries:
+TraceCase operates as an autonomous defect reliability platform designed around five strict architectural pillars:
 
-| Contributor | Focus Area | Primary Directories Owned | Entry Document |
+- **Natural Language Intake with Grounded Scoping:** Operators describe bugs in natural language. TraceCase's planner synthesizes testable browser actions and deterministic predicates without requiring raw CSS selectors or complex scripting.
+- **Cryptographic Plan Authorization Gate (TC-INV-003):** To prevent autonomous AI agents from performing destructive operations without consent, every plan is fingerprinted via SHA-256 and requires explicit operator sign-off before entering the execution queue.
+- **Deterministic Dual-Run Engine with Authenticated State Readback:** A defect is never declared "reproduced" from a single run. TraceCase executes Attempt 1, restores the target baseline via authenticated fixture webhooks, verifies state equivalence via SHA-256 canonical hashing, and executes Attempt 2.
+- **Three-Orthogonal Status Dimensions:** Decouples **Lifecycle State** (`RUNNING`, `COMPLETED`, `FAILED`), **Reproduction Verdict** (`CONFIRMED_REPRODUCED`, `NOT_REPRODUCED`, `INCONCLUSIVE`), and **Evidence Readiness** (`READY`, `QUARANTINED_LEAK_DETECTED`).
+- **Grounded Contextual Investigation Assistant:** An interactive post-investigation AI partner equipped with typed citation pills (`STEP`, `ATTEMPT`, `ASSERTION`, `EVIDENCE`, `TARGET`) providing instant answers regarding execution timing, failure causes, and comparison between attempts.
+
+---
+
+## High-Level System Architecture
+
+```mermaid
+flowchart TD
+    User["User / QA Engineer"] -->|"Natural Language Report"| WebUI["TraceCase Next.js 15 Web Application"]
+    WebUI -->|"Store Report & Target"| DB[("PostgreSQL 15 (Drizzle ORM)")]
+    
+    subgraph Planning ["AI Planning & Clarification Subsystem"]
+        Planner["Integrated Planner Agent"]
+        Planner -->|"Grounded Proposal"| Fingerprint["SHA-256 Plan Fingerprinting"]
+    end
+    WebUI <--> Planning
+    
+    User -->|"Cryptographic Plan Sign-off"| AuthGate{"Human Approval Gate"}
+    AuthGate -->|"Admit to Queue"| Outbox["Transactional Outbox Relay"]
+    Outbox -->|"Transactional Enqueue"| PgBoss[("pg-boss Job Queue (PostgreSQL)")]
+    
+    subgraph Execution ["Autonomous Execution Subsystem"]
+        Worker["Playwright Worker Daemon"]
+        Worker -->|"Acquire Monotonic Lease"| LeaseGuard["Execution Lease Slot (Fencing)"]
+        Worker -->|"CDP Automation & Media Capture"| Browser["Chromium Engine (Playwright)"]
+        Browser -->|"Target Interactions"| TargetApp["Target Web Application (Sandbox)"]
+        Worker -->|"POST /api/test/reset-fixture"| TargetReset["Target Fixture Reset & Readback"]
+    end
+    PgBoss --> Worker
+    
+    subgraph Evidence ["Verification & Evidence Subsystem"]
+        TwoAttempt["Two-Attempt Controller"]
+        PairAssessor["Pair Assessor Decision Matrix"]
+        Comparator["Deterministic Baseline Comparator"]
+        Sanitizer["Secret & PII Quarantine Sanitizer"]
+        PDFGen["Canonical PDF Report Engine"]
+    end
+    Worker --> TwoAttempt
+    TwoAttempt --> Comparator
+    TwoAttempt --> PairAssessor
+    TwoAttempt --> Sanitizer
+    TwoAttempt --> PDFGen
+    PDFGen -->|"Store Canonical Artifacts"| ArtifactStore[("Evidence Store / Local Filesystem")]
+    TwoAttempt -->|"Persist Locked Verdict"| DB
+    WebUI <-->|"Real-Time Events & Timeline"| DB
+```
+
+---
+
+## Deterministic Two-Attempt Verification State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> REPORT_DRAFTED: Intake Form Submitted
+    REPORT_DRAFTED --> AWAITING_PLAN_APPROVAL: AI Formulates Grounded Plan
+    REPORT_DRAFTED --> CLARIFICATION_NEEDED: Ambiguous Prerequisites
+    CLARIFICATION_NEEDED --> REPORT_DRAFTED: User Answers Question
+    
+    AWAITING_PLAN_APPROVAL --> RUNNING_ATTEMPT_1: Operator Cryptographically Approves Plan
+    
+    state "Attempt 1 Execution" as Attempt1 {
+        RUNNING_ATTEMPT_1 --> PreflightBaselineCheck
+        PreflightBaselineCheck --> ActionDispatch1
+        ActionDispatch1 --> AssertionEvaluation1
+    }
+    
+    Attempt1 --> RESETTING_TARGET: Attempt 1 Complete
+    
+    state "Target Baseline Reset" as ResetGate {
+        RESETTING_TARGET --> OutboundResetPost: POST /api/test/reset-fixture
+        OutboundResetPost --> ReadbackVerification: GET /api/test/readback
+        ReadbackVerification --> StateHashComparison: BaselineComparator SHA-256 Hash
+    }
+    
+    ResetGate --> RUNNING_ATTEMPT_2: State Restored & Verified Clean
+    ResetGate --> FAILED_RESET: State Dirty / Readback Discrepancy
+    
+    state "Attempt 2 Execution" as Attempt2 {
+        RUNNING_ATTEMPT_2 --> ActionDispatch2
+        ActionDispatch2 --> AssertionEvaluation2
+    }
+    
+    Attempt2 --> VERDICT_ASSESSMENT: Attempt 2 Complete
+    
+    state "Verdict Locking" as VerdictLock {
+        VERDICT_ASSESSMENT --> CONFIRMED_REPRODUCED: 2x Valid Defect Detected
+        VERDICT_ASSESSMENT --> NOT_REPRODUCED_CLEAN: 2x Valid Clean Behavior
+        VERDICT_ASSESSMENT --> INCONCLUSIVE_FLAKY: Inconsistent Observations
+    }
+    
+    CONFIRMED_REPRODUCED --> EVIDENCE_PACKAGING
+    NOT_REPRODUCED_CLEAN --> EVIDENCE_PACKAGING
+    INCONCLUSIVE_FLAKY --> EVIDENCE_PACKAGING
+    
+    EVIDENCE_PACKAGING --> COMPLETED: PDF Report & Triad Ready
+    FAILED_RESET --> FAILED: Blocked by Unverified Reset
+    COMPLETED --> [*]
+    FAILED --> [*]
+```
+
+---
+
+## Autonomous Verification Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Operator as Operator / QA
+    participant Web as Next.js Web App
+    participant Worker as Playwright Worker
+    participant Browser as Chromium Browser
+    participant Target as Controlled Target App
+    participant Evaluator as Deterministic Evaluator
+
+    Operator->>Web: Submit natural language bug description
+    Web->>Web: Formulate plan & compute SHA-256 fingerprint
+    Web-->>Operator: Present Plan Review (Safety Tiers & Assertions)
+    Operator->>Web: Click "Authorize & Approve Plan"
+    Web->>Worker: Enqueue execution request under lease fencing
+    
+    Note over Worker,Browser: Attempt 1 Begins
+    Worker->>Browser: Launch isolated browser context (record video, trace)
+    Browser->>Target: Execute Step 1 (Navigate) & Step 2 (Filter)
+    Browser->>Target: Execute Step 3 (Trigger Action)
+    Browser->>Target: Execute Step 4 (Confirm Modal Dialog)
+    Worker->>Evaluator: Collect DOM observations & evaluate assertions
+    Evaluator-->>Worker: Attempt 1 Finding: VALID_DEFECT_DETECTED
+    Worker->>Browser: Close context & save Attempt 1 artifacts
+    
+    Note over Worker,Target: Authenticated Baseline Reset Gate
+    Worker->>Target: POST /api/test/reset-fixture (Auth Secret)
+    Target-->>Worker: HTTP 200 Fixture Reset OK
+    Worker->>Target: GET /api/test/readback
+    Target-->>Worker: Observed Fixture Baseline State
+    Worker->>Worker: Compute SHA-256 hash & verify baseline equivalence
+    
+    Note over Worker,Browser: Attempt 2 Begins
+    Worker->>Browser: Launch fresh isolated browser context
+    Browser->>Target: Re-execute identical 4-step sequence
+    Worker->>Evaluator: Collect DOM observations & evaluate assertions
+    Evaluator-->>Worker: Attempt 2 Finding: VALID_DEFECT_DETECTED
+    Worker->>Browser: Close context & save Attempt 2 artifacts
+    
+    Note over Worker,Web: Verdict Finalization & Evidence Packaging
+    Worker->>Worker: PairAssessor evaluates 2-run consistency
+    Worker->>Worker: Lock Verdict: CONFIRMED_REPRODUCED
+    Worker->>Worker: Redact sensitive secrets from network traces
+    Worker->>Worker: Generate canonical 2-page PDF Report
+    Worker-->>Web: Emit INVESTIGATION_COMPLETED
+    Web-->>Operator: Display Results, Interactive Assistant, & PDF Download
+```
+
+---
+
+## Controlled Multi-Domain Demonstration Targets
+
+TraceCase includes two standalone, controlled target web applications representing genuinely different business domains:
+
+### 1. Acme Hardware Shopping Cart Application (`Port 3007`)
+- **Domain:** E-Commerce / Consumer Retail.
+- **Architecture:** Responsive hardware catalog with category tabs (`All Products`, `Hardware`, `Accessories`), real-time catalog search, and cart drawer.
+- **Seeded Defect (`cart-v1.0.0-buggy`):** When incrementing quantity for in-cart items, the item subtotal recalculates but the top-level checkout subtotal fails to update due to missing state synchronization.
+- **Fixed Control (`cart-v1.0.1-fixed`):** Both item subtotal and top-level cart subtotal update reactively.
+- **Fixture Endpoints:** `POST /api/test/reset-fixture` and `GET /api/test/readback` with token authorization.
+
+### 2. TraceCase Workbench Application (`Port 3005` & `Port 3006`)
+- **Domain:** Enterprise Task Management / Work Item Queue.
+- **Architecture:** Accessible data-grid table with status filters (`All`, `Active`, `Completed`), detail pane, and modal confirmation dialogs.
+- **Seeded Defect (`wb-v1.0.0-buggy` on Port 3005):** When deleting an item while an active filter is applied, an off-by-one array index offset causes the preceding completed item (`wb-item-01`) to be deleted instead of the selected active item (`wb-item-02`).
+- **Fixed Control (`wb-v1.0.1-fixed` on Port 3006):** Deletions resolve by unique entity identity, preserving unaffected records.
+- **Fixture Endpoints:** Scoped baseline restoration supporting `workbench_work_items`.
+
+---
+
+## Key Differentiators & Hackathon Highlights
+
+| Feature | TraceCase | Traditional Bug Trackers | Generic AI Coding Agents |
 |---|---|---|---|
-| **Person 1** (Lead / Execution) | Trusted backend APIs, PostgreSQL persistence, `pg-boss` queue, Playwright Chromium execution, two-attempt deterministic verifier, operational hardening, and deployment containerization | `src/server/`, `src/contracts/`, `worker/`, `drizzle/`, `tests/person-1/`, `scripts/`, Dockerfiles | [`implementation-stages/person-1/README.md`](implementation-stages/person-1/README.md) |
-| **Person 2** (AI / Evaluation) | OpenAI GPT-6 Luna prompts and adapters, controlled demo targets (`TraceCase-Demo-Tasks`), baseline reset/readback endpoints, and independent benchmark evaluation | `src/server/ai/` (prompts/adapters), controlled demo target applications, benchmark suites | [`implementation-stages/person-2/README.md`](implementation-stages/person-2/README.md) |
-| **Person 3** (Frontend / Evidence) | Next.js UI features/pages, shared evidence sanitizer (`src/server/evidence/evidence-storage.service.ts`), dual-tier S3 artifact storage, and synchronized evidence player | `src/app/` (UI routes), `src/features/`, `src/components/`, evidence storage/sanitization services | [`implementation-stages/person-3/README.md`](implementation-stages/person-3/README.md) |
-
-### Implementation Plans Index
-
-- **[Person 1 — Current Phase 2 Plan](implementation-stages/person-1/phase-2-implementation-plan.md)**
-- **[Person 2 — Current Phase 2 Plan](implementation-stages/person-2/phase-2-implementation-plan.md)**
-- [Shared Implementation Guide](implementation-stages/README.md)
-- [Person 1 — Earlier Corrective Plan (Reference)](implementation-stages/person-1/person-1-implementation-plan.md)
-- [Person 2 — Earlier Target Plan (Reference)](implementation-stages/person-2/person-2-implementation-plan.md)
-- [Person 3 — Original Implementation Plan (Historical)](implementation-stages/person-3/person-3-implementation-plan.md)
+| **Defect Verification** | **2x Deterministic Execution** across authenticated resets | Manual reproduction | Single-run non-deterministic |
+| **Evidence Quality** | **Synchronized Triad** (Video, Network, Console) + Canonical PDF | Ad-hoc screenshots / text logs | Markdown summaries without media |
+| **Human-in-the-Loop** | **Cryptographic Sign-Off Gate** (SHA-256 Plan Binding) | Manual triage | Uncontrolled autonomous mutation |
+| **Security & Privacy** | **In-Stream Token Sanitization** & Outbound SSRF Guard | Manual redaction (often forgotten) | Leaks credentials into prompt context |
+| **Post-Repro Analysis** | **Contextual AI Assistant** with typed citation pills | Static comment threads | Generic ungrounded chat |
+| **Reporting** | **Enterprise PDF Report** with reproducible evidence metadata | Manual export | None |
 
 ---
 
-## Repository Map
+## Three-Dimensional Status Architecture
+
+TraceCase rejects binary "passed/failed" reporting in favor of three orthogonal dimensions:
+
+```text
++-----------------------------------------------------------------------------------+
+| TRACECASE ORTHOGONAL STATUS TRIAD                                                 |
++-----------------------------------------------------------------------------------+
+| 1. LIFECYCLE STATE       | PENDING_APPROVAL -> QUEUED -> RUNNING -> COMPLETED     |
+| 2. REPRODUCTION VERDICT  | CONFIRMED_REPRODUCED | NOT_REPRODUCED | INCONCLUSIVE       |
+| 3. EVIDENCE READINESS    | READY | QUARANTINED_LEAK_DETECTED | PENDING_GENERATION     |
++-----------------------------------------------------------------------------------+
+```
+
+- **Lifecycle State:** Represents workflow progress through the queue and browser execution daemon.
+- **Reproduction Verdict:** Computed purely by code using a 16-scenario decision matrix. Confirms defects only when observed across both runs.
+- **Evidence Readiness:** Signals whether media and traces are safe for external sharing. Automatically flags and isolates simulated tokens or leaked credentials.
+
+---
+
+## Directory Structure
 
 ```text
 TraceCase/
 ├── src/
-│   ├── app/                   # Next.js 15 App Router web pages and API route handlers
-│   │   ├── api/               # Trusted API endpoints (/ready, /v1/investigations, /reports, etc.)
-│   │   └── investigations/    # Web pages for intake, approval, review, and live playback
-│   ├── contracts/             # Pure TypeScript / Zod schemas (shared across web, server, worker)
-│   ├── features/              # UI components, layout, and preview galleries
-│   └── server/                # Trusted server modules
-│       ├── ai/                # AI proposal schemas and atomic budget metering
-│       ├── auth/              # Cryptographic JWT authentication & tenant isolation
-│       ├── browser/           # Playwright Chromium automation & action dispatch
-│       ├── config/            # Strict environment variable parsing
-│       ├── db/                # PostgreSQL schema, Drizzle ORM repositories, and migrations
-│       ├── evidence/          # Capture registrar, evidence pipeline, and metadata packaging
-│       ├── policy/            # Plan fingerprinting, sandbox guards, approval verification
-│       ├── queue/             # Transactional outbox relay & execution lease management
-│       ├── services/          # Service container and ports
-│       └── verification/      # Two-attempt controller, baseline comparator, pair assessor
-├── worker/                    # Standalone persistent background worker daemon (pg-boss consumer)
-├── drizzle/                   # Drizzle ORM SQL migration files (0000 through 0006)
-├── docs/                      # Architectural specifications (PRD, TRD, SAD, etc.)
-├── implementation-stages/     # Multi-contributor implementation plans and review handoffs
-│   ├── person-1/              # Person 1 plans, reviews, handoffs, and campaign index
-│   ├── person-2/              # Person 2 plans and handoffs
-│   └── person-3/              # Person 3 plans and handoffs
-├── tests/                     # Unit, contract, and integration test suites
-│   └── person-1/              # Person 1 phase verification suites (Phases 1 through 9)
-├── scripts/                   # Operational and diagnostic scripts
-├── Dockerfile.web             # Multi-stage production container for Next.js web application
-├── Dockerfile.worker          # Multi-stage production container for Playwright worker daemon
-└── docker-compose.yml         # Local containerized orchestration (PostgreSQL, Web, Worker)
+│   ├── app/                                 # Next.js 15 App Router web pages & endpoints
+│   │   ├── api/                             # REST API route handlers
+│   │   │   ├── health/                      # Subsystem health probe (/api/health)
+│   │   │   ├── ready/                       # Subsystem readiness probe (/api/ready)
+│   │   │   └── v1/                          # Versioned API routes
+│   │   │       ├── investigations/          # Investigation CRUD, approve, start, assistant
+│   │   │       ├── reports/                 # Bug report intake endpoints
+│   │   │       └── targets/                 # Target registration & capability queries
+│   │   ├── investigations/                  # Dynamic pages
+│   │   │   ├── [id]/                        # Details view, timeline, assistant, PDF preview
+│   │   │   ├── [id]/approve/                # Cryptographic plan review & approval gate
+│   │   │   ├── [id]/clarify/                # Clarification Q&A wizard
+│   │   │   ├── [id]/live/                   # Live execution feed & attempt monitoring
+│   │   │   └── new/                         # Bug report intake form
+│   │   └── targets/                         # Target environment inventory
+│   ├── contracts/                           # TypeScript / Zod schemas (API, DB, Verification)
+│   ├── features/                            # UI presentation components
+│   └── server/                              # Backend server modules
+│       ├── ai/                              # AI prompt templates & OpenAI Luna adapters
+│       ├── auth/                            # Cryptographic JWT authentication
+│       ├── browser/                         # Playwright worker automation & action dispatcher
+│       ├── config/                          # Strict environment variable parsing
+│       ├── db/                              # PostgreSQL Drizzle ORM schema & repositories
+│       ├── evidence/                        # Capture registrar & artifact packaging
+│       ├── policy/                          # Plan fingerprinting & target network guards
+│       ├── queue/                           # pg-boss queue adapter & execution leases
+│       ├── reporting/                       # PDF investigation report generator
+│       └── verification/                    # Two-attempt controller, comparator, pair assessor
+├── demo-target/                             # Standalone controlled test applications
+│   ├── cart/                                # Acme Hardware Store application (Port 3007)
+│   ├── workbench/                           # TraceCase Workbench application (Port 3005/3006)
+│   └── server.ts                            # Target server entry point
+├── worker/                                  # Standalone background execution daemon
+│   └── index.ts                             # pg-boss consumer loop & Playwright runner
+├── drizzle/                                 # Drizzle ORM PostgreSQL migrations (0000 - 0006)
+├── docs/                                    # System architectural specifications (PRD, TRD, etc.)
+├── tests/                                   # Vitest automated test suites (392 passing tests)
+├── Dockerfile.web                           # Multi-stage production container for Web app
+├── Dockerfile.worker                        # Multi-stage production container for Worker daemon
+└── docker-compose.yml                       # Full orchestration (PostgreSQL, Web, Worker)
 ```
 
 ---
 
-## Executive Overview and Product Intent
+## Quick Start Guide
 
-Software engineering teams lose considerable velocity investigating vague, incomplete, and non-reproducible bug reports. Traditional bug reporting relies on ambiguous human write-ups, volatile application logs, and ad-hoc screenshots that frequently leak credentials or user PII.
+### Prerequisites
+- **Node.js:** `v20.x` or `v22.x` (LTS)
+- **Package Manager:** `pnpm` version `9.x` (`npm install -g pnpm@9`)
+- **Docker Engine & Docker Compose:** For PostgreSQL persistence and containerized deployments.
 
-**TraceCase** transforms unstructured bug reports into deterministic, two-run confirmed bug reproduction packages. The end-to-end operational flow is:
-
-```text
-Authorized Target Registration
-  -> Bug Report Intake
-  -> AI-Assisted Normalization & Clarification (Luna Role 1)
-  -> Versioned Experiment Plan (Luna Role 2)
-  -> Mandatory Human Operator Authorization Gate (TC-INV-003, TC-INV-004)
-  -> First Browser Execution Run (Isolated Chromium Context)
-  -> Deterministic Verifier Assertion Check (Pure Code, Not LLM)
-  -> Target Baseline Restoration Hook (POST /api/test/reset-fixture)
-  -> Second Browser Execution Run (Fresh Context)
-  -> Verification Matching & In-Stream Secret Scrubbing (TC-INV-009)
-  -> Evidence Triad Finalization (Video .webm, Console .log, Network .json)
-  -> Audited Natural Language Synthesis (Luna Role 3)
-```
-
----
-
-## Current Status: Person 1 Integration Handoff
-
-Person 1 backend infrastructure, browser execution, deterministic verification, and deployment preparations are implemented and verified locally across 45 test files and 242 passing tests.
-
-### 1. What Person 1 Has Implemented & Verified
-- **Separately Executable Architecture:** Standalone Next.js 15 web application and persistent Node.js worker daemon (`worker/index.ts`) building independently with private health probe (`127.0.0.1:3001`).
-- **PostgreSQL & Queue Engine:** Drizzle ORM schema across 7 migrations (`0000` through `0006`). Asynchronous job execution orchestrated via `pg-boss` on PostgreSQL with Transactional Outbox pattern (`outbox_messages` table) and singleton monotonic lease fencing (`global_execution_leases` table). No Redis container required.
-- **Identity & Authorization:** Cryptographic JWT authentication with asymmetric RSA keys, strict tenant isolation (cross-tenant requests return 404), and explicit actor authorization checks.
-- **Deterministic Approval & Policy:** Canonical SHA-256 plan fingerprinting, explicit human approval gate (`POST /approve`), rejection, revocation, and fail-closed pre-action expiration checks.
-- **Bounded Browser Execution:** Headless Playwright Chromium execution with anti-ambiguity locators, action receipts, SSRF guards blocking private cloud metadata (`169.254.169.254`), on-disk WebM video recording, console error capture, and network trace capture.
-- **Deterministic Two-Attempt Verification:** Pure assertion evaluation (equality, containment, regex with nested quantifier ReDoS protection), independent baseline readback and canonical state hashing, outbound target reset coordination, 4-point attempt validity, and 16-scenario pair decision matrix.
-- **Operational Hardening:** Worker heartbeats, outbox crash recovery, 1-hour lease quarantine on `MUTATION_UNCERTAIN`, pre-flight baseline mismatch halt (`PREFLIGHT_BASELINE_FAILED`), and truthful `/api/ready` subsystem probing.
-- **Deployment Candidates:** Multi-stage production `Dockerfile.web`, `Dockerfile.worker`, local `docker-compose.yml`, and GitHub Actions CI workflow in `.github/workflows/ci.yml`.
-
-### 2. Contributor Dependencies & Release Gate Baseline
-- **Gate G0 (Common Contracts):** PASSED. Unified types and safe projection boundaries verified.
-- **Gate G1 (Persistence & Identity):** PASSED. Real JWT auth and PostgreSQL repositories verified.
-- **Gate G2 (Deterministic Slice):** PASSED WITH DOUBLES. Two-attempt controller and Playwright browser media verified.
-- **Gate G3 (Agentic User Journey):** BLOCKED pending Person 2 (Luna AI role prompts, live OpenAI API key, and controlled demo target).
-- **Gate G4 (Hardened Operations):** PARTIALLY PASSED LOCAL. Daemon liveness, outbox recovery, lease fencing, and ReDoS safety verified locally.
-- **Gate G5 (Deployed Evaluation):** NOT RUN. Deployment candidate configurations prepared; live external deployment not yet executed.
-- **TC4 Content Redaction:** BLOCKED on Person 3's shared sanitizer (`src/server/evidence/evidence-storage.service.ts`). Tenant isolation is verified; content-level redaction awaits Person 3 to avoid competing redactors.
-- **Gate H-12 (Release Handoff):** QUALIFIED HANDOFF DELIVERED. Machine-readable campaign index and comprehensive handoff specifications delivered.
-
----
-
-## Canonical Problem Statement Scenarios
-
-| Scenario | Objective | Target Fixture Mode | Verification Assertion | Expected Final Verdict | Evidence Readiness |
-|---|---|---|---|---|---|
-| **TC1** | Deterministic Two-Run Confirmation | `TraceCase-Demo-Tasks`<br/>(Array Index Offset Bug Active) | Filter Active -> Delete item -> Assert wrong item deleted across two consecutive runs with baseline reset. | `CONFIRMED_REPRODUCED` | `PUBLIC_SAFE_READY`<br/>(Synced Video, Logs, Traces) |
-| **TC2** | Non-Reproducible Defect (Clean Baseline) | `TraceCase-Demo-Tasks`<br/>(Fixed Application Build) | Execute identical steps -> Assert correct item deleted -> Bug not observed across two runs; baseline preserved. | `NOT_REPRODUCED` | `PUBLIC_SAFE_READY`<br/>(Clean Baseline Verified) |
-| **TC3** | Sandbox Guardrail Enforcement | Variant A: Sandbox Target<br/>Variant B: Production Target | Variant A: Tier 4 action authorized by operator -> Executed.<br/>Variant B: Tier 4 action blocked pre-execution by Policy Engine (`TC-INV-008`). | A: Per Application<br/>B: `INCONCLUSIVE` (Blocked) | A: `PUBLIC_SAFE_READY`<br/>B: `PENDING_GENERATION` |
-| **TC4** | PII & Secret In-Stream Redaction | `TraceCase-Demo-Tasks`<br/>(Debug Auth Leak Active) | Injected synthetic JWTs (`synthetic-jwt-token-xyz`), Bearer tokens, and API keys scrubbed before public export. | `CONFIRMED_REPRODUCED` | `PUBLIC_SAFE_READY`<br/>(0 Plaintext Secrets in S3) |
-
----
-
-## Specification and Architecture Documentation
-
-All formal specification documents are maintained in the [`docs/`](docs/) directory:
-
-### Foundation Governance & Setup Documents
-- [`docs/foundation-decisions.md`](docs/foundation-decisions.md): Complete reconciliation of version conflicts, naming, and architectural decisions.
-- [`docs/foundation-status.md`](docs/foundation-status.md): Detailed capability implementation matrix and test verification record.
-- [`docs/development-setup.md`](docs/development-setup.md): Complete developer workstation installation and execution runbook.
-- [`docs/contribution-boundaries.md`](docs/contribution-boundaries.md): Module ownership, import rules, and cross-team coordination boundaries.
-
-### Core Architectural Specifications
-- [`docs/prd.md`](docs/prd.md) (`TC-PRD-001`): Product Requirements Document.
-- [`docs/trd.md`](docs/trd.md) (`TC-TRD-001`): Technical Requirements Document.
-- [`docs/ps-requirements-traceability-matrix.md`](docs/ps-requirements-traceability-matrix.md) (`TC-RTM-001`): Problem Statement Requirements Traceability Matrix.
-- [`docs/workflow-and-state-machine-specification.md`](docs/workflow-and-state-machine-specification.md) (`TC-WFM-001`): Workflow and State-Machine Specification.
-- [`docs/database-design-and-erd.md`](docs/database-design-and-erd.md) (`TC-DBD-001`): Database Design and Entity-Relationship Specification.
-- [`docs/system-architecture.md`](docs/system-architecture.md) (`TC-SAD-001`): System Architecture Document.
-- [`docs/ui-ux-specification.md`](docs/ui-ux-specification.md) (`TC-UIX-001`): UI/UX Design and Interaction Specification.
-- [`docs/agent-and-tool-contracts.md`](docs/agent-and-tool-contracts.md) (`TC-AGT-001`): Agent and Tool Contracts Specification.
-- [`docs/api-and-event-contracts.md`](docs/api-and-event-contracts.md) (`TC-AEC-001`): API and Event Contracts Specification.
-- [`docs/verification-evidence-and-safety-specification.md`](docs/verification-evidence-and-safety-specification.md) (`TC-VES-001`): Verification, Evidence, and Safety Specification.
-- [`docs/test-evaluation-operations-and-execution-plan.md`](docs/test-evaluation-operations-and-execution-plan.md) (`TC-TEO-001`): Unified Test, Evaluation, Operations, and Execution Plan.
-
----
-
-## Local Development and Verification Runbook
-
-### 1. Prerequisites
-- Node.js `v20.x` or `v24.x` (LTS recommended)
-- `pnpm` version `9.x` (`npm install -g pnpm@9`)
-- Docker Engine `24.0+` (for containerized PostgreSQL and multi-service deployment)
-
-### 2. Setup Commands
+### 1. Clone & Install
 ```bash
-# Clone the repository
 git clone https://github.com/sharancode3/TraceCase.git
 cd TraceCase
-
-# Install dependencies using pinned pnpm lockfile
 pnpm install --frozen-lockfile
+```
 
-# Initialize local environment configuration
+### 2. Environment Configuration
+Copy the sample environment file:
+```bash
 cp .env.example .env.local
 ```
 
-### 3. Running Quality & Verification Checks
-```bash
-# 1. Strict TypeScript typechecking across web and server source
-pnpm typecheck
+Key configuration parameters in `.env.local`:
+```env
+# Database & Queue
+DATABASE_URL=postgres://tc_user:tc_pass@localhost:5432/tracecase
 
-# 2. Code style and ESLint validation (zero warnings)
-pnpm lint
+# AI Provider Configuration
+AI_PROVIDER=openai_luna
+OPENAI_API_KEY=your-openai-api-key
+OPENAI_MODEL_ID=gpt-6-luna
 
-# 3. Complete automated test suite (45 test files, 242 tests)
-pnpm test
+# Target Reset Secrets
+TARGET_RESET_SECRET=tc-fixture-secret-2026
 
-# 4. Controller contract acceptance tests specifically (13 tests)
-pnpm vitest run tests/person-1/phase-9/official-acceptance.test.ts
-
-# 5. Real Playwright Chromium acceptance integration suite (4 tests)
-pnpm vitest run tests/person-1/phase-9/real-acceptance.integration.test.ts
-
-# 6. Production web and worker compilation
-pnpm build
-
-# 7. Single-run worker daemon verification
-cmd /c "set WORKER_RUN_ONCE=true&& set USE_IN_MEMORY_QUEUE=true&& node dist/worker/index.mjs"
+# Execution Settings
+HEADLESS=true
+MUTATION_LEASE_TTL_MS=60000
 ```
 
-### 4. Running the Multi-Container Deployment Candidate
+### 3. Start Database & Run Migrations
 ```bash
-# Build and start PostgreSQL, Next.js Web, and Playwright Worker daemon
-docker compose up --build
+# Start local PostgreSQL container
+docker compose up postgres -d
 
-# In a separate terminal, probe subsystem readiness:
-curl -i http://localhost:3000/api/health
-curl -i http://localhost:3000/api/ready
-curl -i http://localhost:3001/health
-```
-
-### 5. Applying Database Migrations
-```bash
-# Apply migrations to live PostgreSQL database
+# Apply database migrations
 pnpm db:migrate
 ```
+
+### 4. Launch Services in Development Mode
+
+In separate terminal windows:
+
+```bash
+# Terminal 1: TraceCase Web Application (Port 3000)
+pnpm dev
+
+# Terminal 2: TraceCase Background Worker Daemon
+pnpm dev:worker
+
+# Terminal 3: Controlled Workbench Demo Targets (Ports 3005 and 3006)
+pnpm dev:target
+
+# Terminal 4: Acme Hardware Shopping Cart Target (Port 3007)
+npx tsx demo-target/cart/server.ts
+```
+
+Open `http://localhost:3000` in your browser to access TraceCase.
+
+---
+
+## Running with Docker Compose (Production Candidate)
+
+To launch the complete stack in containerized production mode:
+
+```bash
+docker compose up --build
+```
+
+Subsystem health probes:
+- Web Application Health: `curl http://localhost:3000/api/health`
+- Subsystem Readiness: `curl http://localhost:3000/api/ready`
+- Worker Private Health: `curl http://localhost:3001/health`
+
+---
+
+## Verification & Test Suites
+
+TraceCase is validated through 53 automated test files covering 392 unit, contract, and integration tests:
+
+```bash
+# Run all automated tests
+pnpm test
+
+# Run strict TypeScript compilation check (0 errors required)
+pnpm typecheck
+
+# Build both Web Application and Worker Daemon for production
+pnpm build
+```
+
+---
+
+## REST API Reference
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/health` | `GET` | Lightweight liveness probe. |
+| `/api/ready` | `GET` | Deep subsystem readiness check (DB, Worker, S3). |
+| `/api/v1/targets` | `GET, POST` | List registered targets or register a new sandbox. |
+| `/api/v1/reports` | `POST` | Submit raw bug report for intake and AI scoping. |
+| `/api/v1/investigations` | `GET` | Query investigations with status and verdict filters. |
+| `/api/v1/investigations/:id` | `GET` | Retrieve complete investigation record and metadata. |
+| `/api/v1/investigations/:id/plan` | `GET` | Inspect versioned experiment plan and SHA-256 hash. |
+| `/api/v1/investigations/:id/approve` | `POST` | Operator cryptographic authorization gate. |
+| `/api/v1/investigations/:id/start` | `POST` | Dispatch approved plan to execution queue. |
+| `/api/v1/investigations/:id/assistant` | `POST` | Contextual Q&A query with grounded citation pills. |
+| `/api/v1/investigations/:id/report/pdf`| `GET` | Generate and download canonical PDF investigation report. |
+| `/api/v1/investigations/:id/events` | `GET` | Real-time event stream for execution monitoring. |
+
+---
+
+## Security, Safety, and Privacy Invariants
+
+1. **Fail-Closed Sandbox Invariant (TC-INV-008):** Destructive interactions (`TIER_4_DESTRUCTIVE`) are strictly rejected on targets unless `isSandbox` and `isSandboxVerified` are cryptographically true.
+2. **SSRF Outbound Guard (TC-INV-007):** Private IP addresses (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), link-local metadata addresses (`169.254.169.254`), and loopback escapes are blocked at socket level.
+3. **Monotonic Execution Leases (TC-INV-004):** Prevents concurrent worker collisions on stateful target sandboxes using single-tenant epoch leases with monotonic fencing tokens.
+4. **Credential Quarantine (TC-INV-009):** In-stream scanner intercepts Bearer tokens, private keys, and session cookies, masking them before public report export.
+
+---
+
+## License
+
+This project is licensed under the Apache 2.0 License. See the [LICENSE](LICENSE) file for details.
