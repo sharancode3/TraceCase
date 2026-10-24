@@ -42,6 +42,19 @@ const ServerEnvSchema = z.object({
     return Boolean(val);
   }, z.boolean()).default(false),
 
+  // Deployment Role & Boundary Configuration
+  APP_ROLE: z.enum(['frontend', 'backend', 'worker', 'all']).default('all'),
+  BACKEND_API_URL: z.string().url().optional(),
+
+  // Storage Driver Selection ('disk' | 's3' | 'memory')
+  STORAGE_DRIVER: z.enum(['disk', 's3', 'memory']).default('disk'),
+
+  // Trusted Target Services (for Cloud evaluation sandboxes)
+  WORKBENCH_TARGET_URL: z.string().url().optional(),
+  CART_TARGET_URL: z.string().url().optional(),
+  TRUSTED_TARGET_ORIGINS: z.string().optional(),
+  CART_RESET_SECRET: z.string().optional(),
+
   // Safety & Guardrail Settings
   POLICY_ENFORCE_SANDBOX: z.preprocess((val) => {
     if (typeof val === 'string') return val.toLowerCase() === 'true';

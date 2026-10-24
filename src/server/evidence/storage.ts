@@ -12,7 +12,7 @@
  * - S3-compatible driver contract matching existing server environment config
  */
 
-import { createHash, timingSafeEqual, randomUUID } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { StorageTier, ArtifactKind } from '@/contracts/evidence';
@@ -592,17 +592,255 @@ export function getS3StorageConfig(): S3CompatibleStorageConfig {
   };
 }
 
+/**
+ * Operational S3-compatible object storage driver implementing AWS Signature Version 4 (SigV4).
+ * Supports AWS S3, Cloudflare R2, MinIO, Wasabi, and DigitalOcean Spaces without external SDK dependencies.
+ *
+ * Implements strict dual-bucket isolation:
+ * - RESTRICTED_RAW stored in S3_BUCKET_RESTRICTED
+ * - PUBLIC_SAFE stored in S3_BUCKET_PUBLIC
+ * - Path traversal validation on all storage keys
+ * - Cryptographic SHA-256 integrity computation and byte accounting
+ */
+export class S3EvidenceStorageDriver implements EvidenceStorageDriver {
+  private readonly config: S3CompatibleStorageConfig;
+
+  constructor(config?: Partial<S3CompatibleStorageConfig>) {
+    const defaultConfig = getS3StorageConfig();
+    this.config = {
+      endpoint: config?.endpoint || defaultConfig.endpoint,
+      region: config?.region || defaultConfig.region || 'us-east-1',
+      accessKey: config?.accessKey || defaultConfig.accessKey,
+      secretKey: config?.secretKey || defaultConfig.secretKey,
+      publicBucket: config?.publicBucket || defaultConfig.publicBucket,
+      restrictedBucket: config?.restrictedBucket || defaultConfig.restrictedBucket,
+    };
+  }
+
+  private getBucketName(tier: StorageTier): string {
+    return tier === 'RESTRICTED_RAW' ? this.config.restrictedBucket : this.config.publicBucket;
+  }
+
+  private buildUrl(tier: StorageTier, key: string): URL {
+    const bucket = this.getBucketName(tier);
+    const base = this.config.endpoint.replace(/\/+$/, '');
+    return new URL(`${base}/${bucket}/${key}`);
+  }
+
+  private getSigV4Headers(
+    method: string,
+    url: URL,
+    payloadSha256: string,
+    contentType?: string
+  ): Record<string, string> {
+    const now = new Date();
+    const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
+    const dateStamp = amzDate.slice(0, 8);
+
+    const headers: Record<string, string> = {
+      host: url.host,
+      'x-amz-date': amzDate,
+      'x-amz-content-sha256': payloadSha256,
+    };
+    if (contentType) {
+      headers['content-type'] = contentType;
+    }
+
+    const signedHeaderKeys = Object.keys(headers).sort();
+    const signedHeaders = signedHeaderKeys.join(';');
+    const canonicalHeaders = signedHeaderKeys.map((k) => `${k}:${headers[k]}\n`).join('');
+
+    const canonicalRequest = [
+      method,
+      url.pathname,
+      url.searchParams.toString(),
+      canonicalHeaders,
+      signedHeaders,
+      payloadSha256,
+    ].join('\n');
+
+    const canonicalRequestHash = createHash('sha256').update(canonicalRequest).digest('hex');
+    const credentialScope = `${dateStamp}/${this.config.region}/s3/aws4_request`;
+    const stringToSign = [
+      'AWS4-HMAC-SHA256',
+      amzDate,
+      credentialScope,
+      canonicalRequestHash,
+    ].join('\n');
+
+    const kDate = createHmac('sha256', `AWS4${this.config.secretKey}`).update(dateStamp).digest();
+    const kRegion = createHmac('sha256', kDate).update(this.config.region).digest();
+    const kService = createHmac('sha256', kRegion).update('s3').digest();
+    const kSigning = createHmac('sha256', kService).update('aws4_request').digest();
+    const signature = createHmac('sha256', kSigning).update(stringToSign).digest('hex');
+
+    headers['authorization'] = `AWS4-HMAC-SHA256 Credential=${this.config.accessKey}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+    return headers;
+  }
+
+  async putArtifact(options: PutArtifactOptions): Promise<StoredArtifactRecord> {
+    const { key, tier, data, mimeType, allowOverwrite = false } = options;
+    validateStorageKey(key);
+
+    if (!allowOverwrite) {
+      const exists = await this.hasArtifact(key, tier);
+      if (exists) {
+        throw new ArtifactCollisionError(key, tier);
+      }
+    }
+
+    let bufferData: Buffer;
+    if (Buffer.isBuffer(data)) {
+      bufferData = Buffer.from(data);
+    } else if (typeof data === 'string') {
+      bufferData = Buffer.from(data, 'utf8');
+    } else {
+      bufferData = Buffer.from(data);
+    }
+
+    const { sha256Checksum, byteSize } = computeSha256(bufferData);
+    const url = this.buildUrl(tier, key);
+    const headers = this.getSigV4Headers('PUT', url, sha256Checksum, mimeType);
+
+    const res = await fetch(url.toString(), {
+      method: 'PUT',
+      headers,
+      body: new Uint8Array(bufferData),
+    });
+
+    if (!res.ok) {
+      throw new Error(`[S3 Storage] Failed to put artifact "${key}" (${res.status} ${res.statusText})`);
+    }
+
+    return {
+      key,
+      tier,
+      bucket: this.getBucketName(tier),
+      data: bufferData,
+      mimeType,
+      byteSize,
+      sha256Checksum,
+      storedAt: new Date().toISOString(),
+    };
+  }
+
+  async getArtifact(key: string, tier: StorageTier): Promise<GetArtifactResult | null> {
+    validateStorageKey(key);
+    const url = this.buildUrl(tier, key);
+    const emptySha256 = createHash('sha256').update('').digest('hex');
+    const headers = this.getSigV4Headers('GET', url, emptySha256);
+
+    const res = await fetch(url.toString(), {
+      method: 'GET',
+      headers,
+    });
+
+    if (res.status === 404) {
+      return null;
+    }
+
+    if (!res.ok) {
+      throw new Error(`[S3 Storage] Failed to get artifact "${key}" (${res.status} ${res.statusText})`);
+    }
+
+    const arrayBuf = await res.arrayBuffer();
+    const data = Buffer.from(arrayBuf);
+    const mimeType = res.headers.get('content-type') || 'application/octet-stream';
+    const { sha256Checksum, byteSize } = computeSha256(data);
+
+    return {
+      key,
+      tier,
+      bucket: this.getBucketName(tier),
+      data,
+      mimeType,
+      byteSize,
+      sha256Checksum,
+      storedAt: res.headers.get('last-modified') || new Date().toISOString(),
+    };
+  }
+
+  async hasArtifact(key: string, tier: StorageTier): Promise<boolean> {
+    validateStorageKey(key);
+    const url = this.buildUrl(tier, key);
+    const emptySha256 = createHash('sha256').update('').digest('hex');
+    const headers = this.getSigV4Headers('HEAD', url, emptySha256);
+
+    const res = await fetch(url.toString(), {
+      method: 'HEAD',
+      headers,
+    });
+
+    if (res.status === 200) return true;
+    if (res.status === 404) return false;
+    return false;
+  }
+
+  async deleteArtifact(key: string, tier: StorageTier): Promise<boolean> {
+    validateStorageKey(key);
+    const url = this.buildUrl(tier, key);
+    const emptySha256 = createHash('sha256').update('').digest('hex');
+    const headers = this.getSigV4Headers('DELETE', url, emptySha256);
+
+    const res = await fetch(url.toString(), {
+      method: 'DELETE',
+      headers,
+    });
+
+    return res.ok || res.status === 404;
+  }
+
+  async listArtifacts(prefix: string, tier: StorageTier): Promise<string[]> {
+    const bucket = this.getBucketName(tier);
+    const base = this.config.endpoint.replace(/\/+$/, '');
+    const url = new URL(`${base}/${bucket}?list-type=2&prefix=${encodeURIComponent(prefix || '')}`);
+    const emptySha256 = createHash('sha256').update('').digest('hex');
+    const headers = this.getSigV4Headers('GET', url, emptySha256);
+
+    const res = await fetch(url.toString(), {
+      method: 'GET',
+      headers,
+    });
+
+    if (!res.ok) {
+      return [];
+    }
+
+    const xml = await res.text();
+    const keys: string[] = [];
+    const keyRegex = /<Key>([^<]+)<\/Key>/g;
+    let match: RegExpExecArray | null;
+    while ((match = keyRegex.exec(xml)) !== null) {
+      if (match[1]) {
+        keys.push(match[1]);
+      }
+    }
+    return keys.sort();
+  }
+}
+
 let defaultDriverInstance: EvidenceStorageDriver | null = null;
 
 /**
  * Returns the active evidence storage driver.
  * Uses persistent disk storage by default for multi-process cross-boundary persistence,
- * falling back to in-memory only when TRACECASE_FORCE_IN_MEMORY_STORAGE is set.
+ * falling back to in-memory only when TRACECASE_FORCE_IN_MEMORY_STORAGE is set,
+ * or S3 object storage when STORAGE_DRIVER is configured as 's3' or S3 credentials are provided.
  */
 export function getEvidenceStorageDriver(): EvidenceStorageDriver {
   if (!defaultDriverInstance) {
+    const driverType = process.env.STORAGE_DRIVER?.toLowerCase();
+    const hasS3Config = Boolean(
+      process.env.S3_ACCESS_KEY &&
+      process.env.S3_SECRET_KEY &&
+      process.env.S3_BUCKET_PUBLIC
+    );
+
     if (process.env.TRACECASE_FORCE_IN_MEMORY_STORAGE === 'true') {
       defaultDriverInstance = new InMemoryEvidenceStorageDriver();
+    } else if (driverType === 's3' || (hasS3Config && driverType !== 'disk')) {
+      defaultDriverInstance = new S3EvidenceStorageDriver();
     } else {
       defaultDriverInstance = new PersistentDiskEvidenceStorageDriver();
     }

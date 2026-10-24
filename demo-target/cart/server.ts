@@ -176,7 +176,10 @@ export function createCartServer(options?: {
   const port = options?.port || Number(process.env.PORT || process.env.CART_PORT || 3007);
   const bugMode = options?.bugMode ?? (process.env.DEMO_TARGET_BUG_MODE !== 'false');
   const buildVersion = options?.buildVersion || (bugMode ? 'cart-v1.0.0-buggy' : 'cart-v1.0.1-fixed');
-  const resetSecret = options?.resetSecret || process.env.TARGET_RESET_SECRET || process.env.DEMO_TARGET_RESET_SECRET || 'tc-fixture-secret-2026';
+  // Privileged reset secret: Missing, empty, or whitespace configuration in production
+  // disables privileged target operations (fails closed).
+  const rawSecret = options?.resetSecret || process.env.CART_RESET_SECRET || process.env.TARGET_RESET_SECRET || process.env.DEMO_TARGET_RESET_SECRET || (process.env.NODE_ENV === 'production' ? '' : 'tc-fixture-secret-2026');
+  const resetSecret = typeof rawSecret === 'string' ? rawSecret.trim() : '';
 
   const store = new CartStore(bugMode, buildVersion);
 
@@ -221,6 +224,9 @@ export function createCartServer(options?: {
     }
 
     const verifyResetAuth = (): boolean => {
+      if (!resetSecret || resetSecret.trim().length === 0) {
+        return false;
+      }
       const raw = req.headers['x-tracecase-reset-auth'] || req.headers['authorization'];
       if (!raw || typeof raw !== 'string') return false;
       const tok = raw.startsWith('Bearer ') ? raw.slice(7) : raw;
@@ -500,24 +506,42 @@ export function createCartServer(options?: {
       await refreshCartDom();
     } else if (action === 'toggle-mode') {
       const isBuggy = ${store.isBugMode()};
-      await fetch('/api/test/mode', {
+      const secret = prompt('Enter Privileged Reset Secret to switch mode:') || '';
+      if (!secret.trim()) {
+        alert('Action canceled: Privileged secret required.');
+        return;
+      }
+      const res = await fetch('/api/test/mode', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-TraceCase-Reset-Auth': '${resetSecret}',
+          'X-TraceCase-Reset-Auth': secret.trim(),
         },
         body: JSON.stringify({ bugMode: !isBuggy })
       });
+      if (!res.ok) {
+        alert('Privileged authorization failed.');
+        return;
+      }
       window.location.reload();
       return;
     } else if (action === 'reset-cart') {
-      await fetch('/api/test/reset-fixture', {
+      const secret = prompt('Enter Privileged Reset Secret to restore baseline:') || '';
+      if (!secret.trim()) {
+        alert('Action canceled: Privileged secret required.');
+        return;
+      }
+      const res = await fetch('/api/test/reset-fixture', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-TraceCase-Reset-Auth': '${resetSecret}',
+          'X-TraceCase-Reset-Auth': secret.trim(),
         }
       });
+      if (!res.ok) {
+        alert('Privileged authorization failed.');
+        return;
+      }
       window.location.reload();
       return;
     }
@@ -674,11 +698,18 @@ export function createCartServer(options?: {
   return { server, store, port };
 }
 
-// Start standalone server when executed directly
-if (require.main === module || process.argv[1]?.endsWith('cart/server.ts') || process.argv[1]?.endsWith('cart\\server.ts')) {
+// Start standalone server when executed directly via tsx or node .mjs bundle
+if (
+  require.main === module ||
+  process.argv[1]?.endsWith('cart/server.ts') ||
+  process.argv[1]?.endsWith('cart\\server.ts') ||
+  process.argv[1]?.endsWith('cart/server.mjs') ||
+  process.argv[1]?.endsWith('cart\\server.mjs')
+) {
   const { server, port, store } = createCartServer();
-  server.listen(port, () => {
+  const bindHost = process.env.HOST || '0.0.0.0';
+  server.listen(port, bindHost, () => {
     // eslint-disable-next-line no-console
-    console.log(`[TraceCase Cart Target] Listening on http://localhost:${port} (Build: ${store.getBuildVersion()})`);
+    console.log(`[TraceCase Cart Target] Listening on http://${bindHost}:${port} (Build: ${store.getBuildVersion()})`);
   });
 }

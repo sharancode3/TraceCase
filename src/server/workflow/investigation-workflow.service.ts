@@ -473,14 +473,27 @@ export class InvestigationWorkflowService {
       const now = new Date().toISOString();
 
       // Derive fixtureScope and expectedBaseline from target / proposal
+      const cartUrl = process.env.CART_TARGET_URL?.replace(/\/+$/, '').toLowerCase();
+      const workbenchUrl = process.env.WORKBENCH_TARGET_URL?.replace(/\/+$/, '').toLowerCase();
+      const targetBase = typeof target.baseUrl === 'string' ? target.baseUrl.toLowerCase() : '';
+
       const isWorkbench =
         Boolean((target as any).fixtureScope === 'workbench_work_items') ||
-        (typeof target.baseUrl === 'string' && target.baseUrl.includes('/workbench')) ||
+        (Boolean(workbenchUrl) && targetBase.startsWith(workbenchUrl!)) ||
+        targetBase.includes('/workbench') ||
         (proposal as any).fixtureScope === 'workbench_work_items';
+
+      const isCart =
+        !isWorkbench &&
+        (Boolean((target as any).fixtureScope === 'cart_baseline') ||
+         (Boolean(cartUrl) && targetBase.startsWith(cartUrl!)) ||
+         targetBase.includes('3007') ||
+         (Boolean(target.name) && /cart/i.test(target.name)) ||
+         (proposal as any).fixtureScope === 'cart_baseline');
 
       const fixtureScope = isWorkbench
         ? 'workbench_work_items'
-        : (target.baseUrl?.includes('3007') || (target.name && /cart/i.test(target.name)) ? 'cart_baseline' : ((target as any).fixtureScope || (proposal as any).fixtureScope || undefined));
+        : (isCart ? 'cart_baseline' : ((target as any).fixtureScope || (proposal as any).fixtureScope || undefined));
 
       const expectedBaseline = isWorkbench
         ? {
@@ -489,9 +502,9 @@ export class InvestigationWorkflowService {
             itemCount: 4,
             items: INITIAL_WORKBENCH_FIXTURE,
           }
-        : (target.baseUrl?.includes('3007') || (target.name && /cart/i.test(target.name)) ? {
+        : (isCart ? {
             fixtureScope: 'cart_baseline',
-            buildVersion: 'cart-v1.0.0-buggy',
+            buildVersion: (report as any)?.buildVersion || (report as any)?.targetBuildVersion || (inv as any)?.targetBuildVersion || (target as any)?.buildVersion || (proposal as any)?.buildVersion || (target.baseUrl?.includes('3008') || (target.name && /fixed/i.test(target.name)) ? 'cart-v1.0.1-fixed' : 'cart-v1.0.0-buggy'),
             cartItemsCount: 1,
             totalCents: 12000,
             items: [

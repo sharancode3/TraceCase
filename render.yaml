@@ -1,0 +1,154 @@
+services:
+  # 1. TraceCase Backend API & Chromium PDF Service
+  - type: web
+    name: tracecase-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile.web
+    plan: standard
+    region: oregon
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_ROLE
+        value: backend
+      - key: APP_URL
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tracecase-db
+          property: connectionString
+      - key: ENABLE_DEV_AUTH
+        value: "false"
+      - key: DEV_PREVIEW_MODE
+        value: "false"
+      - key: STORAGE_DRIVER
+        value: s3
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_REGION
+        value: us-east-1
+      - key: S3_ACCESS_KEY
+        sync: false
+      - key: S3_SECRET_KEY
+        sync: false
+      - key: S3_BUCKET_PUBLIC
+        value: tracecase-public-safe
+      - key: S3_BUCKET_RESTRICTED
+        value: tracecase-restricted-raw
+      - key: AI_PROVIDER
+        value: openai_luna
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL_ID
+        value: gpt-6-luna
+      - key: TARGET_RESET_SECRET
+        generateValue: true
+      - key: CART_RESET_SECRET
+        generateValue: true
+      - key: WORKBENCH_TARGET_URL
+        sync: false
+      - key: CART_TARGET_URL
+        sync: false
+      - key: TRUSTED_TARGET_ORIGINS
+        sync: false
+      - key: AUTH_ISSUER
+        sync: false
+      - key: AUTH_AUDIENCE
+        sync: false
+      - key: AUTH_JWKS_URI
+        sync: false
+
+  # 2. TraceCase Background Playwright Browser Worker
+  - type: worker
+    name: tracecase-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile.worker
+    plan: standard
+    region: oregon
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tracecase-db
+          property: connectionString
+      - key: WORKER_CONCURRENCY
+        value: "1"
+      - key: WORKER_HEARTBEAT_SEC
+        value: "10"
+      - key: STORAGE_DRIVER
+        value: s3
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_REGION
+        value: us-east-1
+      - key: S3_ACCESS_KEY
+        sync: false
+      - key: S3_SECRET_KEY
+        sync: false
+      - key: S3_BUCKET_PUBLIC
+        value: tracecase-public-safe
+      - key: S3_BUCKET_RESTRICTED
+        value: tracecase-restricted-raw
+      - key: TARGET_RESET_SECRET
+        fromService:
+          type: web
+          name: tracecase-api
+          envVarKey: TARGET_RESET_SECRET
+      - key: CART_RESET_SECRET
+        fromService:
+          type: web
+          name: tracecase-api
+          envVarKey: CART_RESET_SECRET
+
+  # 3. Controlled Workbench Target Service
+  - type: web
+    name: tracecase-target-workbench
+    runtime: node
+    plan: starter
+    region: oregon
+    buildCommand: pnpm install --frozen-lockfile && pnpm build:target:workbench
+    startCommand: pnpm start:target:workbench
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DEMO_TARGET_BUG_MODE
+        value: "true"
+      - key: DEMO_TARGET_BUILD_VERSION
+        value: wb-v1.0.0-buggy
+      - key: TARGET_RESET_SECRET
+        fromService:
+          type: web
+          name: tracecase-api
+          envVarKey: TARGET_RESET_SECRET
+
+  # 4. Controlled Acme Hardware Cart Target Service
+  - type: web
+    name: tracecase-target-cart
+    runtime: node
+    plan: starter
+    region: oregon
+    buildCommand: pnpm install --frozen-lockfile && pnpm build:target:cart
+    startCommand: pnpm start:target:cart
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DEMO_TARGET_BUG_MODE
+        value: "true"
+      - key: DEMO_TARGET_BUILD_VERSION
+        value: cart-v1.0.0-buggy
+      - key: CART_RESET_SECRET
+        fromService:
+          type: web
+          name: tracecase-api
+          envVarKey: CART_RESET_SECRET
+
+databases:
+  - name: tracecase-db
+    databaseName: tracecase
+    user: tc_user
+    plan: starter
+    region: oregon

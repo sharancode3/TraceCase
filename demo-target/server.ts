@@ -638,7 +638,7 @@ export function createDemoTargetServer(configOverride?: Partial<DemoTargetConfig
     server,
     store,
     config,
-    start: (port?: number, host: string = '127.0.0.1'): Promise<number> => {
+    start: (port?: number, host: string = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1')): Promise<number> => {
       const targetPort = port !== undefined ? port : config.port;
       return new Promise((resolve) => {
         server.listen(targetPort, host, () => {
@@ -659,11 +659,12 @@ export function createDemoTargetServer(configOverride?: Partial<DemoTargetConfig
   };
 }
 
-// Direct execution entrypoint when run via CLI: tsx demo-target/server.ts
-if (require.main === module || process.argv[1]?.endsWith('server.ts') || process.argv[1]?.endsWith('server.js')) {
+// Direct execution entrypoint when run via CLI: tsx demo-target/server.ts or node dist/demo-target/server.mjs
+if (require.main === module || process.argv[1]?.endsWith('server.ts') || process.argv[1]?.endsWith('server.js') || process.argv[1]?.endsWith('server.mjs')) {
   const instance = createDemoTargetServer();
-  instance.start().then((port) => {
+  const bindHost = process.env.HOST || '0.0.0.0';
+  instance.start(instance.config.port, bindHost).then((port) => {
     // eslint-disable-next-line no-console
-    console.log(`[TraceCase-Demo-Tasks] Running on http://localhost:${port} (Build: ${instance.config.buildVersion})`);
+    console.log(`[TraceCase-Demo-Tasks] Running on http://${bindHost}:${port} (Build: ${instance.config.buildVersion})`);
   });
 }

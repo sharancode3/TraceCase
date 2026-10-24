@@ -39,22 +39,99 @@ export interface StoredAccessGrant {
   expiresAt: Date;
 }
 
-// In-memory grant registry for time-limited authorized artifact downloads
+// In-memory grant registry for fast zero-overhead local lookup
 const accessGrantRegistry = new Map<string, StoredAccessGrant>();
+
+function getGrantSigningSecret(): string {
+  return (
+    process.env.AUTH_SECRET ||
+    process.env.JWT_SECRET ||
+    process.env.TARGET_RESET_SECRET ||
+    'tc-internal-grant-signing-secret-2026'
+  );
+}
+
+/**
+ * Creates a cryptographically signed, stateless access grant token that survives
+ * process restarts and can be authoritatively verified by any backend API instance.
+ */
+export function createSignedGrantId(grant: {
+  artifactId: string;
+  investigationId?: string;
+  authorizedUserId: string;
+  storageTier: StorageTier;
+  expiresAt: Date;
+  grantId?: string;
+}): string {
+  const baseId = grant.grantId || crypto.randomUUID();
+  const payload = JSON.stringify({
+    g: baseId,
+    a: grant.artifactId,
+    i: grant.investigationId || '',
+    u: grant.authorizedUserId,
+    t: grant.storageTier,
+    e: grant.expiresAt.getTime(),
+  });
+  const b64 = Buffer.from(payload, 'utf8').toString('base64url');
+  const hmac = crypto.createHmac('sha256', getGrantSigningSecret()).update(b64).digest('hex');
+  return `${b64}.${hmac}`;
+}
 
 export function storeAccessGrant(grant: StoredAccessGrant): void {
   accessGrantRegistry.set(grant.grantId, grant);
 }
 
 export function verifyAccessGrant(grantId: string, artifactId: string): StoredAccessGrant | null {
-  const grant = accessGrantRegistry.get(grantId);
-  if (!grant) return null;
-  if (grant.artifactId !== artifactId) return null;
-  if (Date.now() > grant.expiresAt.getTime()) {
-    accessGrantRegistry.delete(grantId);
-    return null;
+  // 1. Fast path: in-memory cache lookup
+  const cached = accessGrantRegistry.get(grantId);
+  if (cached) {
+    if (cached.artifactId !== artifactId) return null;
+    if (Date.now() > cached.expiresAt.getTime()) {
+      accessGrantRegistry.delete(grantId);
+      return null;
+    }
+    return cached;
   }
-  return grant;
+
+  // 2. Stateless cryptographic token verification (multi-process / post-restart durability)
+  if (typeof grantId === 'string' && grantId.includes('.')) {
+    const [b64, signature] = grantId.split('.');
+    if (!b64 || !signature) return null;
+
+    try {
+      const expectedHmac = crypto.createHmac('sha256', getGrantSigningSecret()).update(b64).digest('hex');
+      const sigBuf = Buffer.from(signature);
+      const expBuf = Buffer.from(expectedHmac);
+
+      if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+        return null;
+      }
+
+      const decoded = JSON.parse(Buffer.from(b64, 'base64url').toString('utf8'));
+      if (!decoded || typeof decoded !== 'object') return null;
+
+      const { a, i, u, t, e } = decoded as { a: string; i?: string; u: string; t: StorageTier; e: number };
+      if (a !== artifactId) return null;
+      if (typeof e !== 'number' || Date.now() > e) return null;
+
+      const grant: StoredAccessGrant = {
+        grantId,
+        artifactId: a,
+        investigationId: i || undefined,
+        authorizedUserId: u,
+        storageTier: t,
+        expiresAt: new Date(e),
+      };
+
+      // Populate fast cache for subsequent requests
+      accessGrantRegistry.set(grantId, grant);
+      return grant;
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
 }
 
 export function clearAccessGrants(): void {
@@ -655,7 +732,6 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
     userId: string;
     tier: string;
   }): Promise<ArtifactAccessGrant> {
-    const grantId = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15-minute expiration
     const requestedTier: StorageTier = params.tier === 'PUBLIC_SAFE' ? 'PUBLIC_SAFE' : 'RESTRICTED_RAW';
 
@@ -680,6 +756,14 @@ export class IntegratedEvidenceStorageAdapter implements EvidenceStoragePort {
         if (err instanceof Error && err.message.includes('PUBLIC_SAFE')) throw err;
       }
     }
+
+    const grantId = createSignedGrantId({
+      artifactId: params.artifactId,
+      investigationId,
+      authorizedUserId: params.userId,
+      storageTier: requestedTier,
+      expiresAt,
+    });
 
     storeAccessGrant({
       grantId,

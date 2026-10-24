@@ -14,7 +14,7 @@ export type WorkerConfig = z.infer<typeof WorkerConfigSchema>;
 
 export function getWorkerConfig(): WorkerConfig {
   return WorkerConfigSchema.parse({
-    port: process.env.WORKER_PORT,
+    port: process.env.WORKER_PORT || process.env.PORT,
     concurrency: 1,
     databaseUrl: process.env.DATABASE_URL,
     heartbeatSec: process.env.WORKER_HEARTBEAT_SEC,

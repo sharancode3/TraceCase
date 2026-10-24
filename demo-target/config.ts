@@ -45,7 +45,7 @@ export function loadDemoTargetConfig(overrides?: Partial<DemoTargetConfig>): Dem
         : isSandbox;
 
   return {
-    port: overrides?.port ?? parseInt(process.env.DEMO_TARGET_PORT || '3005', 10),
+    port: overrides?.port ?? parseInt(process.env.PORT || process.env.DEMO_TARGET_PORT || '3005', 10),
     bugModeActive,
     buildVersion,
     resetSecret,

@@ -10,6 +10,22 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: false,
   },
+  async rewrites() {
+    const backendUrl = process.env.BACKEND_API_URL?.replace(/\/+$/, '');
+    if (backendUrl) {
+      return {
+        beforeFiles: [
+          {
+            source: '/api/:path*',
+            destination: `${backendUrl}/api/:path*`,
+          },
+        ],
+        afterFiles: [],
+        fallback: [],
+      };
+    }
+    return [];
+  },
 };
 
 export default nextConfig;

@@ -47,7 +47,8 @@ async function readBoundedResponseBody(
 
 function resolveTargetApiUrl(baseUrl: string, endpointPath: string): string {
   try {
-    return new URL(endpointPath, baseUrl).toString();
+    const origin = new URL(baseUrl).origin;
+    return new URL(endpointPath, origin).toString();
   } catch {
     return `${baseUrl.replace(/\/+$/, '')}${endpointPath}`;
   }

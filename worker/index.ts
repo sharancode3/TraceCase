@@ -83,7 +83,7 @@ export async function bootstrapWorker(
     res.end();
   });
 
-  server.listen(listenPort, () => {
+  server.listen(listenPort, '0.0.0.0', () => {
     const address = server.address();
     const actualPort = typeof address === 'object' && address ? address.port : listenPort;
     console.log(`[TraceCase Worker] Health probe listening on port ${actualPort} (/health)`);

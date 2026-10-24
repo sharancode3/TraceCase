@@ -238,7 +238,7 @@ export class TwoAttemptController {
       const targetSecretRef = (target as Record<string, unknown>).fixtureResetAuthSecretRef as string | undefined;
       const resolvedSecret = targetSecretRef
         ? (targetSecretRef.startsWith('env:') ? process.env[targetSecretRef.slice(4)] : process.env[targetSecretRef] || targetSecretRef)
-        : undefined;
+        : (process.env.TARGET_RESET_SECRET || undefined);
 
       const planBaseline = ((plan as unknown as Record<string, unknown>).expectedBaseline as Record<string, unknown>) || {};
       let baselineForComparison = { ...planBaseline };

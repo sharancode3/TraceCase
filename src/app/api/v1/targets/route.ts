@@ -84,16 +84,62 @@ export async function POST(req: NextRequest) {
     // Live mode: requires authenticated principal and real persistence
     const principal = await requireAuthenticatedPrincipal(req);
 
-    // In local development, non-production sandbox requests are verified
+    // Check server environment for explicitly trusted evaluation targets
+    const { getServerEnv } = await import('@/server/config/env');
+    const serverEnv = getServerEnv();
+    const trustedOrigins = new Set<string>();
+    if (serverEnv.TRUSTED_TARGET_ORIGINS) {
+      serverEnv.TRUSTED_TARGET_ORIGINS.split(',').forEach((o) => {
+        const tr = o.trim().toLowerCase();
+        if (tr) trustedOrigins.add(tr);
+      });
+    }
+    if (serverEnv.WORKBENCH_TARGET_URL) {
+      try { trustedOrigins.add(new URL(serverEnv.WORKBENCH_TARGET_URL).origin.toLowerCase()); } catch {}
+    }
+    if (serverEnv.CART_TARGET_URL) {
+      try { trustedOrigins.add(new URL(serverEnv.CART_TARGET_URL).origin.toLowerCase()); } catch {}
+    }
+
+    const isExplicitlyTrustedOrigin = trustedOrigins.has(urlCheck.normalizedOrigin.toLowerCase());
     const isLocalDev = process.env.NODE_ENV === 'development' || process.env.DEV_PREVIEW_MODE === 'true';
+    const isLocalDemo = urlCheck.normalizedOrigin.includes('3005') || urlCheck.normalizedOrigin.includes('3006') || urlCheck.normalizedOrigin.includes('3007') || urlCheck.normalizedOrigin.includes('localhost');
     const isProduction = parsed.data.environment === 'production';
     const isSandboxRequested = Boolean(parsed.data.isSandboxRequested);
-    const isSandboxVerified = isSandboxRequested && !isProduction && isLocalDev;
+    const isSandboxVerified = isSandboxRequested && !isProduction && (isLocalDev || isExplicitlyTrustedOrigin);
 
-    // For local targets on localhost / port 3005, auto-link reset endpoint and secret if not explicitly provided
-    const isLocalDemo = urlCheck.normalizedOrigin.includes('3005') || urlCheck.normalizedOrigin.includes('3006') || urlCheck.normalizedOrigin.includes('localhost');
-    const defaultResetEndpoint = isLocalDemo ? `${urlCheck.normalizedOrigin}/api/test/reset-fixture` : null;
-    const defaultSecretRef = isLocalDemo ? 'env:TARGET_RESET_SECRET' : null;
+    // Identify Workbench vs Cart for default reset endpoint, scope, and secret ref
+    let isCartTarget = false;
+    if (serverEnv.CART_TARGET_URL) {
+      try { isCartTarget = urlCheck.normalizedOrigin.toLowerCase() === new URL(serverEnv.CART_TARGET_URL).origin.toLowerCase(); } catch {}
+    }
+    if (!isCartTarget) {
+      isCartTarget = Boolean(parsed.data.fixtureScope === 'cart_baseline') || urlCheck.normalizedOrigin.includes('3007') || /cart/i.test(parsed.data.name);
+    }
+
+    let isWorkbenchTarget = false;
+    if (serverEnv.WORKBENCH_TARGET_URL) {
+      try { isWorkbenchTarget = urlCheck.normalizedOrigin.toLowerCase() === new URL(serverEnv.WORKBENCH_TARGET_URL).origin.toLowerCase(); } catch {}
+    }
+    if (!isWorkbenchTarget) {
+      isWorkbenchTarget = Boolean(parsed.data.fixtureScope === 'workbench_work_items') || parsed.data.baseUrl.includes('/workbench') || urlCheck.normalizedOrigin.includes('3005') || urlCheck.normalizedOrigin.includes('3006');
+    }
+
+    let defaultResetEndpoint: string | null = null;
+    let defaultSecretRef: string | null = null;
+    let resolvedFixtureScope: string | null = parsed.data.fixtureScope || null;
+
+    if (isSandboxVerified || isLocalDemo || isExplicitlyTrustedOrigin) {
+      if (isCartTarget) {
+        defaultResetEndpoint = `${urlCheck.normalizedOrigin}/api/test/reset-fixture`;
+        defaultSecretRef = serverEnv.CART_RESET_SECRET ? 'env:CART_RESET_SECRET' : 'env:TARGET_RESET_SECRET';
+        resolvedFixtureScope = resolvedFixtureScope || 'cart_baseline';
+      } else if (isWorkbenchTarget) {
+        defaultResetEndpoint = `${urlCheck.normalizedOrigin}/api/test/reset-fixture`;
+        defaultSecretRef = 'env:TARGET_RESET_SECRET';
+        resolvedFixtureScope = resolvedFixtureScope || 'workbench_work_items';
+      }
+    }
 
     const created = await targetsRepository.createTarget({
       ownerId: principal.id,
@@ -111,7 +157,7 @@ export async function POST(req: NextRequest) {
 
     const safeTarget = projectSafeTargetProfile({
       ...(created as unknown as Record<string, unknown>),
-      fixtureScope: parsed.data.fixtureScope || (parsed.data.baseUrl.includes('/workbench') ? 'workbench_work_items' : undefined),
+      fixtureScope: resolvedFixtureScope,
     });
 
     return NextResponse.json(

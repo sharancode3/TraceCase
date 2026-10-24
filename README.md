@@ -385,9 +385,22 @@ pnpm test
 # Run strict TypeScript compilation check (0 errors required)
 pnpm typecheck
 
-# Build both Web Application and Worker Daemon for production
+# Build Web Application, Worker Daemon, and Target services for production
 pnpm build
 ```
+
+---
+
+## Production Deployment (Vercel & Render)
+
+TraceCase is architected for clean cloud separation between frontend and backend layers:
+
+- **Frontend (Vercel):** Next.js App Router UI with Edge Middleware and same-origin API proxy rewrites (`/api/*` forwarded to Render). Zero Chromium dependencies or worker processes on Vercel. Supports honest "Vercel first" deployment with structured `BACKEND_NOT_CONNECTED` handling until Render services are linked.
+- **Backend (Render):** Managed PostgreSQL database, containerized Node.js API service with server-side Chromium PDF generation, concurrency-1 Playwright background worker daemon, and two isolated controlled target services (`tracecase-target-workbench` and `tracecase-target-cart`).
+- **Shared Object Storage:** S3-compatible remote evidence storage driver (AWS S3 / Cloudflare R2 / MinIO) with cryptographic SigV4 signing, dual-bucket quarantine, and stateless signed access grants.
+
+For complete step-by-step instructions, environment variable matrix, and Render Blueprint configuration, see the authoritative runbook:
+**[docs/deployment/vercel-render-deployment.md](docs/deployment/vercel-render-deployment.md)**
 
 ---
 
