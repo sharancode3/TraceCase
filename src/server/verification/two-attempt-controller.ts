@@ -242,6 +242,9 @@ export class TwoAttemptController {
 
       const planBaseline = ((plan as unknown as Record<string, unknown>).expectedBaseline as Record<string, unknown>) || {};
       let baselineForComparison = { ...planBaseline };
+      delete (baselineForComparison as Record<string, unknown>).buildVersion;
+      delete (baselineForComparison as Record<string, unknown>).buildId;
+      delete (baselineForComparison as Record<string, unknown>).targetBuildId;
 
       // Pre-flight baseline verification for Attempt 1
       let att1PreconditionsMet = true;
@@ -482,12 +485,33 @@ export class TwoAttemptController {
       }))
     );
 
+    for (const receipt of attempt1Receipt.actionsExecuted) {
+      await eventsRepository.appendEvent({
+        investigationId: params.investigationId,
+        eventType: 'ACTION_EXECUTED',
+        message: `Attempt 1 Step ${receipt.stepIndex + 1}: ${receipt.action.toolKind} (${receipt.status})`,
+        payload: {
+          attemptNumber: 1,
+          stepIndex: receipt.stepIndex,
+          toolKind: receipt.action.toolKind,
+          semanticAction: receipt.action.semanticAction || receipt.action.rationale || receipt.action.toolKind,
+          selector: receipt.action.selector || receipt.action.elementRef,
+          status: receipt.status,
+          tier: receipt.tier,
+          durationMs: receipt.durationMs,
+          uncertainty: receipt.uncertainty,
+          dispatchedAt: receipt.dispatchedAt,
+          completedAt: receipt.completedAt,
+          errorDetails: receipt.errorDetails,
+        },
+      });
+    }
+
     await eventsRepository.appendEvent({
       investigationId: params.investigationId,
       eventType: 'ATTEMPT_COMPLETED',
       message: `Attempt 1 finished with finding: ${att1Assessment.finding} (${att1Assessment.validity}).`,
       payload: {
-        attemptNumber: 1,
         validity: att1Assessment.validity,
         finding: att1Assessment.finding,
         durationMs: attempt1Receipt.totalDurationMs,
@@ -704,12 +728,33 @@ export class TwoAttemptController {
       }))
     );
 
+    for (const receipt of attempt2Receipt.actionsExecuted) {
+      await eventsRepository.appendEvent({
+        investigationId: params.investigationId,
+        eventType: 'ACTION_EXECUTED',
+        message: `Attempt 2 Step ${receipt.stepIndex + 1}: ${receipt.action.toolKind} (${receipt.status})`,
+        payload: {
+          attemptNumber: 2,
+          stepIndex: receipt.stepIndex,
+          toolKind: receipt.action.toolKind,
+          semanticAction: receipt.action.semanticAction || receipt.action.rationale || receipt.action.toolKind,
+          selector: receipt.action.selector || receipt.action.elementRef,
+          status: receipt.status,
+          tier: receipt.tier,
+          durationMs: receipt.durationMs,
+          uncertainty: receipt.uncertainty,
+          dispatchedAt: receipt.dispatchedAt,
+          completedAt: receipt.completedAt,
+          errorDetails: receipt.errorDetails,
+        },
+      });
+    }
+
     await eventsRepository.appendEvent({
       investigationId: params.investigationId,
       eventType: 'ATTEMPT_COMPLETED',
       message: `Attempt 2 finished with finding: ${att2Assessment.finding} (${att2Assessment.validity}).`,
       payload: {
-        attemptNumber: 2,
         validity: att2Assessment.validity,
         finding: att2Assessment.finding,
         durationMs: attempt2Receipt.totalDurationMs,

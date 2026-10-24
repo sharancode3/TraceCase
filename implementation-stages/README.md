@@ -50,6 +50,7 @@ Before implementation, check the current versions of the [PRD](../docs/prd.md), 
 
 ## Integration and browser verification reports
 
+- [AI Results Assistant, Action Timeline, and Acme Cart Verification Report](integration/ai-results-assistant-action-timeline-and-cart-verification.md)
 - [User Journey, Reporting, and Second-Site Verification Report](integration/user-journey-reporting-and-second-site-verification.md)
 - [Visible Browser Acceptance & Usability Verification Report](integration/visible-browser-verification-report.md)
 - [Phase 2 Reliability, AI Integration, and Browser Verification Report](integration/phase-2-reliability-ai-and-browser-verification.md)

@@ -154,7 +154,18 @@ export type ClarificationQuestionProposal = z.infer<typeof ClarificationQuestion
 
 export const ProposedExperimentPlanStepSchema = z.object({
   stepNumber: z.number().int().min(1).max(15),
-  actionType: z.enum(['NAVIGATE', 'CLICK', 'FILL', 'SELECT', 'WAIT_FOR_SELECTOR']),
+  actionType: z.preprocess((val) => {
+    if (typeof val === 'string') {
+      const upper = val.toUpperCase();
+      if (upper === 'SET_INPUT' || upper === 'TYPE' || upper === 'INPUT' || upper === 'FILL_INPUT') return 'FILL';
+      if (upper === 'CLICK_BUTTON' || upper === 'CLICK_LINK' || upper === 'PRESS') return 'CLICK';
+      if (upper === 'GOTO' || upper === 'OPEN') return 'NAVIGATE';
+      if (upper === 'SELECT_OPTION') return 'SELECT';
+      if (upper === 'WAIT' || upper === 'WAIT_FOR') return 'WAIT_FOR_SELECTOR';
+      return upper;
+    }
+    return val;
+  }, z.enum(['NAVIGATE', 'CLICK', 'FILL', 'SELECT', 'WAIT_FOR_SELECTOR'])),
   intentDescription: z.string().min(5).max(200),
   targetRole: z.string().optional(),
   targetAccessibleName: z.string().optional(),
@@ -222,7 +233,18 @@ export const BrowserAgentInputSchema = z.object({
   approvedPlanHash: z.string().length(64),
   currentStep: z.object({
     stepNumber: z.number().int().positive(),
-    actionType: z.enum(['NAVIGATE', 'CLICK', 'FILL', 'SELECT', 'WAIT_FOR_SELECTOR']),
+    actionType: z.preprocess((val) => {
+    if (typeof val === 'string') {
+      const upper = val.toUpperCase();
+      if (upper === 'SET_INPUT' || upper === 'TYPE' || upper === 'INPUT' || upper === 'FILL_INPUT') return 'FILL';
+      if (upper === 'CLICK_BUTTON' || upper === 'CLICK_LINK' || upper === 'PRESS') return 'CLICK';
+      if (upper === 'GOTO' || upper === 'OPEN') return 'NAVIGATE';
+      if (upper === 'SELECT_OPTION') return 'SELECT';
+      if (upper === 'WAIT' || upper === 'WAIT_FOR') return 'WAIT_FOR_SELECTOR';
+      return upper;
+    }
+    return val;
+  }, z.enum(['NAVIGATE', 'CLICK', 'FILL', 'SELECT', 'WAIT_FOR_SELECTOR'])),
     intentDescription: z.string().max(200),
     targetDescription: z.string().max(200),
     approvedValue: z.string().max(500).optional(),
@@ -257,7 +279,18 @@ export const BrowserDecisionOutputSchema = z.discriminatedUnion('variant', [
     echoedStepNumber: z.number().int().positive(),
     echoedObservationId: z.string().uuid(),
     action: z.object({
-      actionType: z.enum(['NAVIGATE', 'CLICK', 'FILL', 'SELECT', 'WAIT_FOR_SELECTOR']),
+      actionType: z.preprocess((val) => {
+    if (typeof val === 'string') {
+      const upper = val.toUpperCase();
+      if (upper === 'SET_INPUT' || upper === 'TYPE' || upper === 'INPUT' || upper === 'FILL_INPUT') return 'FILL';
+      if (upper === 'CLICK_BUTTON' || upper === 'CLICK_LINK' || upper === 'PRESS') return 'CLICK';
+      if (upper === 'GOTO' || upper === 'OPEN') return 'NAVIGATE';
+      if (upper === 'SELECT_OPTION') return 'SELECT';
+      if (upper === 'WAIT' || upper === 'WAIT_FOR') return 'WAIT_FOR_SELECTOR';
+      return upper;
+    }
+    return val;
+  }, z.enum(['NAVIGATE', 'CLICK', 'FILL', 'SELECT', 'WAIT_FOR_SELECTOR'])),
       targetNodeId: z.string().regex(/^node_\d+$/).optional(),
       primarySelector: z.string().max(200),
       cssFallback: z.string().max(200).optional(),

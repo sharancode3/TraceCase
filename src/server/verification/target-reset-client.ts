@@ -305,9 +305,18 @@ export class TargetResetClient {
     }
 
     // 4. Compare observed readback against expected baseline
-    const volatileFields =
+    const declaredVolatiles =
       (params.expectedBaseline.volatileFields as string[] | undefined) ||
-      ((params.target as unknown as Record<string, unknown>).volatileFields as string[] | undefined);
+      ((params.target as unknown as Record<string, unknown>).volatileFields as string[] | undefined) ||
+      [];
+    const volatileFields = Array.from(
+      new Set([
+        ...declaredVolatiles,
+        ...(!('buildVersion' in params.expectedBaseline) ? ['buildVersion', 'buildversion'] : []),
+        ...(!('buildId' in params.expectedBaseline) ? ['buildId', 'buildid'] : []),
+        ...(!('targetBuildId' in params.expectedBaseline) ? ['targetBuildId', 'targetbuildid'] : []),
+      ])
+    );
 
     const comparison = BaselineComparator.compareBaselines(
       params.expectedBaseline,
@@ -477,9 +486,18 @@ export class TargetResetClient {
           : undefined) ||
         undefined;
 
-      const volatileFields =
+      const declaredVolatiles =
         (params.expectedBaseline.volatileFields as string[] | undefined) ||
-        ((params.target as unknown as Record<string, unknown>).volatileFields as string[] | undefined);
+        ((params.target as unknown as Record<string, unknown>).volatileFields as string[] | undefined) ||
+        [];
+      const volatileFields = Array.from(
+        new Set([
+          ...declaredVolatiles,
+          ...(!('buildVersion' in params.expectedBaseline) ? ['buildVersion', 'buildversion'] : []),
+          ...(!('buildId' in params.expectedBaseline) ? ['buildId', 'buildid'] : []),
+          ...(!('targetBuildId' in params.expectedBaseline) ? ['targetBuildId', 'targetbuildid'] : []),
+        ])
+      );
       const comparison = BaselineComparator.compareBaselines(
         params.expectedBaseline,
         observedBaseline,

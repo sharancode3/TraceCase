@@ -78,7 +78,11 @@ Every assertion in BOTH arrays MUST include:
 
 CRITICAL ASSERTION SELECTOR GROUNDING RULES:
 Only use standard valid selectors grounded in the actual web interface:
-- To locate items by visible text/title: 'li:has-text("Item Title")', ':has-text("Item Title")', 'button:has-text("...")'
+- SELECTORS MUST BE TAG-SCOPED (never use bare ':has-text(...)' without a tag prefix):
+  - For list items or work queue items: use 'li:has-text("Item Title")', '[data-item-id="..."]', '[data-task-id="..."]', or '#<item-id>'
+  - For table rows or cart items: use 'tr:has-text("Product Name")', '[data-cart-item-id="..."]', '#subtotal-<id>', or '[data-testid="item-subtotal"]'
+  - For buttons: use 'button:has-text("...")' or 'button[aria-label*="..."]'
+- NEVER use bare ':has-text("...")' without a tag prefix. Bare ':has-text()' matches all ancestor tags and causes ambiguity failures during initial witness checks.
 - To locate by stable verified attributes: '[data-item-id="..."]', '[data-task-id="..."]', '[id="..."]'
 - To locate cart totals or fields: '#cart-subtotal', '[data-testid="subtotal"]', ':has-text("$120.00")'
 NEVER INVENT NON-EXISTENT HTML ATTRIBUTES (such as '[data-work-item-name="..."]', '[data-task-name="..."]', '[data-card-title="..."]'). Invented attributes cause grounding failures.

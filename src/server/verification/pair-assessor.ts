@@ -157,7 +157,7 @@ export class PairAssessor {
       limitations.push('Neither expected behavior nor the reported failure was confirmed; ungrounded locator or unexpected outcome observed.');
       return {
         investigationId: params.investigationId,
-        verdict: 'INCONCLUSIVE',
+        verdict: 'INCONSISTENT_OBSERVATIONS',
         validAttemptCount,
         matchingAttemptCount,
         isComparable: true,

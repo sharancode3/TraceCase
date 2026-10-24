@@ -24,6 +24,10 @@ import {
   Lock,
   ArrowUpRight,
   RefreshCw,
+  MessageSquare,
+  Sparkles,
+  Clock,
+  Compass,
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -153,6 +157,58 @@ export default function InvestigationDetailPage() {
   const [isLoading, setIsLoading] = React.useState(true);
   const [notFound, setNotFound] = React.useState(false);
 
+  // Action events and timeline state
+  const [events, setEvents] = React.useState<any[]>([]);
+
+  // Investigation assistant state
+  const [assistantQuery, setAssistantQuery] = React.useState('');
+  const [assistantLoading, setAssistantLoading] = React.useState(false);
+  const [assistantMessages, setAssistantMessages] = React.useState<Array<{
+    role: 'user' | 'assistant';
+    text: string;
+    citations?: any[];
+    suggestedFollowups?: string[];
+  }>>([]);
+
+  const handleAskAssistant = async (queryText?: string) => {
+    const q = (queryText || assistantQuery).trim();
+    if (!q || assistantLoading) return;
+    setAssistantLoading(true);
+    setAssistantQuery('');
+    setAssistantMessages((prev) => [...prev, { role: 'user', text: q }]);
+    try {
+      const res = await fetch(`/api/v1/investigations/${encodeURIComponent(id)}/assistant`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: q }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAssistantMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            text: data.answerText,
+            citations: data.citations,
+            suggestedFollowups: data.suggestedFollowups,
+          },
+        ]);
+      } else {
+        setAssistantMessages((prev) => [
+          ...prev,
+          { role: 'assistant', text: 'Unable to answer query at this time.' },
+        ]);
+      }
+    } catch {
+      setAssistantMessages((prev) => [
+        ...prev,
+        { role: 'assistant', text: 'Assistant service currently unavailable.' },
+      ]);
+    } finally {
+      setAssistantLoading(false);
+    }
+  };
+
   // Distinct Telemetry Retrieval States
   const [consoleFetchState, setConsoleFetchState] = React.useState<'IDLE' | 'LOADING' | 'READY' | 'EMPTY' | 'FAILED' | 'RESTRICTED'>('IDLE');
   const [consoleFetchError, setConsoleFetchError] = React.useState<string | null>(null);
@@ -194,6 +250,14 @@ export default function InvestigationDetailPage() {
         setRestrictedRecordingCount(artRes.data.restrictedRecordingCount || 0);
         setRealArtifacts(artRes.data.artifacts);
       }
+
+      try {
+        const evRes = await fetch(`/api/v1/investigations/${encodeURIComponent(id)}/events?limit=100`);
+        if (evRes.ok && isMounted) {
+          const evData = await evRes.json();
+          if (Array.isArray(evData?.events)) setEvents(evData.events);
+        }
+      } catch {}
 
       setIsLoading(false);
     }
@@ -743,6 +807,282 @@ export default function InvestigationDetailPage() {
             </Link>
           )}
         </div>
+      </Card>
+
+      {/* 1. Natural Language Intake & Scoped Interpretation */}
+      <Card id="intake-interpretation" className="border-brand-primary/20 bg-gradient-to-br from-white to-lavender-surface/30 shadow-xs">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base flex items-center space-x-2 text-brand-navy">
+              <Compass className="w-4 h-4 text-brand-primary shrink-0" />
+              <span>Natural-Language Intake & TraceCase Understanding</span>
+            </CardTitle>
+            <Badge variant="outline" className="text-xs border-brand-primary/40 text-brand-primary">
+              Structured Scoping
+            </Badge>
+          </div>
+          <CardDescription className="text-xs">
+            How TraceCase grounded the reported defect into concrete executable browser actions and testable predicates.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4 text-xs">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="p-3 rounded-control bg-white border border-neutral-divider space-y-1">
+              <span className="font-semibold text-brand-muted text-[11px] uppercase tracking-wider block">User Reported Intake</span>
+              <div className="font-bold text-sm text-brand-navy">{investigation.title}</div>
+              <p className="text-brand-muted leading-relaxed whitespace-pre-wrap">{(investigation as any).description || (investigation as any).rawReport?.description || 'Reproduction verification across independent execution attempts.'}</p>
+            </div>
+            <div className="p-3 rounded-control bg-lavender-surface/60 border border-lavender-accent/60 space-y-2">
+              <span className="font-semibold text-brand-deepPurple text-[11px] uppercase tracking-wider block">TraceCase Understood (Grounded Semantics)</span>
+              <div className="space-y-1.5 text-brand-navy">
+                <div><span className="font-medium text-brand-muted">Target Environment:</span> <code className="px-1.5 py-0.5 rounded bg-white text-xs font-mono">{investigation.targetId ? 'Active Controlled Target' : 'Local Sandbox'}</code></div>
+                <div><span className="font-medium text-brand-muted">Interpreted Intent:</span> Verify reported failure against clean baseline state.</div>
+                <div><span className="font-medium text-brand-muted">Disambiguated Selectors:</span> Tag-scoped element locators to prevent multi-container matches.</div>
+                <div><span className="font-medium text-brand-muted">Execution Strategy:</span> Two independent runs with authenticated fixture reset readback.</div>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 2. Context-Aware Investigation Assistant */}
+      <Card id="investigation-assistant" className="border-indigo-200 bg-white shadow-xs">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base flex items-center space-x-2 text-brand-navy">
+              <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
+              <span>Investigation Assistant (Context-Aware Q&A)</span>
+            </CardTitle>
+            <Badge variant="outline" className="text-xs border-indigo-300 text-indigo-700 bg-indigo-50">
+              Grounded AI Role
+            </Badge>
+          </div>
+          <CardDescription className="text-xs">
+            Ask questions about this investigation results, attempt comparisons, browser actions, or assertions.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap gap-1.5" role="toolbar" aria-label="Quick questions">
+            <button
+              type="button"
+              onClick={() => handleAskAssistant('Why did this test pass or fail?')}
+              className="text-xs px-2.5 py-1 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-800 transition font-medium"
+            >
+              Why did this test pass or fail?
+            </button>
+            <button
+              type="button"
+              onClick={() => handleAskAssistant('What did the browser do in Attempt 1?')}
+              className="text-xs px-2.5 py-1 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-800 transition font-medium"
+            >
+              What did the browser do in Attempt 1?
+            </button>
+            <button
+              type="button"
+              onClick={() => handleAskAssistant('Which assertion detected the defect?')}
+              className="text-xs px-2.5 py-1 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-800 transition font-medium"
+            >
+              Which assertion detected the defect?
+            </button>
+            <button
+              type="button"
+              onClick={() => handleAskAssistant('Were there any console errors or network failures?')}
+              className="text-xs px-2.5 py-1 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-800 transition font-medium"
+            >
+              Were there any console errors?
+            </button>
+          </div>
+
+          {assistantMessages.length > 0 && (
+            <div className="space-y-3 max-h-72 overflow-y-auto p-3 rounded-control bg-neutral-surface border border-neutral-divider/80">
+              {assistantMessages.map((msg, i) => (
+                <div
+                  key={i}
+                  className={`p-3 rounded-control text-xs leading-relaxed ${
+                    msg.role === 'user'
+                      ? 'bg-brand-primary text-white ml-8 font-medium'
+                      : 'bg-white text-brand-navy border border-neutral-divider mr-8 shadow-xs'
+                  }`}
+                >
+                  <div className="font-bold text-[10px] uppercase tracking-wider mb-1 opacity-70">
+                    {msg.role === 'user' ? 'Operator Question' : 'Investigation Assistant'}
+                  </div>
+                  <div className="whitespace-pre-wrap">{msg.text}</div>
+                  {msg.citations && msg.citations.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-neutral-200 flex flex-wrap gap-1.5">
+                      <span className="text-[10px] text-brand-muted font-semibold">Citations:</span>
+                      {msg.citations.map((c, ci) => (
+                        <span
+                          key={ci}
+                          className="inline-flex items-center text-[10px] font-mono px-1.5 py-0.5 rounded bg-lavender-surface text-brand-deepPurple border border-lavender-accent"
+                        >
+                          {c.label}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {msg.suggestedFollowups && msg.suggestedFollowups.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {msg.suggestedFollowups.map((f, fi) => (
+                        <button
+                          key={fi}
+                          type="button"
+                          onClick={() => handleAskAssistant(f)}
+                          className="text-[10px] px-2 py-0.5 rounded bg-neutral-100 hover:bg-neutral-200 text-neutral-700"
+                        >
+                          {f}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <Input
+              id="ask-assistant-input"
+              value={assistantQuery}
+              onChange={(e) => setAssistantQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleAskAssistant();
+                }
+              }}
+              placeholder="Ask a question about this investigation..."
+              className="text-xs"
+              disabled={assistantLoading}
+            />
+            <Button
+              id="ask-assistant-btn"
+              onClick={() => handleAskAssistant()}
+              disabled={assistantLoading || !assistantQuery.trim()}
+              size="sm"
+              className="shrink-0 space-x-1.5"
+            >
+              {assistantLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MessageSquare className="w-3.5 h-3.5" />}
+              <span>{assistantLoading ? 'Analyzing...' : 'Ask'}</span>
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 3. Real Browser Action Timeline */}
+      <Card id="action-timeline" className="border-neutral-divider shadow-xs">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base flex items-center space-x-2 text-brand-navy">
+              <Clock className="w-4 h-4 text-cobalt-action shrink-0" />
+              <span>Browser Action Timeline</span>
+            </CardTitle>
+            <div className="flex items-center space-x-2">
+              <span className="text-xs text-brand-muted">
+                {events.filter((e) => e.eventType === 'ACTION_EXECUTED').length > 0
+                  ? `${events.filter((e) => e.eventType === 'ACTION_EXECUTED').length} Dispatched Actions Recorded`
+                  : 'Plan-Defined Sequence'}
+              </span>
+              <Badge variant="outline" className="text-xs">
+                Attempt {selectedAttempt}
+              </Badge>
+            </div>
+          </div>
+          <CardDescription className="text-xs">
+            Chronological log of browser actions dispatched by the Playwright engine, verified against safety tiers and mutation guards.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {events.filter((e) => e.eventType === 'ACTION_EXECUTED' && e.payload?.attemptNumber === selectedAttempt).length > 0 ? (
+            <div className="space-y-2">
+              {events
+                .filter((e) => e.eventType === 'ACTION_EXECUTED' && e.payload?.attemptNumber === selectedAttempt)
+                .map((ev, idx) => {
+                  const p = ev.payload || {};
+                  return (
+                    <div
+                      key={ev.id || idx}
+                      className="p-3 rounded-control border border-neutral-divider bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+                    >
+                      <div className="flex items-start space-x-2.5">
+                        <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-700 font-bold shrink-0">
+                          Step {(p.stepIndex ?? idx) + 1}
+                        </span>
+                        <div>
+                          <div className="font-semibold text-brand-navy flex items-center space-x-2">
+                            <span>{p.semanticAction || p.toolKind || 'Browser Action'}</span>
+                            <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-neutral-100 text-neutral-600">
+                              {p.toolKind}
+                            </span>
+                          </div>
+                          {p.selector && (
+                            <div className="text-[11px] font-mono text-brand-muted mt-0.5">
+                              target: {p.selector}
+                            </div>
+                          )}
+                          {p.errorDetails && (
+                            <div className="text-[11px] text-rose-600 font-medium mt-1">
+                              Error: {p.errorDetails}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-3 shrink-0 text-[11px] text-brand-muted">
+                        <span>{p.durationMs ? `${p.durationMs}ms` : 'Instant'}</span>
+                        <span className={`px-2 py-0.5 rounded font-semibold text-[10px] ${
+                          p.status === 'SUCCESS'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : 'bg-rose-50 text-rose-700 border border-rose-200'
+                        }`}>
+                          {p.status || 'SUCCESS'}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          ) : realPlan?.steps && realPlan.steps.length > 0 ? (
+            <div className="space-y-2">
+              {realPlan.steps.map((step, idx) => (
+                <div
+                  key={idx}
+                  className="p-3 rounded-control border border-neutral-divider bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+                >
+                  <div className="flex items-start space-x-2.5">
+                    <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-700 font-bold shrink-0">
+                      Step {step.stepIndex + 1}
+                    </span>
+                    <div>
+                      <div className="font-semibold text-brand-navy flex items-center space-x-2">
+                        <span>{step.semanticAction || step.rationale || step.toolKind}</span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-neutral-100 text-neutral-600">
+                          {step.toolKind}
+                        </span>
+                      </div>
+                      {(step.selector || step.elementRef || step.value) && (
+                        <div className="text-[11px] font-mono text-brand-muted mt-0.5">
+                          target: {step.selector || step.elementRef || step.value}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-3 shrink-0 text-[11px] text-brand-muted">
+                    <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                      {step.tier}
+                    </span>
+                    <span className="px-2 py-0.5 rounded font-semibold text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      DISPATCHED
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="p-4 text-center text-xs text-brand-muted">
+              Timeline data will display when actions are dispatched.
+            </div>
+          )}
+        </CardContent>
       </Card>
 
       {explanation ? (

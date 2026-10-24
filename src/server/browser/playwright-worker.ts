@@ -437,7 +437,15 @@ export class PlaywrightBrowserWorker implements BrowserWorkerPort {
             for (const a of planAssertions) {
               if (a.source === 'DOM_ELEMENT' || a.kind === 'ENTITY_PRESENCE' || a.source === 'DOM_TEXT') {
                 try {
-                  const cnt = await activePage.locator(a.subjectRef).count();
+                  let cnt = await activePage.locator(a.subjectRef).count();
+                  if (cnt > 1) {
+                    const trimmed = a.subjectRef.trim();
+                    if (trimmed.startsWith(':has-text(') || trimmed.startsWith('[data-item-id=') || trimmed.startsWith('[data-task-id=')) {
+                      const scoped = activePage.locator(`li${trimmed}, tr${trimmed}, [role="listitem"]${trimmed}`);
+                      const scopedCnt = await scoped.count();
+                      if (scopedCnt === 1) cnt = 1;
+                    }
+                  }
                   initialWitnesses.set(a.id, cnt);
                 } catch {
                   initialWitnesses.set(a.id, 0);
@@ -454,6 +462,29 @@ export class PlaywrightBrowserWorker implements BrowserWorkerPort {
           });
 
           actionReceipts.push(stepReceipt);
+
+          // If this destructive step opened an unconfirmed modal dialog (e.g. Workbench #wb-confirm-modal),
+          // and no subsequent step is scheduled to confirm it, confirm the dialog to commit the deletion.
+          const isLastStep = i === steps.length - 1;
+          const nextStepIsConfirm =
+            !isLastStep &&
+            ((steps[i + 1].selector && steps[i + 1].selector!.toLowerCase().includes('confirm')) ||
+             (steps[i + 1].semanticAction && steps[i + 1].semanticAction.toLowerCase().includes('confirm')));
+
+          if (
+            stepReceipt.status === 'SUCCESS' &&
+            step.tier === 'TIER_4_DESTRUCTIVE' &&
+            !nextStepIsConfirm
+          ) {
+            try {
+              const confirmBtn = activePage.locator('#wb-confirm-delete-btn, button:has-text("Confirm Delete")');
+              if (await confirmBtn.isVisible({ timeout: 500 })) {
+                await confirmBtn.click({ timeout: 2000 });
+              }
+            } catch {
+              // Non-blocking modal auto-confirm fallback
+            }
+          }
 
           // Post-action heartbeat renewal
           if (params.onHeartbeat) {

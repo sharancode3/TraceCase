@@ -94,7 +94,9 @@ function mapPlanAssertionToTypedAssertion(
   if (resolvedSelector) {
     const inventedAttrMatch = resolvedSelector.match(/\[data-[a-z0-9_-]*(?:name|title|entity)=["']([^"']+)["']\]/i);
     if (inventedAttrMatch) {
-      resolvedSelector = `:has-text("${inventedAttrMatch[1]}")`;
+      resolvedSelector = `li:has-text("${inventedAttrMatch[1]}"), tr:has-text("${inventedAttrMatch[1]}")`;
+    } else if (resolvedSelector.trim().startsWith(':has-text(')) {
+      resolvedSelector = `li${resolvedSelector.trim()}, tr${resolvedSelector.trim()}`;
     }
   }
 
@@ -415,7 +417,48 @@ export class IntegratedReportClarificationAgent implements ReportClarificationAg
 
     if (result.output.variant === 'PLAN_PROPOSED') {
       const plan = result.output.experimentPlan;
-      const steps: PlanStep[] = plan.steps.map((s, idx) => ({
+
+      // In Workbench targets, deleting an item opens an accessible confirmation modal (#wb-confirm-modal)
+      // that requires clicking "Confirm Delete" (#wb-confirm-delete-btn) to commit the deletion.
+      const rawSteps = plan.steps;
+      const normalizedPlanSteps: typeof plan.steps = [];
+      for (let i = 0; i < rawSteps.length; i++) {
+        const s = rawSteps[i];
+        normalizedPlanSteps.push(s);
+        const isConfirmAction =
+          (s.targetAccessibleName && s.targetAccessibleName.toLowerCase().includes('confirm')) ||
+          (s.intentDescription && s.intentDescription.toLowerCase().includes('confirm'));
+        const isDeleteAction =
+          !isConfirmAction &&
+          s.actionType === 'CLICK' &&
+          ((s.targetAccessibleName && s.targetAccessibleName.toLowerCase().includes('delete')) ||
+           (s.intentDescription && s.intentDescription.toLowerCase().includes('delete')));
+        const nextStep = i + 1 < rawSteps.length ? rawSteps[i + 1] : undefined;
+        const nextStepIsConfirm =
+          Boolean(nextStep &&
+          nextStep.actionType === 'CLICK' &&
+          ((nextStep.targetAccessibleName && nextStep.targetAccessibleName.toLowerCase().includes('confirm')) ||
+           (nextStep.intentDescription && nextStep.intentDescription.toLowerCase().includes('confirm'))));
+
+        const isWorkbenchTarget =
+          (params.target.baseUrl && params.target.baseUrl.toLowerCase().includes('workbench')) ||
+          (s.targetAccessibleName && s.targetAccessibleName.toLowerCase().includes('wb-item')) ||
+          (s.affectedDataScope && s.affectedDataScope.toLowerCase().includes('wb-item'));
+
+        if (isDeleteAction && !nextStepIsConfirm && isWorkbenchTarget) {
+          normalizedPlanSteps.push({
+            stepNumber: normalizedPlanSteps.length + 1,
+            actionType: 'CLICK',
+            intentDescription: 'Confirm deletion in modal dialog.',
+            targetRole: 'button',
+            targetAccessibleName: 'Confirm Delete',
+            isDestructive: true,
+            affectedDataScope: s.affectedDataScope,
+          });
+        }
+      }
+
+      const steps: PlanStep[] = normalizedPlanSteps.map((s, idx) => ({
         stepIndex: idx,
         semanticAction: s.intentDescription,
         toolKind: mapActionTypeToToolKind(s.actionType, s.targetRole),

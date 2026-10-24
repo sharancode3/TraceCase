@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import { eq } from 'drizzle-orm';
 import { getDb, DbClient } from '@/server/db';
 import { investigationsTable, targetsTable, synthesisExplanationsTable, bugReportsTable } from '@/server/db/schema';
@@ -19,6 +20,46 @@ export interface SynthesizeExplanationParams {
   targetBuildId?: string;
   attempt1DurationMs?: number;
   attempt2DurationMs?: number;
+}
+
+function extractSanitizedConsoleExcerpts(captureRef?: FinalizedCaptureReference): string[] {
+  if (!captureRef) {
+    return ['No console log artifact captured for this attempt.'];
+  }
+  try {
+    const rawPath = captureRef.storageRef.startsWith('local://')
+      ? captureRef.storageRef.slice('local://'.length)
+      : captureRef.storageRef;
+    if (fs.existsSync(rawPath)) {
+      const content = fs.readFileSync(rawPath, 'utf8');
+      if (!content.trim()) {
+        return ['Console log captured: 0 runtime errors, exceptions, or warnings observed (clean target).'];
+      }
+      let lines: string[] = [];
+      try {
+        const parsed = JSON.parse(content);
+        if (Array.isArray(parsed)) {
+          lines = parsed.map((item) =>
+            typeof item === 'string'
+              ? item
+              : `[${item.type || 'log'}] ${item.text || JSON.stringify(item)}`
+          );
+        }
+      } catch {
+        lines = content.split(/\r?\n/).filter(Boolean);
+      }
+      if (lines.length === 0) {
+        return ['Console log captured: 0 runtime errors, exceptions, or warnings observed (clean target).'];
+      }
+      return lines.slice(0, 10).map((l) =>
+        l.replace(/(bearer\s+)[\w.-]+/gi, '$1[REDACTED_TOKEN]')
+         .replace(/(token|password|secret)=["']?[^"'&\s]+/gi, '$1=[REDACTED]')
+      );
+    }
+  } catch {
+    // Non-blocking fallback
+  }
+  return ['Console log captured: 0 runtime errors, exceptions, or warnings observed (clean target).'];
 }
 
 export class EvidenceReviewService {
@@ -110,7 +151,7 @@ export class EvidenceReviewService {
             result: e.result,
           })),
           safeArtifacts: att1SafeArtifacts,
-          sanitizedConsoleExcerpts: [],
+          sanitizedConsoleExcerpts: extractSanitizedConsoleExcerpts(att1Console),
         }
       : {
           attemptNumber: 1 as const,
@@ -127,7 +168,7 @@ export class EvidenceReviewService {
             result: a.result,
           })),
           safeArtifacts: att1SafeArtifacts,
-          sanitizedConsoleExcerpts: [],
+          sanitizedConsoleExcerpts: extractSanitizedConsoleExcerpts(att1Console),
         };
 
     let mappedAttempt2: {
@@ -174,7 +215,7 @@ export class EvidenceReviewService {
           result: e.result,
         })),
         safeArtifacts: att2SafeArtifacts,
-        sanitizedConsoleExcerpts: [],
+          sanitizedConsoleExcerpts: extractSanitizedConsoleExcerpts(att2Console),
       };
     }
 

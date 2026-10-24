@@ -306,6 +306,14 @@ export function createCartServer(options?: {
   .qty-btn { width: 26px; height: 26px; padding: 0; display: inline-flex; justify-content: center; align-items: center; border-radius: 4px; border: 1px solid #cbd5e1; background: #ffffff; font-weight: bold; cursor: pointer; }
   .qty-val { font-weight: 700; width: 20px; text-align: center; }
   .total-box { margin-top: 16px; border-top: 2px solid #e2e8f0; padding-top: 12px; display: flex; justify-content: space-between; align-items: center; font-size: 1.1rem; font-weight: 800; }
+  .filter-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+  .filter-tab { padding: 4px 10px; border-radius: 4px; border: 1px solid #cbd5e1; background: #f8fafc; color: #475569; font-size: 0.75rem; font-weight: 600; cursor: pointer; }
+  .filter-tab.active { background: #2563eb; color: #ffffff; border-color: #2563eb; }
+  .search-input { width: 100%; padding: 6px 10px; border-radius: 4px; border: 1px solid #cbd5e1; font-size: 0.8rem; margin-bottom: 12px; box-sizing: border-box; }
+  .technical-drawer { margin-top: 24px; border: 1px solid #e2e8f0; border-radius: 6px; background: #f8fafc; padding: 12px; font-size: 0.75rem; color: #475569; }
+  .technical-drawer summary { font-weight: 700; cursor: pointer; color: #334155; user-select: none; }
+  .technical-content { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .drawer-actions { display: flex; gap: 8px; margin-top: 8px; }
   .diagnostic-note { margin-top: 16px; font-size: 0.75rem; color: #64748b; background: #f1f5f9; padding: 8px 12px; border-radius: 4px; }
 </style>
 </head>
@@ -322,9 +330,15 @@ export function createCartServer(options?: {
   <div class="main-grid">
     <div class="panel">
       <h2>Products Catalog</h2>
+      <div class="filter-tabs" role="tablist" aria-label="Product categories">
+        <button type="button" class="filter-tab active" data-category="all" role="tab" aria-selected="true">All Products</button>
+        <button type="button" class="filter-tab" data-category="Hardware" role="tab" aria-selected="false">Hardware</button>
+        <button type="button" class="filter-tab" data-category="Accessories" role="tab" aria-selected="false">Accessories</button>
+      </div>
+      <input type="number" min="0" id="catalog-search" class="search-input" placeholder="Search catalog..." aria-label="Search catalog items" />
       <div id="product-list">
         ${CATALOG.map((p) => `
-          <div class="product-card" id="catalog-${p.id}" data-product-id="${p.id}">
+          <div class="product-card" id="catalog-${p.id}" data-product-id="${p.id}" data-category="${p.category}" data-product-name="${p.name.toLowerCase()}">
             <div>
               <div style="font-weight: 700;">${p.name}</div>
               <div style="font-size: 0.8rem; color: #64748b;">${formatCents(p.unitPriceCents)} &bull; ${p.category}</div>
@@ -373,7 +387,16 @@ export function createCartServer(options?: {
                         data-item-id="${item.productId}"
                         aria-label="Decrease quantity of ${item.product.name}"
                       >-</button>
-                      <span class="qty-val" id="qty-${item.productId}" data-testid="item-quantity">${item.quantity}</span>
+                      <input
+                        type="text"
+                        readonly
+                        class="qty-val"
+                        id="qty-${item.productId}"
+                        data-testid="item-quantity"
+                        aria-label="${item.product.name} quantity"
+                        value="${item.quantity}"
+                        style="width: 32px; text-align: center; font-weight: bold; border: 1px solid #cbd5e1; border-radius: 4px; padding: 2px;"
+                      />
                       <button
                         type="button"
                         class="qty-btn"
@@ -385,7 +408,7 @@ export function createCartServer(options?: {
                     </div>
                   </td>
                   <td id="subtotal-${item.productId}" data-testid="item-subtotal" style="font-weight: 700; color: #0f172a;">
-                    ${formatCents(item.subtotalCents)}
+                    <span data-testid="subtotal" id="subtotal-val-${item.productId}">${formatCents(item.subtotalCents)}</span>
                   </td>
                 </tr>
               `).join('')}
@@ -397,7 +420,19 @@ export function createCartServer(options?: {
           </div>
         `}
       </div>
-      <div class="diagnostic-note">
+      <details class="technical-drawer" id="technical-diagnostics-drawer">
+        <summary>Technical Diagnostics & Fixture Controls</summary>
+        <div class="technical-content">
+          <div><strong>Current Build:</strong> <span id="drawer-build-version">${store.getBuildVersion()}</span> (${store.isBugMode() ? 'Buggy Mode Active' : 'Fixed Mode Active'})</div>
+          <div><strong>Target Scope:</strong> <code>cart_baseline</code> &bull; Integer minor currency units (cents)</div>
+          <div><strong>Active Items:</strong> ${items.length} items &bull; Total: ${formatCents(totalCents)}</div>
+          <div class="drawer-actions">
+            <button type="button" class="btn btn-outline" id="toggle-mode-btn" data-action="toggle-mode">Toggle Mode (${store.isBugMode() ? 'Switch to Fixed' : 'Switch to Buggy'})</button>
+            <button type="button" class="btn btn-outline" id="reset-fixture-btn" data-action="reset-cart">Reset Fixture to Baseline</button>
+          </div>
+        </div>
+      </details>
+      <div class="diagnostic-note" style="display: none;">
         Deterministic Seeded Defect: In buggy mode, changing quantity from 1 to 2 keeps charging for 1 item ($120.00 subtotal). Fixed mode multiplies unit price by quantity ($240.00).
       </div>
     </div>
@@ -405,6 +440,31 @@ export function createCartServer(options?: {
 </div>
 
 <script>
+  async function refreshCartDom() {
+    try {
+      const res = await fetch('/api/cart');
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.items) return;
+      for (const it of data.items) {
+        const qtyEl = document.getElementById('qty-' + it.productId);
+        if (qtyEl) {
+          if ('value' in qtyEl) qtyEl.value = String(it.quantity);
+          qtyEl.textContent = String(it.quantity);
+        }
+        const subSpan = document.getElementById('subtotal-val-' + it.productId);
+        const subTd = document.getElementById('subtotal-' + it.productId);
+        const formatted = '$' + (it.subtotalCents / 100).toFixed(2);
+        if (subSpan) subSpan.textContent = formatted;
+        if (subTd && !subSpan) subTd.textContent = formatted;
+      }
+      const totalEl = document.getElementById('cart-total');
+      if (totalEl) totalEl.textContent = data.totalFormatted;
+    } catch (e) {
+      console.error('Failed to refresh cart DOM', e);
+    }
+  }
+
   document.addEventListener('click', async (e) => {
     const btn = e.target.closest('button[data-action]');
     if (!btn) return;
@@ -413,23 +473,23 @@ export function createCartServer(options?: {
     if (action === 'increase-quantity') {
       const id = btn.getAttribute('data-item-id');
       const qtyEl = document.getElementById('qty-' + id);
-      const currentQty = qtyEl ? parseInt(qtyEl.textContent, 10) : 1;
+      const currentQty = qtyEl ? parseInt(qtyEl.value || qtyEl.textContent || '1', 10) : 1;
       await fetch('/api/cart/items', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ productId: id, quantity: currentQty + 1 })
       });
-      window.location.reload();
+      await refreshCartDom();
     } else if (action === 'decrease-quantity') {
       const id = btn.getAttribute('data-item-id');
       const qtyEl = document.getElementById('qty-' + id);
-      const currentQty = qtyEl ? parseInt(qtyEl.textContent, 10) : 1;
+      const currentQty = qtyEl ? parseInt(qtyEl.value || qtyEl.textContent || '1', 10) : 1;
       await fetch('/api/cart/items', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ productId: id, quantity: Math.max(0, currentQty - 1) })
       });
-      window.location.reload();
+      await refreshCartDom();
     } else if (action === 'add-to-cart') {
       const id = btn.getAttribute('data-product-id');
       await fetch('/api/cart/items', {
@@ -437,9 +497,65 @@ export function createCartServer(options?: {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ productId: id, quantity: 1 })
       });
+      await refreshCartDom();
+    } else if (action === 'toggle-mode') {
+      const isBuggy = ${store.isBugMode()};
+      await fetch('/api/test/mode', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-TraceCase-Reset-Auth': '${resetSecret}',
+        },
+        body: JSON.stringify({ bugMode: !isBuggy })
+      });
       window.location.reload();
+      return;
+    } else if (action === 'reset-cart') {
+      await fetch('/api/test/reset-fixture', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-TraceCase-Reset-Auth': '${resetSecret}',
+        }
+      });
+      window.location.reload();
+      return;
     }
   });
+
+  let activeCategory = 'all';
+  let searchQuery = '';
+
+  function filterCatalog() {
+    document.querySelectorAll('.product-card').forEach((card) => {
+      const cat = card.getAttribute('data-category') || '';
+      const name = card.getAttribute('data-product-name') || '';
+      const matchCat = activeCategory === 'all' || cat.toLowerCase() === activeCategory.toLowerCase();
+      const matchSearch = !searchQuery || name.includes(searchQuery.toLowerCase());
+      card.style.display = matchCat && matchSearch ? 'flex' : 'none';
+    });
+  }
+
+  document.querySelectorAll('.filter-tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.filter-tab').forEach((t) => {
+        t.classList.remove('active');
+        t.setAttribute('aria-selected', 'false');
+      });
+      tab.classList.add('active');
+      tab.setAttribute('aria-selected', 'true');
+      activeCategory = tab.getAttribute('data-category') || 'all';
+      filterCatalog();
+    });
+  });
+
+  const searchInput = document.getElementById('catalog-search');
+  if (searchInput) {
+    searchInput.addEventListener('input', (e) => {
+      searchQuery = e.target.value.trim();
+      filterCatalog();
+    });
+  }
 </script>
 </body>
 </html>`;

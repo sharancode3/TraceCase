@@ -34,7 +34,15 @@ export class ObservationCollector {
           case 'DOM_ELEMENT': {
             try {
               const locator = page.locator(assertion.subjectRef);
-              const count = await locator.count();
+              let count = await locator.count();
+              if (count > 1) {
+                const trimmed = assertion.subjectRef.trim();
+                if (trimmed.startsWith(':has-text(') || trimmed.startsWith('[data-item-id=') || trimmed.startsWith('[data-task-id=')) {
+                  const scoped = page.locator(`li${trimmed}, tr${trimmed}, [role="listitem"]${trimmed}`);
+                  const scopedCnt = await scoped.count();
+                  if (scopedCnt === 1) count = 1;
+                }
+              }
 
               const initCount = params.initialWitnesses?.get(assertion.id);
               observations.set(assertion.id, {
@@ -74,8 +82,16 @@ export class ObservationCollector {
 
           case 'DOM_TEXT': {
             try {
-              const locator = page.locator(assertion.subjectRef);
-              const count = await locator.count();
+              let locator = page.locator(assertion.subjectRef);
+              let count = await locator.count();
+              if (count > 1 && assertion.subjectRef.trim().startsWith(':has-text(')) {
+                const scoped = page.locator(`li${assertion.subjectRef.trim()}, tr${assertion.subjectRef.trim()}, [role="listitem"]${assertion.subjectRef.trim()}`);
+                const scopedCnt = await scoped.count();
+                if (scopedCnt === 1) {
+                  count = 1;
+                  locator = scoped;
+                }
+              }
 
               if (count === 0) {
                 observations.set(assertion.id, {
@@ -101,7 +117,18 @@ export class ObservationCollector {
                   errorDetails: `Ambiguous selector '${assertion.subjectRef}' matched ${count} elements.`,
                 });
               } else {
-                const text = await locator.innerText({ timeout: 5000 }).catch(() => null);
+                let text = await locator.innerText({ timeout: 5000 }).catch(() => null);
+                if (text === null || text.trim() === '') {
+                  const inputVal = await locator.inputValue({ timeout: 1000 }).catch(() => null);
+                  if (inputVal !== null && inputVal.trim() !== '') {
+                    text = inputVal;
+                  } else {
+                    const attrVal = await locator.getAttribute('value').catch(() => null);
+                    if (attrVal !== null) {
+                      text = attrVal;
+                    }
+                  }
+                }
                 observations.set(assertion.id, {
                   assertionId: assertion.id,
                   source: assertion.source,
