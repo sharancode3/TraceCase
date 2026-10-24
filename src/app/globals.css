@@ -7,6 +7,11 @@
   --foreground: #161E38;
 }
 
+.dark {
+  --background: #0B0F19;
+  --foreground: #F8FAFC;
+}
+
 body {
   color: var(--foreground);
   background: var(--background);
@@ -37,6 +42,14 @@ select {
   border-radius: 9999px;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: #A3B1E4;
+.dark ::-webkit-scrollbar-track {
+  background: #0F172A;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #475569;
 }

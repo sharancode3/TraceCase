@@ -42,8 +42,15 @@ export default function DashboardPage() {
       setIsLoading(false);
     }
     load();
+
+    const handleAuthChange = () => {
+      if (isMounted) load();
+    };
+    window.addEventListener('tracecase:auth-state-change', handleAuthChange);
+
     return () => {
       isMounted = false;
+      window.removeEventListener('tracecase:auth-state-change', handleAuthChange);
     };
   }, []);
 
@@ -68,10 +75,10 @@ export default function DashboardPage() {
       {/* Page Header */}
       <div id="dashboard-header" className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold text-brand-navy tracking-tight">
+          <h2 className="text-xl font-bold text-brand-navy dark:text-slate-100 tracking-tight">
             Investigations Dashboard
           </h2>
-          <p className="text-sm text-brand-muted mt-1 leading-relaxed">
+          <p className="text-sm text-brand-muted dark:text-slate-400 mt-1 leading-relaxed">
             Register a test target, submit a bug report, review and approve the plan, then start the browser investigation.
           </p>
         </div>
@@ -86,14 +93,14 @@ export default function DashboardPage() {
       {/* Filter and Search Bar */}
       <div id="dashboard-filter-search-container" className="flex flex-col sm:flex-row items-center justify-between gap-3 w-full">
         <div className="relative w-full sm:w-80">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-brand-muted" />
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-brand-muted dark:text-slate-400" />
           <input
             id="dashboard-search"
             type="text"
             placeholder="Search investigations by title or target..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 rounded-control border border-neutral-divider text-sm text-brand-navy focus:outline-none focus:ring-2 focus:ring-cobalt-action placeholder:text-brand-muted"
+            className="w-full pl-9 pr-4 py-2 rounded-control border border-neutral-divider dark:border-slate-800 bg-white dark:bg-slate-900 text-sm text-brand-navy dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-cobalt-action placeholder:text-brand-muted dark:placeholder:text-slate-500 shadow-xs"
           />
         </div>
 
@@ -109,10 +116,10 @@ export default function DashboardPage() {
             <button
               key={tab.id}
               onClick={() => setFilter(tab.id)}
-              className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors shrink-0 ${
+              className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors shrink-0 cursor-pointer ${
                 filter === tab.id
                   ? 'bg-cobalt-action text-white shadow-sm'
-                  : 'bg-neutral-surface text-brand-navy hover:bg-lavender-surface'
+                  : 'bg-neutral-surface dark:bg-slate-800 text-brand-navy dark:text-slate-300 hover:bg-lavender-surface dark:hover:bg-slate-700'
               }`}
             >
               {tab.label}
@@ -123,25 +130,25 @@ export default function DashboardPage() {
 
       {/* Error / Mode Notice */}
       {errorNotice && (
-        <div className="p-3 rounded-control bg-amber-50 border border-amber-300 text-xs text-amber-900 flex items-center space-x-2">
-          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+        <div className="p-3 rounded-control bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800/60 text-xs text-amber-900 dark:text-amber-200 flex items-center space-x-2">
+          <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
           <span>{errorNotice}</span>
         </div>
       )}
 
       {/* Investigations Table Card */}
-      <Card className="p-0 overflow-hidden">
+      <Card className="p-0 overflow-hidden dark:bg-slate-900 dark:border-slate-800">
         {isLoading ? (
-          <div className="p-12 text-center text-xs text-brand-muted flex flex-col items-center justify-center space-y-2">
+          <div className="p-12 text-center text-xs text-brand-muted dark:text-slate-400 flex flex-col items-center justify-center space-y-2">
             <Loader2 className="w-6 h-6 animate-spin text-cobalt-action" />
             <span>Loading investigations...</span>
           </div>
         ) : filteredItems.length === 0 ? (
-          <div className="p-12 text-center text-xs text-brand-muted flex flex-col items-center justify-center space-y-3">
-            <Inbox className="w-8 h-8 text-neutral-divider" />
+          <div className="p-12 text-center text-xs text-brand-muted dark:text-slate-400 flex flex-col items-center justify-center space-y-3">
+            <Inbox className="w-8 h-8 text-neutral-divider dark:text-slate-700" />
             <div>
-              <p className="font-semibold text-brand-navy">No investigations found</p>
-              <p className="mt-1 text-brand-muted">
+              <p className="font-semibold text-brand-navy dark:text-slate-200">No investigations found</p>
+              <p className="mt-1 text-brand-muted dark:text-slate-400">
                 {search ? 'Try adjusting your search or filter criteria.' : 'Create a bug report to start reproducing defects.'}
               </p>
             </div>

@@ -16,6 +16,7 @@ import {
 import { cn } from '../ui/button';
 import { useTour } from '@/components/guide/tour-context';
 import { TraceCaseLogo } from '@/components/ui/logo';
+import { ThemeToggle } from '@/components/theme/theme-toggle';
 
 const NAV_ITEMS = [
   { id: 'nav-investigations', label: 'Investigations', href: '/', icon: LayoutDashboard },
@@ -31,7 +32,7 @@ export function Sidebar() {
 
   React.useEffect(() => {
     let isMounted = true;
-    fetch('/api/dev/session')
+    fetch('/api/auth/session')
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (isMounted && data?.principal?.email) {
@@ -57,7 +58,7 @@ export function Sidebar() {
   const handleDevSignIn = async () => {
     setIsSigningIn(true);
     try {
-      const res = await fetch('/api/dev/session', {
+      const res = await fetch('/api/auth/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: 'operator@tracecase.local', role: 'operator' }),
@@ -72,7 +73,7 @@ export function Sidebar() {
         openPrompt();
       }
     } catch {
-      // Best-effort dev login
+      // Best-effort login
     } finally {
       setIsSigningIn(false);
     }
@@ -80,23 +81,26 @@ export function Sidebar() {
 
   const handleDevSignOut = async () => {
     try {
-      await fetch('/api/dev/session', { method: 'DELETE' });
+      await fetch('/api/auth/session', { method: 'DELETE' });
       setOperator(null);
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('tracecase:auth-state-change', { detail: { operator: null } }));
       }
     } catch {
-      // Best-effort dev logout
+      // Best-effort logout
     }
   };
 
   return (
-    <aside className="hidden md:flex md:w-64 border-r border-neutral-divider/80 bg-white flex-col justify-between shrink-0 h-full max-h-full select-none">
+    <aside className="hidden md:flex md:w-64 border-r border-neutral-divider/80 dark:border-slate-800 bg-white dark:bg-slate-900 flex-col justify-between shrink-0 h-full max-h-full select-none transition-colors duration-150">
       <div className="flex flex-col min-h-0">
         {/* Brand Header */}
-        <div className="px-5 py-4 border-b border-neutral-divider/50 flex items-center space-x-3 shrink-0">
-          <TraceCaseLogo size={26} color="#4767DB" />
-          <span className="font-bold text-base text-brand-navy tracking-tight">TraceCase</span>
+        <div className="px-5 py-4 border-b border-neutral-divider/50 dark:border-slate-800 flex items-center justify-between shrink-0">
+          <div className="flex items-center space-x-3">
+            <TraceCaseLogo size={26} color="#4767DB" />
+            <span className="font-bold text-base text-brand-navy dark:text-slate-100 tracking-tight">TraceCase</span>
+          </div>
+          <ThemeToggle />
         </div>
 
         {/* Navigation Items */}
@@ -113,11 +117,11 @@ export function Sidebar() {
                 className={cn(
                   'flex items-center space-x-3 px-3 py-2.5 rounded-control text-sm font-medium transition-all',
                   isActive
-                    ? 'bg-lavender-surface text-cobalt-action font-semibold shadow-xs'
-                    : 'text-brand-navy hover:bg-neutral-surface hover:text-brand-deepPurple'
+                    ? 'bg-lavender-surface dark:bg-indigo-950/60 text-cobalt-action dark:text-indigo-400 font-semibold shadow-xs'
+                    : 'text-brand-navy dark:text-slate-300 hover:bg-neutral-surface dark:hover:bg-slate-800 hover:text-brand-deepPurple dark:hover:text-slate-100'
                 )}
               >
-                <Icon className={cn('w-4 h-4 shrink-0', isActive ? 'text-cobalt-action' : 'text-brand-muted')} />
+                <Icon className={cn('w-4 h-4 shrink-0', isActive ? 'text-cobalt-action dark:text-indigo-400' : 'text-brand-muted dark:text-slate-400')} />
                 <span>{item.label}</span>
               </Link>
             );
@@ -127,17 +131,17 @@ export function Sidebar() {
             <button
               id="sidebar-guide-btn"
               onClick={() => openGuide(0)}
-              className="w-full flex items-center space-x-3 px-3 py-2 rounded-control text-sm font-medium text-brand-navy bg-neutral-surface hover:bg-lavender-surface/50 border border-neutral-divider transition-all shadow-xs cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cobalt-action mb-1.5"
+              className="w-full flex items-center space-x-3 px-3 py-2 rounded-control text-sm font-medium text-brand-navy dark:text-slate-200 bg-neutral-surface dark:bg-slate-800/80 hover:bg-lavender-surface/50 dark:hover:bg-slate-800 border border-neutral-divider dark:border-slate-700 transition-all shadow-xs cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cobalt-action mb-1.5"
             >
-              <HelpCircle className="w-4 h-4 text-brand-muted shrink-0" />
+              <HelpCircle className="w-4 h-4 text-brand-muted dark:text-slate-400 shrink-0" />
               <span>First-Use Guide</span>
             </button>
             <button
               id="sidebar-take-demo-btn"
               onClick={() => startTour(0)}
-              className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-control text-sm font-semibold text-cobalt-action bg-lavender-subtle hover:bg-lavender-surface border border-lavender-accent/40 transition-all shadow-xs cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cobalt-action"
+              className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-control text-sm font-semibold text-cobalt-action dark:text-indigo-400 bg-lavender-subtle dark:bg-indigo-950/40 hover:bg-lavender-surface dark:hover:bg-indigo-950/70 border border-lavender-accent/40 dark:border-indigo-800/50 transition-all shadow-xs cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cobalt-action"
             >
-              <PlayCircle className="w-4 h-4 text-cobalt-action shrink-0" />
+              <PlayCircle className="w-4 h-4 text-cobalt-action dark:text-indigo-400 shrink-0" />
               <span>Take a Demo</span>
             </button>
           </div>
@@ -145,20 +149,20 @@ export function Sidebar() {
       </div>
 
       {/* Operator Auth Button */}
-      <div className="p-3 border-t border-neutral-divider/60 shrink-0">
+      <div className="p-3 border-t border-neutral-divider/60 dark:border-slate-800 shrink-0">
         {operator ? (
           <button
             id="sidebar-operator-btn"
             onClick={handleDevSignOut}
             title="Click to sign out"
             aria-label="Sign out of operator session"
-            className="w-full flex items-center justify-between px-3 py-2.5 rounded-control bg-lavender-surface/50 hover:bg-lavender-surface border border-lavender-accent/40 text-xs text-brand-deepPurple transition-all cursor-pointer group shadow-xs"
+            className="w-full flex items-center justify-between px-3 py-2.5 rounded-control bg-lavender-surface/50 dark:bg-slate-800/80 hover:bg-lavender-surface dark:hover:bg-slate-800 border border-lavender-accent/40 dark:border-slate-700 text-xs text-brand-deepPurple dark:text-indigo-300 transition-all cursor-pointer group shadow-xs"
           >
             <div className="flex items-center space-x-2 truncate">
-              <UserCheck className="w-4 h-4 text-cobalt-action group-hover:text-cobalt-action/80 transition-colors shrink-0" />
+              <UserCheck className="w-4 h-4 text-cobalt-action dark:text-indigo-400 group-hover:text-cobalt-action/80 transition-colors shrink-0" />
               <span className="font-mono text-xs truncate">{operator}</span>
             </div>
-            <LogOut className="w-3.5 h-3.5 text-brand-muted group-hover:text-brand-navy ml-1.5 transition-colors shrink-0" />
+            <LogOut className="w-3.5 h-3.5 text-brand-muted dark:text-slate-400 group-hover:text-brand-navy dark:group-hover:text-slate-100 ml-1.5 transition-colors shrink-0" />
           </button>
         ) : (
           <button
@@ -168,7 +172,7 @@ export function Sidebar() {
             className="w-full flex items-center justify-center space-x-2 px-3 py-2.5 rounded-control bg-cobalt-action hover:bg-cobalt-hover text-white text-sm font-semibold transition-all shadow-sm cursor-pointer"
           >
             <LogIn className="w-4 h-4" />
-            <span>{isSigningIn ? 'Signing in...' : 'Sign in (Local Dev)'}</span>
+            <span>{isSigningIn ? 'Signing in...' : 'Sign In'}</span>
           </button>
         )}
       </div>

@@ -7,6 +7,7 @@ import { UserCheck, LogIn, LogOut, Menu, X, LayoutDashboard, Target, PlusCircle,
 import { cn } from '../ui/button';
 import { useTour } from '@/components/guide/tour-context';
 import { TraceCaseLogo } from '@/components/ui/logo';
+import { ThemeToggle } from '@/components/theme/theme-toggle';
 
 const MOBILE_NAV_ITEMS = [
   { label: 'Investigations', href: '/', icon: LayoutDashboard },
@@ -22,7 +23,7 @@ export function Header() {
 
   React.useEffect(() => {
     let isMounted = true;
-    fetch('/api/dev/session')
+    fetch('/api/auth/session')
       .then((res) => {
         if (res.ok) return res.json();
         return null;
@@ -33,7 +34,7 @@ export function Header() {
         }
       })
       .catch(() => {
-        // Dev auth not active or offline
+        // Auth not active or offline
       });
 
     const handleAuthChange = (e: Event) => {
@@ -55,7 +56,7 @@ export function Header() {
   const handleDevSignIn = async () => {
     setIsSigningIn(true);
     try {
-      const res = await fetch('/api/dev/session', {
+      const res = await fetch('/api/auth/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: 'operator@tracecase.local', role: 'operator' }),
@@ -70,7 +71,7 @@ export function Header() {
         openPrompt();
       }
     } catch {
-      // Best-effort dev login
+      // Best-effort login
     } finally {
       setIsSigningIn(false);
     }
@@ -78,34 +79,35 @@ export function Header() {
 
   const handleDevSignOut = async () => {
     try {
-      await fetch('/api/dev/session', { method: 'DELETE' });
+      await fetch('/api/auth/session', { method: 'DELETE' });
       setOperator(null);
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('tracecase:auth-state-change', { detail: { operator: null } }));
       }
     } catch {
-      // Best-effort dev logout
+      // Best-effort logout
     }
   };
 
   return (
-    <header className="md:hidden relative border-b border-neutral-divider/80 bg-white">
+    <header className="md:hidden relative border-b border-neutral-divider/80 dark:border-slate-800 bg-white dark:bg-slate-900 transition-colors duration-150">
       <div className="h-16 px-4 md:px-6 flex items-center justify-between">
         <div className="flex items-center space-x-3 md:space-x-4">
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden p-2 rounded-control text-brand-muted hover:text-brand-navy hover:bg-neutral-surface"
+            className="md:hidden p-2 rounded-control text-brand-muted hover:text-brand-navy dark:hover:text-slate-100 hover:bg-neutral-surface dark:hover:bg-slate-800"
             aria-label="Toggle navigation menu"
           >
             {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </button>
           <div className="flex items-center space-x-2">
             <TraceCaseLogo size={22} color="#4767DB" />
-            <span className="font-bold text-sm text-brand-navy tracking-tight">TraceCase</span>
+            <span className="font-bold text-sm text-brand-navy dark:text-slate-100 tracking-tight">TraceCase</span>
           </div>
         </div>
 
         <div className="flex items-center space-x-2 md:space-x-3">
+          <ThemeToggle />
 
           {operator ? (
             <button
@@ -113,21 +115,21 @@ export function Header() {
               onClick={handleDevSignOut}
               title="Click to sign out"
               aria-label="Sign out of operator session"
-              className="flex items-center space-x-2 px-3 py-1.5 rounded-control bg-lavender-surface/50 hover:bg-lavender-surface border border-lavender-accent/30 hover:border-lavender-accent/60 text-xs text-brand-deepPurple transition-all cursor-pointer group"
+              className="flex items-center space-x-2 px-3 py-1.5 rounded-control bg-lavender-surface/50 dark:bg-slate-800 hover:bg-lavender-surface dark:hover:bg-slate-700 border border-lavender-accent/30 dark:border-slate-700 text-xs text-brand-deepPurple dark:text-indigo-300 transition-all cursor-pointer group"
             >
-              <UserCheck className="w-4 h-4 text-cobalt-action group-hover:text-cobalt-action/80 transition-colors" />
+              <UserCheck className="w-4 h-4 text-cobalt-action dark:text-indigo-400 group-hover:text-cobalt-action/80 transition-colors" />
               <span className="font-medium font-mono text-xs group-hover:underline">{operator}</span>
-              <LogOut className="w-3.5 h-3.5 text-brand-muted group-hover:text-brand-navy ml-1 transition-colors" />
+              <LogOut className="w-3.5 h-3.5 text-brand-muted dark:text-slate-400 group-hover:text-brand-navy dark:group-hover:text-slate-100 ml-1 transition-colors" />
             </button>
           ) : (
             <button
               id="header-signin-btn"
               onClick={handleDevSignIn}
               disabled={isSigningIn}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-control bg-neutral-surface hover:bg-lavender-surface/50 border border-neutral-divider text-sm text-brand-navy transition-colors font-medium"
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-control bg-neutral-surface dark:bg-slate-800 hover:bg-lavender-surface/50 dark:hover:bg-slate-700 border border-neutral-divider dark:border-slate-700 text-sm text-brand-navy dark:text-slate-200 transition-colors font-medium cursor-pointer"
             >
-              <LogIn className="w-4 h-4 text-cobalt-action" />
-              <span>{isSigningIn ? 'Signing in...' : 'Sign in (Local Dev)'}</span>
+              <LogIn className="w-4 h-4 text-cobalt-action dark:text-indigo-400" />
+              <span>{isSigningIn ? 'Signing in...' : 'Sign In'}</span>
             </button>
           )}
         </div>

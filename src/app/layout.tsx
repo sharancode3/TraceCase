@@ -33,8 +33,8 @@ export default function RootLayout({
   const isSyntheticPreview = isDevPreviewEnabled();
 
   return (
-    <html lang="en" className={`h-full ${dmSans.variable}`}>
-      <body className="h-screen max-h-screen overflow-hidden bg-canvas text-brand-navy flex flex-col antialiased">
+    <html lang="en" suppressHydrationWarning className={`h-full ${dmSans.variable}`}>
+      <body className="h-screen max-h-screen overflow-hidden bg-canvas dark:bg-slate-950 text-brand-navy dark:text-slate-100 flex flex-col antialiased transition-colors duration-150">
         <TourProvider>
           <OnboardingTour />
           <FirstUseGuideModal />
@@ -43,7 +43,7 @@ export default function RootLayout({
             <Sidebar />
             <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
               <Header />
-              <main className="flex-1 p-6 md:p-8 overflow-y-auto bg-neutral-surface/30">
+              <main className="flex-1 p-6 md:p-8 overflow-y-auto bg-neutral-surface/30 dark:bg-slate-900/60">
                 {children}
               </main>
             </div>

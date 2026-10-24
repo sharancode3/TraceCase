@@ -2,6 +2,7 @@ import * as jose from 'jose';
 import { getServerEnv } from '@/server/config/env';
 import { AuthenticationError } from './index';
 import { getDevKeyPair } from './dev-auth';
+import { getOperatorKeyPair, OPERATOR_KEY_ID } from './operator-auth';
 
 export { AuthenticationError };
 
@@ -63,11 +64,25 @@ export async function verifyJwtToken(token: string): Promise<VerifiedClaims> {
 
   const env = getServerEnv();
 
+  // Decode header to detect token signer
+  let header: jose.ProtectedHeaderParameters | null = null;
+  try {
+    header = jose.decodeProtectedHeader(token);
+  } catch {
+    // Malformed token; will fail verification
+  }
+
   // If a custom test key or JWKS is injected, use it
   let keySource: KeyLikeOrSecret | null = customKeyOrSet;
 
   if (!keySource) {
-    if (env.AUTH_ISSUER && env.AUTH_AUDIENCE && env.AUTH_JWKS_URI) {
+    if (header?.kid === OPERATOR_KEY_ID) {
+      const opKeys = await getOperatorKeyPair();
+      keySource = opKeys.publicKey;
+    } else if (header?.kid === 'dev-operator-key-1' && process.env.NODE_ENV !== 'production') {
+      const devKeys = await getDevKeyPair();
+      keySource = devKeys.publicKey;
+    } else if (env.AUTH_ISSUER && env.AUTH_AUDIENCE && env.AUTH_JWKS_URI) {
       if (!remoteJwksCache) {
         remoteJwksCache = jose.createRemoteJWKSet(new URL(env.AUTH_JWKS_URI), {
           timeoutDuration: 5000,
@@ -76,16 +91,17 @@ export async function verifyJwtToken(token: string): Promise<VerifiedClaims> {
       }
       keySource = remoteJwksCache;
     } else if (process.env.NODE_ENV !== 'production' && env.ENABLE_DEV_AUTH) {
-      // In local development with dev auth enabled, resolve against persistent local EdDSA key
       const devKeys = await getDevKeyPair();
       keySource = devKeys.publicKey;
     } else {
-      throw new AuthenticationError('External identity provider is not fully configured (AUTH_ISSUER, AUTH_AUDIENCE, and AUTH_JWKS_URI are required).');
+      const opKeys = await getOperatorKeyPair();
+      keySource = opKeys.publicKey;
     }
   }
 
-  const effectiveIssuer = env.AUTH_ISSUER || (process.env.NODE_ENV !== 'production' ? `${env.APP_URL}/api/dev` : undefined);
-  const effectiveAudience = env.AUTH_AUDIENCE || (process.env.NODE_ENV !== 'production' ? 'tracecase-api' : undefined);
+  const isOperatorToken = header?.kid === OPERATOR_KEY_ID;
+  const effectiveIssuer = env.AUTH_ISSUER || (isOperatorToken ? `${env.APP_URL}/api/auth` : (process.env.NODE_ENV !== 'production' ? `${env.APP_URL}/api/dev` : undefined));
+  const effectiveAudience = env.AUTH_AUDIENCE || 'tracecase-api';
 
   const verifyOptions: jose.JWTVerifyOptions = {
     algorithms: ['RS256', 'ES256', 'EdDSA'],

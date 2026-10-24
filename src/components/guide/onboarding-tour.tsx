@@ -264,7 +264,7 @@ export function OnboardingTour() {
   const handleDevSignIn = async () => {
     setIsSigningIn(true);
     try {
-      const res = await fetch('/api/dev/session', {
+      const res = await fetch('/api/auth/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: 'operator@tracecase.local', role: 'operator' }),
