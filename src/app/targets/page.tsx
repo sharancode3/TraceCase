@@ -108,8 +108,15 @@ export default function TargetsPage() {
       setIsLoading(false);
     }
     load();
+
+    const handleAuthChange = () => {
+      if (isMounted) load();
+    };
+    window.addEventListener('tracecase:auth-state-change', handleAuthChange);
+
     return () => {
       isMounted = false;
+      window.removeEventListener('tracecase:auth-state-change', handleAuthChange);
     };
   }, []);
 

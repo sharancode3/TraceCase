@@ -1,7 +1,7 @@
 import { createSafeError, type SafeErrorEnvelope } from '@/contracts/errors';
 import { verifyJwtToken } from './jwt';
 import { principalsRepository } from '@/server/db/repositories/principals.repository';
-import { isDbConfigured } from '@/server/db';
+import { isDbConfigured, ensureDatabaseMigrated } from '@/server/db';
 
 export interface Principal {
   id: string; // Database primary key (UUID)
@@ -87,6 +87,7 @@ export async function resolvePrincipal(req: Request): Promise<Principal | null> 
   // If database persistence is configured, resolve/create internal DB principal
   if (isDbConfigured()) {
     try {
+      await ensureDatabaseMigrated();
       const principalRecord = await principalsRepository.findOrCreateByExternalAuth({
         externalIssuer: claims.issuer,
         externalSubject: claims.subject,

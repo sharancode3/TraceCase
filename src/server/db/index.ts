@@ -8,6 +8,26 @@ export type DbClient = ReturnType<typeof drizzle<typeof schema>>;
 
 let client: postgres.Sql | null = null;
 let dbInstance: DbClient | null = null;
+let migrationPromise: Promise<void> | null = null;
+
+export async function ensureDatabaseMigrated(): Promise<void> {
+  if (process.env.NODE_ENV === 'test' || !isDbConfigured()) return;
+  if (!migrationPromise) {
+    migrationPromise = (async () => {
+      try {
+        const db = getDb();
+        const { migrate } = await import('drizzle-orm/postgres-js/migrator');
+        const path = await import('node:path');
+        const migrationsFolder = path.resolve(process.cwd(), 'drizzle/migrations');
+        await migrate(db, { migrationsFolder });
+        console.log('[TraceCase Database] Auto-migration successfully verified.');
+      } catch (err) {
+        console.warn('[TraceCase Database] Auto-migration status:', err instanceof Error ? err.message : err);
+      }
+    })();
+  }
+  await migrationPromise;
+}
 
 export function getDb(): DbClient {
   if (dbInstance) return dbInstance;
