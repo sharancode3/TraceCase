@@ -699,13 +699,16 @@ export function createCartServer(options?: {
 }
 
 // Start standalone server when executed directly via tsx or node .mjs bundle
-if (
-  require.main === module ||
-  process.argv[1]?.endsWith('cart/server.ts') ||
-  process.argv[1]?.endsWith('cart\\server.ts') ||
-  process.argv[1]?.endsWith('cart/server.mjs') ||
-  process.argv[1]?.endsWith('cart\\server.mjs')
-) {
+const isCartDirectExecution = Boolean(
+  process.argv[1] &&
+    (process.argv[1].endsWith('cart/server.ts') ||
+      process.argv[1].endsWith('cart\\server.ts') ||
+      process.argv[1].endsWith('cart/server.mjs') ||
+      process.argv[1].endsWith('cart\\server.mjs') ||
+      process.argv[1].endsWith('server.mjs'))
+);
+
+if (isCartDirectExecution) {
   const { server, port, store } = createCartServer();
   const bindHost = process.env.HOST || '0.0.0.0';
   server.listen(port, bindHost, () => {

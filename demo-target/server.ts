@@ -660,7 +660,14 @@ export function createDemoTargetServer(configOverride?: Partial<DemoTargetConfig
 }
 
 // Direct execution entrypoint when run via CLI: tsx demo-target/server.ts or node dist/demo-target/server.mjs
-if (require.main === module || process.argv[1]?.endsWith('server.ts') || process.argv[1]?.endsWith('server.js') || process.argv[1]?.endsWith('server.mjs')) {
+const isDirectExecution = Boolean(
+  process.argv[1] &&
+    (process.argv[1].endsWith('server.ts') ||
+      process.argv[1].endsWith('server.js') ||
+      process.argv[1].endsWith('server.mjs'))
+);
+
+if (isDirectExecution) {
   const instance = createDemoTargetServer();
   const bindHost = process.env.HOST || '0.0.0.0';
   instance.start(instance.config.port, bindHost).then((port) => {
