@@ -296,6 +296,9 @@ export class ExecutionLeaseService {
         isQuarantined: false,
         quarantineClearedAt: now,
         quarantineClearedBy: params.clearedBy,
+        leaseExpiresAt: new Date(now.getTime() - 1000),
+        workerInstanceId: null,
+        executionRequestId: null,
         updatedAt: now,
       })
       .where(eq(globalExecutionLeasesTable.slotName, GLOBAL_SLOT_NAME));
