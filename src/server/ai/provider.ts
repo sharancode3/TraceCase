@@ -365,7 +365,20 @@ export function normalizeLocalModelOutput(parsedRaw: unknown): unknown {
           }
         }
         if (typeof normStep.actionType === 'string') {
-          normStep.actionType = normStep.actionType.trim().toUpperCase();
+          const act = normStep.actionType.trim().toUpperCase();
+          if (act === 'SET_INPUT' || act === 'TYPE' || act === 'INPUT' || act === 'FILL_INPUT' || act === 'PRESS_KEY' || act === 'KEY_PRESS') {
+            normStep.actionType = 'FILL';
+          } else if (act === 'CLICK_BUTTON' || act === 'CLICK_LINK' || act === 'PRESS') {
+            normStep.actionType = 'CLICK';
+          } else if (act === 'GOTO' || act === 'OPEN') {
+            normStep.actionType = 'NAVIGATE';
+          } else if (act === 'SELECT_OPTION') {
+            normStep.actionType = 'SELECT';
+          } else if (act === 'WAIT' || act === 'WAIT_FOR') {
+            normStep.actionType = 'WAIT_FOR_SELECTOR';
+          } else {
+            normStep.actionType = act;
+          }
         }
         return normStep;
       });
@@ -514,7 +527,20 @@ export function normalizeLocalModelOutput(parsedRaw: unknown): unknown {
     if (rawObj.action && typeof rawObj.action === 'object') {
       const act = { ...(rawObj.action as Record<string, unknown>) };
       if (typeof act.actionType === 'string') {
-        act.actionType = act.actionType.trim().toUpperCase();
+        const a = act.actionType.trim().toUpperCase();
+        if (a === 'SET_INPUT' || a === 'TYPE' || a === 'INPUT' || a === 'FILL_INPUT' || a === 'PRESS_KEY' || a === 'KEY_PRESS') {
+          act.actionType = 'FILL';
+        } else if (a === 'CLICK_BUTTON' || a === 'CLICK_LINK' || a === 'PRESS') {
+          act.actionType = 'CLICK';
+        } else if (a === 'GOTO' || a === 'OPEN') {
+          act.actionType = 'NAVIGATE';
+        } else if (a === 'SELECT_OPTION') {
+          act.actionType = 'SELECT';
+        } else if (a === 'WAIT' || a === 'WAIT_FOR') {
+          act.actionType = 'WAIT_FOR_SELECTOR';
+        } else {
+          act.actionType = a;
+        }
       }
       rawObj.action = act;
     }
