@@ -989,7 +989,11 @@ export default function InvestigationDetailPage() {
             </div>
           </div>
           <CardDescription className="text-xs">
-            Chronological log of browser actions dispatched by the Playwright engine, verified against safety tiers and mutation guards.
+            {events.filter((e) => e.eventType === 'ACTION_EXECUTED').length > 0
+              ? 'Chronological log of browser actions dispatched by the Playwright engine, verified against safety tiers and mutation guards.'
+              : investigation?.lifecycleStatus === 'CANCELLED'
+              ? 'Planned step sequence. No browser actions were executed because the investigation was cancelled.'
+              : 'Planned step sequence. Browser actions will be recorded when dispatched by the worker daemon.'}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -1070,8 +1074,12 @@ export default function InvestigationDetailPage() {
                     <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
                       {step.tier}
                     </span>
-                    <span className="px-2 py-0.5 rounded font-semibold text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200">
-                      DISPATCHED
+                    <span className={`px-2 py-0.5 rounded font-semibold text-[10px] ${
+                      investigation?.lifecycleStatus === 'CANCELLED'
+                        ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                        : 'bg-amber-50 text-amber-700 border border-amber-200'
+                    }`}>
+                      {investigation?.lifecycleStatus === 'CANCELLED' ? 'CANCELLED BEFORE RUN' : 'PLANNED (UNEXECUTED)'}
                     </span>
                   </div>
                 </div>

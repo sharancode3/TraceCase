@@ -57,6 +57,7 @@ export async function POST(
           body: {
             status: 'CANCELLED',
             workflowRevision: result.workflowRevision,
+            cancelledAt: new Date().toISOString(),
           },
         };
       },

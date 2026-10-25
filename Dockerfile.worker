@@ -78,9 +78,9 @@ COPY --from=builder --chown=tcworker:tcgroup /app/drizzle ./drizzle
 
 USER tcworker
 
-EXPOSE 3001
+EXPOSE 3001 10000
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:${WORKER_PORT:-3001}/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:${PORT:-${WORKER_PORT:-3001}}/health || exit 1
 
 CMD ["node", "dist/worker/index.mjs"]

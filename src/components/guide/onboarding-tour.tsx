@@ -412,7 +412,7 @@ export function OnboardingTour() {
                 <RefreshCw className="w-4 h-4 text-brand-deepPurple shrink-0 mt-0.5" />
                 <div className="leading-snug">
                   <strong className="text-brand-navy font-semibold">Verified Evidence:</strong>{' '}
-                  <span className="text-brand-muted">Full MP4 video replay, console logs, and network traces.</span>
+                  <span className="text-brand-muted">Full WebM video replay, console logs, and network traces.</span>
                 </div>
               </li>
             </ul>
@@ -615,7 +615,7 @@ export function OnboardingTour() {
               <div className="grid grid-cols-3 gap-1 text-[10px] text-brand-navy">
                 <div className="bg-white p-1.5 rounded border border-neutral-divider flex flex-col items-center text-center">
                   <PlayCircle className="w-3.5 h-3.5 text-cobalt-action mb-0.5" />
-                  <span className="font-semibold">MP4 Video</span>
+                  <span className="font-semibold">WebM Video</span>
                   <span className="text-[9px] text-brand-muted">Replay</span>
                 </div>
                 <div className="bg-white p-1.5 rounded border border-neutral-divider flex flex-col items-center text-center">

@@ -195,11 +195,11 @@ export class InvestigationReportService {
       .orderBy(investigationEventsTable.emittedAt);
 
     let resetReceipt: InvestigationReportData['execution']['resetReceipt'] = null;
-    const resetEvent = events.find((e) => e.eventType === 'RESET_COMPLETED' || e.eventType === 'TARGET_RESET_RESTORED');
+    const resetEvent = events.find((e) => e.eventType === 'TARGET_RESET_COMPLETED' || e.eventType === 'RESET_COMPLETED' || e.eventType === 'TARGET_RESET_RESTORED');
     if (resetEvent && resetEvent.payload && typeof resetEvent.payload === 'object') {
       const p = resetEvent.payload as Record<string, unknown>;
       resetReceipt = {
-        isVerifiedRestored: Boolean(p.isVerifiedRestored ?? true),
+        isVerifiedRestored: Boolean(p.isVerifiedRestored === true || p.success === true),
         fixtureScope: (p.fixtureScope as string) || 'baseline',
         readbackState: (p.readbackState as Record<string, unknown>) || null,
       };
@@ -343,6 +343,9 @@ export class InvestigationReportService {
   }
 
   public renderReportHtml(data: InvestigationReportData): string {
+    const hasExecuted = Boolean(data.execution.attempt1 && data.execution.attempt1.actionsExecuted > 0);
+    const isCancelled = data.execution.lifecycleStatus === 'CANCELLED';
+    const totalArtifacts = (data.evidenceSummary.videoCapturesCount || 0) + (data.evidenceSummary.consoleLogsCount || 0) + (data.evidenceSummary.networkRequestsCount || 0);
     const verdictColor =
       data.execution.reproductionVerdict === 'CONFIRMED_REPRODUCED'
         ? '#b91c1c'
@@ -499,6 +502,14 @@ export class InvestigationReportService {
   .tag-pass { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
   .tag-fail { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
   .tag-invalid { background: #fef3c7; color: #b45309; border: 1px solid #fcd34d; }
+  h2 {
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+  .card, table, tr {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
   .footer {
     margin-top: 24px;
     border-top: 1px solid #cbd5e1;
@@ -580,9 +591,9 @@ export class InvestigationReportService {
   ` : ''}
 
   ${data.plan ? `
-  <h2>3. Executed Reproduction Plan (Rev ${data.plan.version})</h2>
+  <h2>3. ${isCancelled ? 'Approved Reproduction Plan (Cancelled Before Execution)' : !hasExecuted ? 'Approved Reproduction Plan (Not Executed)' : 'Executed Reproduction Plan'} (Rev ${data.plan.version})</h2>
   <div class="provenance-note">
-    Authoritative Plan Hash: <strong style="font-family: monospace;">${escapeHtml(data.plan.planHash)}</strong> &bull; Preconditions Met: <strong>true</strong>
+    Authoritative Plan Hash: <strong style="font-family: monospace;">${escapeHtml(data.plan.planHash)}</strong> &bull; Preconditions Met: <strong>${hasExecuted ? 'true' : isCancelled ? 'NOT EVALUATED (CANCELLED)' : 'PENDING'}</strong>
   </div>
   <table>
     <thead><tr><th style="width: 8%;">Step</th><th style="width: 15%;">Action</th><th style="width: 30%;">Target / Selector</th><th>Intent / Rationale</th></tr></thead>
@@ -645,9 +656,9 @@ export class InvestigationReportService {
     </div>
     <div class="card">
       <div class="card-title">Redaction & Safety Guard</div>
-      <div class="data-row"><span class="data-label">In-Stream Scrubbing:</span><span class="data-val">ENFORCED (TC-INV-009)</span></div>
+      <div class="data-row"><span class="data-label">In-Stream Scrubbing:</span><span class="data-val">${hasExecuted ? 'ENFORCED (TC-INV-009)' : 'NOT APPLICABLE (NO RUN)'}</span></div>
       <div class="data-row"><span class="data-label">Sensitive Header Masking:</span><span class="data-val">AUTHORIZATION, COOKIE</span></div>
-      <div class="data-row"><span class="data-label">Storage Integrity:</span><span class="data-val">SHA-256 HASH VERIFIED</span></div>
+      <div class="data-row"><span class="data-label">Storage Integrity:</span><span class="data-val">${totalArtifacts > 0 ? 'SHA-256 HASH VERIFIED' : 'NO ARTIFACTS COLLECTED'}</span></div>
     </div>
   </div>
 
@@ -673,7 +684,7 @@ export class InvestigationReportService {
 
   <div class="footer">
     <div>TraceCase Autonomous Defect Engine &bull; Non-destructive local verification</div>
-    <div>Page 1 of 1 &bull; Generated: ${escapeHtml(data.generatedAt)}</div>
+    <div>Report ID: ${escapeHtml(data.investigationId.slice(0, 8))} &bull; Generated: ${escapeHtml(data.generatedAt)}</div>
   </div>
 </div>
 </body>
@@ -689,9 +700,17 @@ export class InvestigationReportService {
       const pdf = await page.pdf({
         format: 'A4',
         printBackground: true,
+        displayHeaderFooter: true,
+        headerTemplate: '<div></div>',
+        footerTemplate: `
+          <div style="font-size: 7.5pt; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; width: 100%; display: flex; justify-content: space-between; padding: 0 15mm; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 4px;">
+            <span>TraceCase Autonomous Defect Engine &bull; Non-destructive verification</span>
+            <span>Page <span class="pageNumber"></span> of <span class="totalPages"></span> &bull; Generated: ${escapeHtml(data.generatedAt)}</span>
+          </div>
+        `,
         margin: {
           top: '15mm',
-          bottom: '15mm',
+          bottom: '20mm',
           left: '15mm',
           right: '15mm',
         },

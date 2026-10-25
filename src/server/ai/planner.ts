@@ -1,20 +1,53 @@
 
 function determineTailoredExpectedOptions(title: string, description: string): string[] {
   const combined = `${title} ${description}`.toLowerCase();
-  if (combined.includes('delete') || combined.includes('remove') || combined.includes('trash')) {
+
+  // Navigation / Visibility / Heading intent
+  if (
+    combined.includes('heading') ||
+    combined.includes('title') ||
+    combined.includes('visible') ||
+    combined.includes('display') ||
+    combined.includes('dashboard') ||
+    combined.includes('page') ||
+    combined.includes('load') ||
+    combined.includes('render')
+  ) {
+    return [
+      'The page loads and the specified heading or element is clearly visible',
+      'The element displays the expected text and accessibility attributes',
+      'The page navigation completes successfully without console errors',
+    ];
+  }
+
+  // Deletion intent (check for negation such as "do not delete" or "prohibit delete")
+  const hasNegatedDeletion = /\b(do not|don't|never|no|without|prohibit\w*|avoid|prevent)\s+[^.!?\n]*\b(delete|remove|trash|destroy)\b/i.test(
+    combined
+  );
+  if (
+    !hasNegatedDeletion &&
+    (combined.includes('delete') || combined.includes('remove') || combined.includes('trash'))
+  ) {
     return [
       'The selected item is permanently removed and unselected items remain unchanged',
       'A confirmation notification appears and item is archived',
       'The deletion operation is rejected with validation',
     ];
   }
-  if (combined.includes('cart') || combined.includes('quantity') || combined.includes('total') || combined.includes('price')) {
+
+  if (
+    combined.includes('cart') ||
+    combined.includes('quantity') ||
+    combined.includes('total') ||
+    combined.includes('price')
+  ) {
     return [
       'The subtotal updates to reflect the new quantity multiplied by unit price',
       'The cart displays an updated line item and recalculates total',
       'The quantity change is rejected if stock is insufficient',
     ];
   }
+
   return [
     'Action completes successfully and targeted item is updated',
     'No change occurs and operation is safely rejected',
@@ -217,7 +250,7 @@ export class ReportExperimentAgent {
             })
         ) ||
         Boolean(
-          /(?:expected(?:s+behavior|s+outcome|s+result)?s*[:=-]|should(?:s+be|s+stay|s+remain|s+have|s+delete|s+disappear)|supposed to|intended(?:s+behavior|s+result)?s*[:=-])/i.test(
+          /(?:expected(?:\s+behavior|\s+outcome|\s+result)?\s*[:=-]|should(?:\s+be|\s+stay|\s+remain|\s+have|\s+delete|\s+disappear|\s+display|\s+render|\s+show|\s+load|\s+appear|\s+see)|supposed to|intended(?:\s+behavior|\s+result)?\s*[:=-]|expect(?:\s+to|\s+that)?|must(?:\s+be|\s+display|\s+show|\s+load))/i.test(
             input.rawReport.description
           )
         );

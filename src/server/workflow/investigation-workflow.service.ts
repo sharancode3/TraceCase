@@ -1180,11 +1180,24 @@ export class InvestigationWorkflowService {
       })
       .where(eq(investigationsTable.id, inv.id));
 
-    await this.emitEvent(inv.id, 'EXECUTION_ADMITTED', {
-      planVersion: params.planVersion,
-      planHash: revision.planHash,
-      jobId: dispatchResult.jobId,
-    });
+    const [alreadyEmitted] = await db
+      .select({ id: investigationEventsTable.id })
+      .from(investigationEventsTable)
+      .where(
+        and(
+          eq(investigationEventsTable.investigationId, inv.id),
+          eq(investigationEventsTable.eventType, 'EXECUTION_ADMITTED')
+        )
+      )
+      .limit(1);
+
+    if (!alreadyEmitted) {
+      await this.emitEvent(inv.id, 'EXECUTION_ADMITTED', {
+        planVersion: params.planVersion,
+        planHash: revision.planHash,
+        jobId: dispatchResult.jobId,
+      });
+    }
 
     return {
       started: true,

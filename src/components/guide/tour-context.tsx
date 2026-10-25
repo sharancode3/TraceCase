@@ -176,7 +176,7 @@ export const TOUR_STEPS: TourStep[] = [
     category: 'evidence',
     summary: 'Dual-run verification, video recordings, and network traces.',
     explanation:
-      'The agent runs the bug twice across an authenticated baseline reset. Confirmed reproductions include full MP4 video replay, console logs, and network traces so developers can fix bugs immediately.',
+      'The agent runs the bug twice across an authenticated baseline reset. Confirmed reproductions include full WebM video replay, console logs, and network traces so developers can fix bugs immediately.',
     keyTakeaway: 'Engineers can fix bugs immediately without asking for repro steps.',
     preferredPosition: 'bottom',
     interactivePreviewType: 'evidence',
@@ -226,11 +226,20 @@ export function TourProvider({ children }: { children: React.ReactNode }) {
   // Initialize operator session and auth listener
   React.useEffect(() => {
     let isMounted = true;
-    fetch('/api/dev/session')
+    fetch('/api/auth/session')
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (isMounted && data?.principal?.email) {
           setOperator(data.principal.email);
+        } else if (isMounted) {
+          fetch('/api/dev/session')
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => {
+              if (isMounted && d?.principal?.email) {
+                setOperator(d.principal.email);
+              }
+            })
+            .catch(() => {});
         }
       })
       .catch(() => {});

@@ -65,7 +65,7 @@ export async function bootstrapWorker(
 
   // Health probe server
   const server = http.createServer((req, res) => {
-    if (req.url === '/health') {
+    if (req.url === '/health' || req.url === '/api/health' || req.url === '/') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({

@@ -40,6 +40,7 @@ export default function LiveInvestigationProgressPage() {
   const [liveSnapshot, setLiveSnapshot] = React.useState<InvestigationSnapshot | null>(null);
   const [isPollerActive, setIsPollerActive] = React.useState(false);
   const [pollCount, setPollCount] = React.useState(0);
+  const [workerAvailable, setWorkerAvailable] = React.useState<boolean | null>(null);
   const [pollerError, setPollerError] = React.useState<string | null>(null);
   const [isTerminal, setIsTerminal] = React.useState(false);
 
@@ -71,7 +72,10 @@ export default function LiveInvestigationProgressPage() {
     setIsCancelling(false);
 
     if (result.success) {
-      setCancellationNotice(`Execution successfully cancelled at ${new Date(result.data.cancelledAt).toLocaleTimeString()}.`);
+      const rawDate = result.data?.cancelledAt;
+      const parsedDate = rawDate ? new Date(rawDate) : new Date();
+      const timeStr = isNaN(parsedDate.getTime()) ? new Date().toLocaleTimeString() : parsedDate.toLocaleTimeString();
+      setCancellationNotice(`Execution successfully cancelled at ${timeStr}.`);
       setIsTerminal(true);
       setIsPollerActive(false);
       setLiveSnapshot((prev) => prev ? { ...prev, lifecycleStatus: 'CANCELLED' } : null);
@@ -79,6 +83,25 @@ export default function LiveInvestigationProgressPage() {
       setCancelError(`Cancellation failed (${result.error.code}): ${result.error.message}`);
     }
   };
+
+  // Check worker readiness when in QUEUED state
+  React.useEffect(() => {
+    if (liveSnapshot?.lifecycleStatus !== 'QUEUED') return;
+    let mounted = true;
+    fetch('/api/ready')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!mounted || !data) return;
+        const isReady = Boolean(data.investigationExecutionReady && data.components?.worker?.status === 'AVAILABLE');
+        setWorkerAvailable(isReady);
+      })
+      .catch(() => {
+        if (mounted) setWorkerAvailable(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [liveSnapshot?.lifecycleStatus, pollCount]);
 
   // Setup bounded snapshot and event poller
   React.useEffect(() => {
@@ -256,7 +279,11 @@ export default function LiveInvestigationProgressPage() {
                 ) : isPollerActive ? (
                   <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-300 font-semibold flex items-center space-x-1.5">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                    <span>Active Polling (Poll #{pollCount})</span>
+                    <span>
+                      {liveSnapshot?.lifecycleStatus === 'QUEUED' && workerAvailable === false
+                        ? 'Queued (Waiting for Worker Daemon)'
+                        : `Active Polling (Poll #${pollCount})`}
+                    </span>
                   </span>
                 ) : (
                   <span className="px-2.5 py-0.5 rounded-full bg-neutral-surface text-brand-muted border border-neutral-divider">
@@ -273,6 +300,18 @@ export default function LiveInvestigationProgressPage() {
               )}
             </div>
           </Card>
+
+          {liveSnapshot?.lifecycleStatus === 'QUEUED' && workerAvailable === false && (
+            <div className="p-3.5 rounded-control bg-amber-50 border border-amber-300 text-xs text-amber-900 space-y-1">
+              <div className="font-semibold flex items-center space-x-1.5 text-amber-800">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>Execution Worker Daemon Offline</span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-amber-800">
+                This investigation is queued and waiting for an active browser worker to pick up the job. The web server and database are operational, but no worker heartbeat has been received within the last 60 seconds. Start the worker daemon (<code>pnpm worker</code>) to execute queued investigations.
+              </p>
+            </div>
+          )}
 
           {/* Current Snapshot Details */}
           {liveSnapshot ? (
@@ -451,7 +490,9 @@ export default function LiveInvestigationProgressPage() {
                 <p className="text-xs text-brand-muted py-4 text-center">Waiting for browser worker to emit execution events...</p>
               ) : (
                 <div className="divide-y divide-neutral-divider/60 font-sans text-xs">
-                  {events.map((evt) => {
+                  {events
+                    .filter((evt, idx, arr) => !(evt.eventType === 'EXECUTION_ADMITTED' && arr[idx - 1]?.eventType === 'EXECUTION_ADMITTED'))
+                    .map((evt) => {
                     const msg = (evt.payload?.message as string) || evt.eventType;
                     const isError = evt.eventType.includes('FAIL') || evt.eventType.includes('ERROR');
                     const isSuccess = evt.eventType.includes('COMPLETED') || evt.eventType.includes('APPROVED');

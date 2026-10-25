@@ -4,7 +4,7 @@ services:
     name: tracecase-api
     runtime: docker
     dockerfilePath: ./Dockerfile.web
-    plan: standard
+    plan: free
     region: oregon
     healthCheckPath: /api/health
     envVars:
@@ -60,12 +60,13 @@ services:
         sync: false
 
   # 2. TraceCase Background Playwright Browser Worker
-  - type: worker
+  - type: web
     name: tracecase-worker
     runtime: docker
     dockerfilePath: ./Dockerfile.worker
-    plan: standard
+    plan: free
     region: oregon
+    healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
@@ -106,7 +107,7 @@ services:
   - type: web
     name: tracecase-target-workbench
     runtime: node
-    plan: starter
+    plan: free
     region: oregon
     buildCommand: pnpm install --frozen-lockfile && pnpm build:target:workbench
     startCommand: pnpm start:target:workbench
@@ -128,7 +129,7 @@ services:
   - type: web
     name: tracecase-target-cart
     runtime: node
-    plan: starter
+    plan: free
     region: oregon
     buildCommand: pnpm install --frozen-lockfile && pnpm build:target:cart
     startCommand: pnpm start:target:cart
@@ -150,5 +151,5 @@ databases:
   - name: tracecase-db
     databaseName: tracecase
     user: tc_user
-    plan: starter
+    plan: free
     region: oregon

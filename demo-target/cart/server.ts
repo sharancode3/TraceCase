@@ -341,7 +341,7 @@ export function createCartServer(options?: {
         <button type="button" class="filter-tab" data-category="Hardware" role="tab" aria-selected="false">Hardware</button>
         <button type="button" class="filter-tab" data-category="Accessories" role="tab" aria-selected="false">Accessories</button>
       </div>
-      <input type="number" min="0" id="catalog-search" class="search-input" placeholder="Search catalog..." aria-label="Search catalog items" />
+      <input type="text" id="catalog-search" class="search-input" placeholder="Search catalog..." aria-label="Search catalog items" />
       <div id="product-list">
         ${CATALOG.map((p) => `
           <div class="product-card" id="catalog-${p.id}" data-product-id="${p.id}" data-category="${p.category}" data-product-name="${p.name.toLowerCase()}">

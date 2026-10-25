@@ -82,6 +82,7 @@ Only use standard valid selectors grounded in the actual web interface:
   - For list items or work queue items: use 'li:has-text("Item Title")', '[data-item-id="..."]', '[data-task-id="..."]', or '#<item-id>'
   - For table rows or cart items: use 'tr:has-text("Product Name")', '[data-cart-item-id="..."]', '#subtotal-<id>', or '[data-testid="item-subtotal"]'
   - For buttons: use 'button:has-text("...")' or 'button[aria-label*="..."]'
+  - For headings or titles: use flexible heading selectors such as ':is(h1, h2, h3, [role="heading"]):has-text("...")' or 'h1, h2, h3' instead of assuming an exact h1 tag, to prevent grounding failures when pages use h2 headings
 - NEVER use bare ':has-text("...")' without a tag prefix. Bare ':has-text()' matches all ancestor tags and causes ambiguity failures during initial witness checks.
 - To locate by stable verified attributes: '[data-item-id="..."]', '[data-task-id="..."]', '[id="..."]'
 - To locate cart totals or fields: '#cart-subtotal', '[data-testid="subtotal"]', ':has-text("$120.00")'

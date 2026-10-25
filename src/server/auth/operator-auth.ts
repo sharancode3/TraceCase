@@ -112,7 +112,7 @@ export async function createOperatorToken(options?: {
   const audience = env.AUTH_AUDIENCE || 'tracecase-api';
   const email = options?.email || 'operator@tracecase.local';
   const sub = options?.subject || `op-${Buffer.from(email).toString('base64').replace(/=/g, '')}`;
-  const roles = options?.roles || ['operator', 'admin'];
+  const roles = options?.roles || (email.startsWith('admin') ? ['operator', 'admin'] : ['operator']);
   const expiresIn = options?.expiresIn || '24h';
 
   return new jose.SignJWT({

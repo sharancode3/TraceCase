@@ -200,16 +200,29 @@ function generateGroundedAnswer(ctx: {
     q.includes('navigate')
   ) {
     const rawSteps = (ctx.plan?.planPayload as any)?.steps || [];
-    let stepsText = `The browser executed ${rawSteps.length} planned steps across each test attempt:\n`;
+    let stepsText = '';
+    const executedCount = ctx.actionEvents.length;
+    const attemptsCount = ctx.attempts.length;
+
+    if (executedCount === 0 && attemptsCount === 0) {
+      if (lifecycle === 'CANCELLED') {
+        stepsText = `No browser actions were executed. This investigation was cancelled before browser execution began. The plan contained ${rawSteps.length} planned step(s):\n`;
+      } else {
+        stepsText = `No browser actions have executed yet (current status: ${lifecycle}). The planned sequence contains ${rawSteps.length} step(s):\n`;
+      }
+    } else {
+      stepsText = `The browser executed ${executedCount} action receipts across ${attemptsCount} test attempt(s). Planned steps:\n`;
+    }
 
     rawSteps.forEach((s: any, idx: number) => {
       const tool = s.toolKind || s.actionType || 'ACTION';
       const targetDesc = s.targetAccessibleName || s.targetRole || s.selector || s.value || '';
-      stepsText += `\n${idx + 1}. [${tool}] ${s.intentDescription || s.semanticAction || 'Perform action'} ${targetDesc ? `(${targetDesc})` : ''}`;
+      const statusLabel = executedCount > 0 ? '' : ' [Planned]';
+      stepsText += `\n${idx + 1}. [${tool}]${statusLabel} ${s.intentDescription || s.semanticAction || 'Perform action'} ${targetDesc ? `(${targetDesc})` : ''}`;
 
       citations.push({
         type: 'STEP',
-        label: `Step ${idx + 1}: ${tool}`,
+        label: `Step ${idx + 1}: ${tool}${statusLabel}`,
         stepIndex: idx,
         link: `/investigations/${ctx.investigationId}#action-timeline`,
       });
@@ -235,19 +248,23 @@ function generateGroundedAnswer(ctx: {
     q.includes('expected') ||
     q.includes('observed')
   ) {
-    let assertText = `Evaluated Assertions (${ctx.evaluations.length} total across runs):\n`;
+    let assertText = '';
+    if (ctx.evaluations.length === 0) {
+      assertText = `No assertions were evaluated for investigation ${ctx.investigationId.slice(0, 8)} because browser execution was not run (status: ${lifecycle}).`;
+    } else {
+      assertText = `Evaluated Assertions (${ctx.evaluations.length} total across runs):\n`;
+      ctx.evaluations.slice(0, 4).forEach((ev: any) => {
+        assertText += `\n- Attempt ${ev.attemptNumber} [${ev.purpose}]: Result = ${ev.result}. Expected '${ev.expectedValue}', observed '${ev.observedValue}'. (${ev.details || ''})`;
 
-    ctx.evaluations.slice(0, 4).forEach((ev: any) => {
-      assertText += `\n- Attempt ${ev.attemptNumber} [${ev.purpose}]: Result = ${ev.result}. Expected '${ev.expectedValue}', observed '${ev.observedValue}'. (${ev.details || ''})`;
-
-      citations.push({
-        type: 'ASSERTION',
-        label: `Attempt ${ev.attemptNumber} Assertion (${ev.result})`,
-        assertionId: ev.assertionId,
-        attemptNumber: ev.attemptNumber,
-        link: `/investigations/${ctx.investigationId}#assertions-table`,
+        citations.push({
+          type: 'ASSERTION',
+          label: `Attempt ${ev.attemptNumber} Assertion (${ev.result})`,
+          assertionId: ev.assertionId,
+          attemptNumber: ev.attemptNumber,
+          link: `/investigations/${ctx.investigationId}#assertions-table`,
+        });
       });
-    });
+    }
 
     followups.push('Was Attempt 2 identical to Attempt 1?');
     followups.push('How was state reset between attempts?');
@@ -269,18 +286,23 @@ function generateGroundedAnswer(ctx: {
     q.includes('network') ||
     q.includes('recording')
   ) {
-    const videoStatus = ctx.canonicalReport?.evidence?.videoRecording?.status || 'RESTRICTED_RAW';
-    const consoleCount = ctx.canonicalReport?.evidence?.consoleLogs?.entryCount ?? 0;
-    const networkCount = ctx.canonicalReport?.evidence?.networkTrace?.requestCount ?? 0;
+    let evidenceText = '';
+    if (ctx.attempts.length === 0 && ctx.actionEvents.length === 0) {
+      evidenceText = `No runtime evidence artifacts were collected for investigation ${ctx.investigationId.slice(0, 8)} because browser execution was not run (status: ${lifecycle}). When an investigation is executed by the browser worker, screen recording video, console logs, and network traces are quarantined and recorded.`;
+    } else {
+      const videoStatus = ctx.canonicalReport?.evidence?.videoRecording?.status || 'RESTRICTED_RAW';
+      const consoleCount = ctx.canonicalReport?.evidence?.consoleLogs?.entryCount ?? 0;
+      const networkCount = ctx.canonicalReport?.evidence?.networkTrace?.requestCount ?? 0;
 
-    const evidenceText = `Evidence collected for investigation ${ctx.investigationId.slice(0, 8)}:
-- Video Recording: Available in ${videoStatus} quarantine. Screen actions were recorded for both execution attempts.
-- Console Logs: ${consoleCount} runtime entries captured. (0 errors is normal for clean target applications).
+      evidenceText = `Evidence collected for investigation ${ctx.investigationId.slice(0, 8)}:
+- Video Recording: Available in ${videoStatus} quarantine. Screen actions were recorded for the executed attempts.
+- Console Logs: ${consoleCount} runtime entries captured.
 - Network Traces: ${networkCount} HTTP requests monitored. Allowed origins were strictly enforced by network guards.`;
+    }
 
     citations.push({
       type: 'EVIDENCE',
-      label: `Evidence Manifest (${videoStatus})`,
+      label: 'Evidence Manifest',
       link: `/investigations/${ctx.investigationId}#evidence-section`,
     });
 
