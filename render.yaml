@@ -109,8 +109,8 @@ services:
     runtime: node
     plan: free
     region: oregon
-    buildCommand: pnpm install --frozen-lockfile && pnpm build:target:workbench
-    startCommand: pnpm start:target:workbench
+    buildCommand: npm install -g pnpm && pnpm install --frozen-lockfile && pnpm build:target:workbench
+    startCommand: node dist/demo-target/server.mjs
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
@@ -131,8 +131,8 @@ services:
     runtime: node
     plan: free
     region: oregon
-    buildCommand: pnpm install --frozen-lockfile && pnpm build:target:cart
-    startCommand: pnpm start:target:cart
+    buildCommand: npm install -g pnpm && pnpm install --frozen-lockfile && pnpm build:target:cart
+    startCommand: node dist/demo-target/cart/server.mjs
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
