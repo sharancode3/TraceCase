@@ -87,13 +87,27 @@ export class ExecutionLeaseService {
       }
 
       if (existing.isQuarantined) {
-        return {
-          acquired: false,
-          reason: 'SLOT_QUARANTINED',
-          quarantineReason: existing.quarantineReason,
-          epoch: existing.ownershipEpoch,
-          expiresAt: existing.leaseExpiresAt,
-        };
+        const isQuarantineStale = existing.leaseExpiresAt.getTime() <= now.getTime();
+        if (isQuarantineStale) {
+          console.log('[ExecutionLeaseService] Auto-recovering stale slot quarantine...');
+          await db
+            .update(globalExecutionLeasesTable)
+            .set({
+              isQuarantined: false,
+              quarantineClearedAt: now,
+              quarantineClearedBy: 'auto-recovery',
+              updatedAt: now,
+            })
+            .where(eq(globalExecutionLeasesTable.slotName, GLOBAL_SLOT_NAME));
+        } else {
+          return {
+            acquired: false,
+            reason: 'SLOT_QUARANTINED',
+            quarantineReason: existing.quarantineReason,
+            epoch: existing.ownershipEpoch,
+            expiresAt: existing.leaseExpiresAt,
+          };
+        }
       }
 
       const isExpired = existing.leaseExpiresAt.getTime() <= now.getTime();

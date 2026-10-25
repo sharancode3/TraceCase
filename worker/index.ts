@@ -88,6 +88,18 @@ export async function bootstrapWorker(
 
   // Health probe server
   const server = http.createServer((req, res) => {
+    if (req.url === '/clear-quarantine' || req.url === '/api/clear-quarantine') {
+      executionLeaseService.clearQuarantine({ clearedBy: 'worker-admin' })
+        .then(() => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, message: 'Lease quarantine cleared' }));
+        })
+        .catch((err) => {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: err.message }));
+        });
+      return;
+    }
     if (req.url === '/logs' || req.url === '/diagnostics' || req.url === '/api/diagnostics') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
