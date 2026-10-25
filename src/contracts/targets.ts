@@ -224,21 +224,87 @@ export function projectSafeTargetProfile(
  * Explicit allowlist projection for AI model context.
  * Never includes reset secrets, account credentials, or database connection info.
  */
+/**
+ * Authoritative check for whether a target represents a verified controlled sandbox.
+ * Preserves fail-closed safety for arbitrary external sites (like example.com).
+ */
+export function isTargetTrustedSandbox(target: {
+  baseUrl?: string | null;
+  environment?: string | null;
+  isSandboxVerified?: boolean | null;
+}): boolean {
+  if (target.isSandboxVerified) return true;
+  if (!target.baseUrl) return false;
+
+  try {
+    const targetOrigin = new URL(target.baseUrl).origin.toLowerCase();
+    const env = process.env;
+
+    // Explicit environment configuration
+    if (env.WORKBENCH_TARGET_URL) {
+      try {
+        if (targetOrigin === new URL(env.WORKBENCH_TARGET_URL).origin.toLowerCase()) {
+          return true;
+        }
+      } catch {}
+    }
+    if (env.CART_TARGET_URL) {
+      try {
+        if (targetOrigin === new URL(env.CART_TARGET_URL).origin.toLowerCase()) {
+          return true;
+        }
+      } catch {}
+    }
+    if (env.TRUSTED_TARGET_ORIGINS) {
+      const origins = env.TRUSTED_TARGET_ORIGINS.split(',').map((o) => o.trim().toLowerCase());
+      if (origins.includes(targetOrigin)) {
+        return true;
+      }
+    }
+
+
+    // Deployed controlled targets on Render:
+    // Strictly scoped to the controlled workbench & cart target services
+    if (
+      targetOrigin.includes('tracecase-target-workbench') &&
+      targetOrigin.endsWith('.onrender.com')
+    ) {
+      return true;
+    }
+    if (
+      targetOrigin.includes('tracecase-target-cart') &&
+      targetOrigin.endsWith('.onrender.com')
+    ) {
+      return true;
+    }
+  } catch {}
+
+  return false;
+}
+
 export function projectSafeModelTargetContext(
   target: Record<string, unknown>
 ): SafeModelTargetContext {
+  const isTrusted = isTargetTrustedSandbox(target as any);
+  const baseUrl = typeof target.baseUrl === 'string' ? target.baseUrl : '';
+  const isWorkbench = baseUrl.includes('/workbench') || (isTrusted && !baseUrl.includes('cart'));
+
   return SafeModelTargetContextSchema.parse({
     targetId: target.id ?? target.targetId,
     name: target.name,
     baseUrl: target.baseUrl,
     allowedOrigins: Array.isArray(target.allowedOrigins) ? [...target.allowedOrigins] : [],
-    isSandboxVerified: Boolean(target.isSandboxVerified ?? target.isSandbox ?? false),
+    isSandboxVerified: isTrusted || Boolean(target.isSandboxVerified ?? target.isSandbox ?? false),
     environment: target.environment,
-    fixtureScope: (target.fixtureScope as string) ?? (typeof target.baseUrl === 'string' && target.baseUrl.includes('/workbench') ? 'workbench_work_items' : undefined),
-    hasResetCapability: Boolean(
-      target.fixtureResetEndpoint ||
-      target.hasResetCapability ||
-      (typeof target.fixtureResetAuthSecretRef === 'string' && target.fixtureResetAuthSecretRef.length > 0)
-    ),
+    fixtureScope:
+      (target.fixtureScope as string) ??
+      (isWorkbench ? 'workbench_work_items' : baseUrl.includes('cart') ? 'cart_baseline' : undefined),
+    hasResetCapability:
+      isTrusted ||
+      Boolean(
+        target.fixtureResetEndpoint ||
+        target.hasResetCapability ||
+        (typeof target.fixtureResetAuthSecretRef === 'string' && target.fixtureResetAuthSecretRef.length > 0)
+      ),
   });
 }

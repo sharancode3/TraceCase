@@ -25,7 +25,7 @@ import {
   AttemptValidity,
   MutationUncertainty,
 } from '@/contracts/status';
-import { projectSafeModelTargetContext } from '@/contracts/targets';
+import { projectSafeModelTargetContext, isTargetTrustedSandbox } from '@/contracts/targets';
 import { InvestigationSnapshot } from '@/contracts/investigations';
 import {
   ReportClarificationAgentPort,
@@ -168,6 +168,31 @@ export class InvestigationWorkflowService {
 
     if (!report || !target) {
       throw new NotFoundError('Report or Target', params.investigationId);
+    }
+
+    const isSandboxTrusted = isTargetTrustedSandbox(target);
+    if (isSandboxTrusted && !target.isSandboxVerified) {
+      try {
+        const targetOrigin = new URL(target.baseUrl).origin;
+        const isCart = target.baseUrl.includes('cart') || target.name.toLowerCase().includes('cart');
+        const defaultEndpoint = `${targetOrigin}/api/test/reset-fixture`;
+        const defaultSecretRef = isCart ? 'env:CART_RESET_SECRET' : 'env:TARGET_RESET_SECRET';
+        const defaultScope = isCart ? 'cart_baseline' : 'workbench_work_items';
+
+        await db
+          .update(targetsTable)
+          .set({
+            isSandboxVerified: true,
+            fixtureResetEndpoint: target.fixtureResetEndpoint || defaultEndpoint,
+            fixtureResetAuthSecretRef: target.fixtureResetAuthSecretRef || defaultSecretRef,
+            updatedAt: new Date(),
+          })
+          .where(eq(targetsTable.id, target.id));
+
+        target.isSandboxVerified = true;
+        if (!target.fixtureResetEndpoint) target.fixtureResetEndpoint = defaultEndpoint;
+        if (!target.fixtureResetAuthSecretRef) target.fixtureResetAuthSecretRef = defaultSecretRef;
+      } catch {}
     }
 
     const safeTargetContext = projectSafeModelTargetContext(target as unknown as Record<string, unknown>);

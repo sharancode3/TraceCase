@@ -100,6 +100,16 @@ function mapPlanAssertionToTypedAssertion(
     }
   }
 
+  // Priority 4: Refine Cart quantity assertions targeting broad row to exact input
+  const isCartRowQuantityCheck =
+    Boolean(resolvedSelector &&
+    (resolvedSelector.includes('tr:has-text') || resolvedSelector.includes('cart-row') || resolvedSelector.toLowerCase().includes('keyboard')) &&
+    (String(assertion.expectedValue) === '2' || String(assertion.expectedValue) === '1' || /quantity/i.test(assertion.description || '')));
+
+  if (isCartRowQuantityCheck) {
+    resolvedSelector = 'input[data-testid="item-quantity"], #qty-prod-keyboard, input.qty-val';
+  }
+
   // Validate and translate only combinations supported by the actual collector and evaluator
   if (assertion.target === 'DOM_ELEMENT') {
     if (assertion.expectedCondition === 'EXISTS') {
@@ -110,10 +120,22 @@ function mapPlanAssertionToTypedAssertion(
       kind = 'ENTITY_PRESENCE';
       source = 'DOM_ELEMENT';
       operator = 'NOT_EXISTS';
-    } else if (assertion.expectedCondition === 'TEXT_CONTAINS') {
+    } else if (assertion.expectedCondition === 'TEXT_CONTAINS' || (assertion.expectedCondition as string) === 'CONTAINS') {
       kind = 'VALUE_COMPARISON';
       source = 'DOM_TEXT';
-      operator = 'CONTAINS';
+      operator = isCartRowQuantityCheck ? 'EQUALS' : 'CONTAINS';
+    } else if ((assertion.expectedCondition as string) === 'TEXT_NOT_CONTAINS' || (assertion.expectedCondition as string) === 'NOT_CONTAINS') {
+      kind = 'VALUE_COMPARISON';
+      source = 'DOM_TEXT';
+      operator = 'NOT_CONTAINS';
+    } else if ((assertion.expectedCondition as string) === 'EQUALS' || (assertion.expectedCondition as string) === 'TEXT_EQUALS' || (assertion.expectedCondition as string) === 'VALUE_EQUALS') {
+      kind = 'VALUE_COMPARISON';
+      source = 'DOM_TEXT';
+      operator = 'EQUALS';
+    } else if ((assertion.expectedCondition as string) === 'NOT_EQUALS') {
+      kind = 'VALUE_COMPARISON';
+      source = 'DOM_TEXT';
+      operator = 'NOT_EQUALS';
     } else {
       throw new Error(
         `Unsupported condition '${assertion.expectedCondition}' for DOM_ELEMENT assertion target.`
@@ -393,6 +415,35 @@ export class IntegratedReportClarificationAgent implements ReportClarificationAg
           'OPENAI_API_KEY authentication failed with provider.'
         );
       }
+
+      // Priority 3: Recoverable clarification handling for conflicting AI assertion semantics
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (errMsg.includes('Semantic conflict') || errMsg.includes('identical verification semantics') || errMsg.includes('identical predicateIds')) {
+        return {
+          status: 'CLARIFICATION_NEEDED',
+          preliminaryUnderstanding: 'Clarification needed to establish distinct, non-conflicting criteria between expected behavior and reported failure.',
+          questions: [
+            {
+              questionIndex: 0,
+              questionId: 'clarify_verification_criteria',
+              questionText: 'What specific observable outcome indicates correct behavior versus the defect?',
+              explanation: 'The initial report produced identical criteria for both success and failure states. Clarifying the distinct symptom allows an accurate plan.',
+              suggestedOptions: [
+                'Normal operation succeeds without error; Defect shows error message or unexpected layout',
+                'Updated data or total is reflected; Defect leaves data or total unchanged',
+                'Action completes successfully; Defect blocks or reverts the change',
+              ],
+              purpose: 'EXPECTED_BEHAVIOR',
+              options: [
+                'Normal operation succeeds without error; Defect shows error message or unexpected layout',
+                'Updated data or total is reflected; Defect leaves data or total unchanged',
+                'Action completes successfully; Defect blocks or reverts the change',
+              ],
+            },
+          ],
+        };
+      }
+
       throw err;
     }
 

@@ -77,6 +77,17 @@ export async function resolvePrincipal(req: Request): Promise<Principal | null> 
     }
   }
 
+  // Check query param token for PDF tab / downloads
+  if (!token) {
+    try {
+      const url = new URL(req.url);
+      const qToken = url.searchParams.get('token');
+      if (qToken && qToken.trim().length > 0) {
+        token = qToken.trim();
+      }
+    } catch {}
+  }
+
   if (!token) {
     return null;
   }

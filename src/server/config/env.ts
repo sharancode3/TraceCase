@@ -72,8 +72,9 @@ const ServerEnvSchema = z.object({
   // Local Development Authentication Bootstrap (strictly forbidden in production)
   ENABLE_DEV_AUTH: z.preprocess((val) => {
     if (typeof val === 'string') return val.toLowerCase() === 'true';
-    return Boolean(val);
-  }, z.boolean()).default(true),
+    if (typeof val === 'boolean') return val;
+    return process.env.NODE_ENV !== 'production';
+  }, z.boolean()).default(process.env.NODE_ENV !== 'production'),
 });
 
 export type ServerEnv = z.infer<typeof ServerEnvSchema>;

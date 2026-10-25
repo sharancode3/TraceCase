@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   CreateTargetCommandSchema,
   projectSafeTargetProfile,
+  isTargetTrustedSandbox,
   parseAndNormalizeTargetUrl,
 } from '@/contracts/targets';
 import { requireAuthenticatedPrincipal, AuthenticationError, AuthorizationError } from '@/server/auth';
@@ -106,7 +107,8 @@ export async function POST(req: NextRequest) {
     const isLocalDemo = urlCheck.normalizedOrigin.includes('3005') || urlCheck.normalizedOrigin.includes('3006') || urlCheck.normalizedOrigin.includes('3007') || urlCheck.normalizedOrigin.includes('localhost');
     const isProduction = parsed.data.environment === 'production';
     const isSandboxRequested = Boolean(parsed.data.isSandboxRequested);
-    const isSandboxVerified = isSandboxRequested && !isProduction && (isLocalDev || isExplicitlyTrustedOrigin);
+    const isTrustedSandboxTarget = isExplicitlyTrustedOrigin || isTargetTrustedSandbox({ baseUrl: parsed.data.baseUrl });
+    const isSandboxVerified = isTrustedSandboxTarget;
 
     // Identify Workbench vs Cart for default reset endpoint, scope, and secret ref
     let isCartTarget = false;

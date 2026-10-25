@@ -18,6 +18,7 @@ import { PlaywrightBrowserWorker } from '@/server/browser';
 import { TwoAttemptController } from '@/server/verification/two-attempt-controller';
 import type { BrowserWorkerPort, BrowserInvestigationAgentPort } from '@/server/services/ports';
 import { getServiceContainer } from '@/server/services/service-container';
+import { ensureDatabaseMigrated } from '@/server/db';
 
 export async function bootstrapWorker(
   customQueue?: QueueAdapter,
@@ -66,10 +67,11 @@ export async function bootstrapWorker(
   // Health probe server
   const server = http.createServer((req, res) => {
     if (req.url === '/health' || req.url === '/api/health' || req.url === '/') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      const isHealthy = !isShuttingDown && queue.isHealthy();
+      res.writeHead(isHealthy ? 200 : 503, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
-          status: isShuttingDown ? 'draining' : 'healthy',
+          status: isShuttingDown ? 'draining' : (isHealthy ? 'healthy' : 'unhealthy'),
           workerId: config.workerId,
           concurrency: config.concurrency,
           activeJobs: activeJobCount,
@@ -90,6 +92,9 @@ export async function bootstrapWorker(
   });
 
   try {
+    await ensureDatabaseMigrated().catch((migErr) => {
+      console.warn('[TraceCase Worker] Auto-migration check on startup:', migErr instanceof Error ? migErr.message : migErr);
+    });
     await queue.start();
     console.log('[TraceCase Worker] Queue adapter initialized and listening.');
 
@@ -128,7 +133,9 @@ export async function bootstrapWorker(
       status: 'ACTIVE',
       activeJobs: 0,
       pid: process.pid,
-    }).catch(() => {});
+    }).catch((hbErr) => {
+      console.error('[TraceCase Worker] Initial worker heartbeat failed:', hbErr);
+    });
 
     // Periodic worker heartbeat (every 10s)
     const heartbeatInterval = setInterval(async () => {

@@ -76,6 +76,21 @@ Every assertion in BOTH arrays MUST include:
 - "expectedValue": string, number, or boolean (e.g. true, false, "Active", 200)
 - "description": string explaining what is verified
 
+CRITICAL ASSERTION SEMANTICS & MUTUAL EXCLUSIVITY RULES:
+- "correctBehaviorAssertions" and "reportedFailureAssertions" MUST represent distinct, opposing test outcomes.
+- They must NEVER share identical predicate IDs, and must NEVER have identical verification semantics (same target, selector, condition, and value).
+- If correctBehaviorAssertions asserts an element EXISTS or has specific text, reportedFailureAssertions must assert that element is NOT_EXISTS or exhibits the failure signature (e.g. error message, previous state).
+- Contradictory plans with identical correct and failure assertions fail validation and will be rejected.
+
+CART TARGET VERIFICATION RULES:
+- When testing quantity changes in cart:
+  - Assert the quantity input's exact numeric value:
+    target: "DOM_ELEMENT", selector: "input[data-testid=\"item-quantity\"], #qty-prod-keyboard, input.qty-val", expectedCondition: "TEXT_CONTAINS", expectedValue: 2 (or 1)
+  - NEVER assert the quantity by broad text matching on the row (such as tr:has-text("2")), because prices like "$120.00" contain the digit "2" and will produce false positives.
+  - Assert the line subtotal and the order total SEPARATELY:
+    - Line subtotal: selector: "[data-testid=\"item-subtotal\"], [data-testid=\"subtotal\"], #subtotal-prod-keyboard", expectedCondition: "TEXT_CONTAINS", expectedValue: "$240.00" for correct behavior, "$120.00" for reported failure.
+    - Order total: selector: "[data-testid=\"cart-total\"], #cart-total", expectedCondition: "TEXT_CONTAINS", expectedValue: "$240.00" for correct behavior, "$120.00" for reported failure.
+
 CRITICAL ASSERTION SELECTOR GROUNDING RULES:
 Only use standard valid selectors grounded in the actual web interface:
 - SELECTORS MUST BE TAG-SCOPED (never use bare ':has-text(...)' without a tag prefix):
@@ -85,7 +100,7 @@ Only use standard valid selectors grounded in the actual web interface:
   - For headings or titles: use flexible heading selectors such as ':is(h1, h2, h3, [role="heading"]):has-text("...")' or 'h1, h2, h3' instead of assuming an exact h1 tag, to prevent grounding failures when pages use h2 headings
 - NEVER use bare ':has-text("...")' without a tag prefix. Bare ':has-text()' matches all ancestor tags and causes ambiguity failures during initial witness checks.
 - To locate by stable verified attributes: '[data-item-id="..."]', '[data-task-id="..."]', '[id="..."]'
-- To locate cart totals or fields: '#cart-subtotal', '[data-testid="subtotal"]', ':has-text("$120.00")'
+- To locate cart totals or fields: '#cart-total', '[data-testid="cart-total"]', '[data-testid="item-subtotal"]', '#subtotal-prod-keyboard'
 NEVER INVENT NON-EXISTENT HTML ATTRIBUTES (such as '[data-work-item-name="..."]', '[data-task-name="..."]', '[data-card-title="..."]'). Invented attributes cause grounding failures.
 
 Example PLAN_PROPOSED format:

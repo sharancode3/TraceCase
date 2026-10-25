@@ -117,6 +117,47 @@ export default function InvestigationDetailPage() {
   const [pdfNotice, setPdfNotice] = React.useState<string | null>(null);
   const [pdfError, setPdfError] = React.useState<string | null>(null);
   const [showReportPreview, setShowReportPreview] = React.useState(false);
+  // Investigation lookup state
+  const [investigation, setInvestigation] = React.useState<InvestigationSnapshot | null>(null);
+  const [realPlan, setRealPlan] = React.useState<AuthoritativeExperimentPlan | null>(null);
+  const [realArtifacts, setRealArtifacts] = React.useState<ArtifactItem[]>([]);
+  const [realConsoleLogs, setRealConsoleLogs] = React.useState<ConsoleLogEntry[]>([]);
+  const [realNetworkTraces, setRealNetworkTraces] = React.useState<NetworkTraceEntry[]>([]);
+  const [selectedAttempt, setSelectedAttempt] = React.useState<number>(1);
+  const [isLoading, setIsLoading] = React.useState(true);
+  const [notFound, setNotFound] = React.useState(false);
+
+const [pdfPreviewLoading, setPdfPreviewLoading] = React.useState(false);
+  const [pdfPreviewError, setPdfPreviewError] = React.useState<string | null>(null);
+  const [pdfBlobUrl, setPdfBlobUrl] = React.useState<string | null>(null);
+
+  const loadPdfPreview = React.useCallback(async () => {
+    if (!investigation) return;
+    setPdfPreviewLoading(true);
+    setPdfPreviewError(null);
+    try {
+      const res = await fetch(`/api/v1/investigations/${investigation.id}/report/pdf`, {
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson?.error?.message || `PDF generation returned HTTP ${res.status}: ${res.statusText}`);
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      setPdfBlobUrl(url);
+    } catch (err) {
+      setPdfPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPdfPreviewLoading(false);
+    }
+  }, [investigation]);
+
+  React.useEffect(() => {
+    if (showReportPreview && !pdfBlobUrl && !pdfPreviewLoading && !pdfPreviewError) {
+      loadPdfPreview();
+    }
+  }, [showReportPreview, pdfBlobUrl, pdfPreviewLoading, pdfPreviewError, loadPdfPreview]);
 
   const handleDownloadPdf = async () => {
     if (!investigation) return;
@@ -146,16 +187,6 @@ export default function InvestigationDetailPage() {
       setIsDownloadingPdf(false);
     }
   };
-
-  // Investigation lookup state
-  const [investigation, setInvestigation] = React.useState<InvestigationSnapshot | null>(null);
-  const [realPlan, setRealPlan] = React.useState<AuthoritativeExperimentPlan | null>(null);
-  const [realArtifacts, setRealArtifacts] = React.useState<ArtifactItem[]>([]);
-  const [realConsoleLogs, setRealConsoleLogs] = React.useState<ConsoleLogEntry[]>([]);
-  const [realNetworkTraces, setRealNetworkTraces] = React.useState<NetworkTraceEntry[]>([]);
-  const [selectedAttempt, setSelectedAttempt] = React.useState<number>(1);
-  const [isLoading, setIsLoading] = React.useState(true);
-  const [notFound, setNotFound] = React.useState(false);
 
   // Action events and timeline state
   const [events, setEvents] = React.useState<any[]>([]);
@@ -2153,7 +2184,7 @@ export default function InvestigationDetailPage() {
               </div>
               <div className="flex items-center space-x-2">
                 <a
-                  href={`/api/v1/investigations/${investigation.id}/report/pdf`}
+                  href={pdfBlobUrl || `/api/v1/investigations/${investigation.id}/report/pdf`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-xs text-cobalt-action font-semibold hover:underline px-2.5 py-1 border border-cobalt-action rounded flex items-center space-x-1"
@@ -2180,12 +2211,41 @@ export default function InvestigationDetailPage() {
                 </Button>
               </div>
             </div>
-            <div className="flex-1 overflow-auto p-2 bg-slate-100">
-              <iframe
-                src={`/api/v1/investigations/${investigation.id}/report/pdf`}
-                className="w-full h-[70vh] rounded border border-neutral-divider bg-white"
-                title="Investigation Report PDF Preview"
-              />
+            <div className="flex-1 overflow-auto p-2 bg-slate-100 flex flex-col items-center justify-center min-h-[70vh]">
+              {pdfPreviewLoading ? (
+                <div className="flex flex-col items-center justify-center p-12 text-center bg-white rounded border border-neutral-divider w-full h-[70vh]">
+                  <Loader2 className="w-8 h-8 animate-spin text-cobalt-action mb-3" />
+                  <p className="text-sm font-semibold text-slate-800">Generating and rendering investigation PDF report...</p>
+                  <p className="text-xs text-slate-500 mt-1">Assembling verified attempt timelines, assertions, and redaction audit.</p>
+                </div>
+              ) : pdfPreviewError ? (
+                <div className="flex flex-col items-center justify-center p-8 text-center bg-white rounded border border-amber-300 w-full h-[70vh]">
+                  <AlertTriangle className="w-10 h-10 text-amber-600 mb-3" />
+                  <h4 className="text-sm font-bold text-slate-900">PDF Preview Could Not Be Loaded</h4>
+                  <p className="text-xs text-slate-600 mt-1 max-w-md">{pdfPreviewError}</p>
+                  <div className="flex gap-2 mt-4">
+                    <Button size="sm" variant="outline" onClick={loadPdfPreview}>
+                      Retry Preview
+                    </Button>
+                    <Button size="sm" variant="primary" onClick={handleDownloadPdf} disabled={isDownloadingPdf}>
+                      <Download className="w-3.5 h-3.5 mr-1" />
+                      <span>Download PDF</span>
+                    </Button>
+                  </div>
+                </div>
+              ) : pdfBlobUrl ? (
+                <iframe
+                  src={pdfBlobUrl}
+                  className="w-full h-[70vh] rounded border border-neutral-divider bg-white"
+                  title="Investigation Report PDF Preview"
+                />
+              ) : (
+                <iframe
+                  src={`/api/v1/investigations/${investigation.id}/report/pdf`}
+                  className="w-full h-[70vh] rounded border border-neutral-divider bg-white"
+                  title="Investigation Report PDF Preview"
+                />
+              )}
             </div>
           </div>
         </div>

@@ -102,6 +102,25 @@ services:
           type: web
           name: tracecase-api
           envVarKey: CART_RESET_SECRET
+      - key: ENABLE_DEV_AUTH
+        value: "false"
+      - key: DEV_PREVIEW_MODE
+        value: "false"
+      - key: APP_URL
+        fromService:
+          type: web
+          name: tracecase-api
+          property: host
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL_ID
+        value: gpt-6-luna
+      - key: WORKBENCH_TARGET_URL
+        sync: false
+      - key: CART_TARGET_URL
+        sync: false
+      - key: TRUSTED_TARGET_ORIGINS
+        sync: false
 
   # 3. Controlled Workbench Target Service
   - type: web

@@ -25,6 +25,7 @@ export async function GET(
         'Content-Disposition': disposition,
         'Content-Length': String(pdfBuffer.length),
         'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'X-Content-Type-Options': 'nosniff',
       },
     });
   } catch (error) {

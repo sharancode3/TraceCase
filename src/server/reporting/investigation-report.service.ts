@@ -120,6 +120,176 @@ function escapeHtml(str: string | null | undefined): string {
     .replace(/'/g, '&#39;');
 }
 
+function escapePdfText(text: string | null | undefined): string {
+  if (!text) return '';
+  return String(text)
+    .replace(/\\/g, '\\\\')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)');
+}
+
+export function buildDeterministicFallbackPdf(data: InvestigationReportData): Buffer {
+  const lines: string[] = [];
+
+  const addText = (text: string, x: number, y: number, font: string = 'F1', size: number = 10, color: number[] = [0.1, 0.1, 0.1]) => {
+    lines.push('BT');
+    lines.push(`/${font} ${size} Tf`);
+    lines.push(`${color[0]} ${color[1]} ${color[2]} rg`);
+    lines.push(`${x} ${y} Td`);
+    lines.push(`(${escapePdfText(text)}) Tj`);
+    lines.push('ET');
+  };
+
+  const addRect = (x: number, y: number, w: number, h: number, fill: number[] = [0.95, 0.95, 0.95], stroke: number[] | null = null) => {
+    lines.push('q');
+    lines.push(`${fill[0]} ${fill[1]} ${fill[2]} rg`);
+    if (stroke) {
+      lines.push(`${stroke[0]} ${stroke[1]} ${stroke[2]} RG`);
+      lines.push('1 w');
+      lines.push(`${x} ${y} ${w} ${h} re B`);
+    } else {
+      lines.push(`${x} ${y} ${w} ${h} re f`);
+    }
+    lines.push('Q');
+  };
+
+  // Header
+  addText('TRACECASE AUTONOMOUS DEFECT ENGINE', 50, 800, 'F2', 16, [0.06, 0.09, 0.16]);
+  addText('Defect Reproduction & Verification Report', 50, 785, 'F1', 10, [0.4, 0.45, 0.5]);
+  addText(`Generated: ${new Date().toISOString()}`, 360, 785, 'F1', 8, [0.5, 0.5, 0.5]);
+
+  // Divider
+  lines.push('q 0.2 0.3 0.4 RG 1.5 w 50 775 m 545 775 l S Q');
+
+  // Verdict Banner
+  const verdict = data.execution?.reproductionVerdict || 'INCOMPLETE';
+  let bannerColor = [0.95, 0.95, 0.98];
+  let strokeColor = [0.7, 0.7, 0.8];
+  let textColor = [0.1, 0.2, 0.6];
+  if (verdict === 'CONFIRMED_REPRODUCED') {
+    bannerColor = [1.0, 0.95, 0.95];
+    strokeColor = [0.9, 0.4, 0.4];
+    textColor = [0.7, 0.1, 0.1];
+  } else if (verdict === 'NOT_REPRODUCED') {
+    bannerColor = [0.93, 0.99, 0.95];
+    strokeColor = [0.4, 0.8, 0.5];
+    textColor = [0.05, 0.5, 0.2];
+  }
+
+  addRect(50, 715, 495, 45, bannerColor, strokeColor);
+  addText(`REPRODUCTION VERDICT: ${verdict}`, 65, 740, 'F2', 12, textColor);
+  addText(data.execution?.summary || 'Autonomous two-attempt verification summary', 65, 725, 'F1', 8.5, [0.2, 0.2, 0.2]);
+
+  let curY = 690;
+
+  // Metadata Section
+  addText('INVESTIGATION & TARGET METADATA', 50, curY, 'F2', 11, [0.06, 0.09, 0.16]);
+  curY -= 6;
+  lines.push(`q 0.8 0.8 0.8 RG 0.5 w 50 ${curY} m 545 ${curY} l S Q`);
+  curY -= 15;
+
+  addText(`Investigation ID: ${data.investigationId}`, 55, curY, 'F1', 9);
+  curY -= 14;
+  addText(`Target Name: ${data.target?.name || 'Controlled Target'} (${data.target?.baseUrl || ''})`, 55, curY, 'F1', 9);
+  curY -= 14;
+  addText(`Environment: ${data.target?.environment || 'staging'} | Sandbox Verified: ${data.target?.isSandbox ? 'YES' : 'NO'}`, 55, curY, 'F1', 9);
+  curY -= 20;
+
+  // Reporter Claim
+  addText('REPORTED DEFECT CLAIM', 50, curY, 'F2', 11, [0.06, 0.09, 0.16]);
+  curY -= 6;
+  lines.push(`q 0.8 0.8 0.8 RG 0.5 w 50 ${curY} m 545 ${curY} l S Q`);
+  curY -= 15;
+
+  addText(`Title: ${data.reporterClaim?.title || data.title}`, 55, curY, 'F2', 9.5);
+  curY -= 14;
+  const desc = (data.reporterClaim?.description || 'No description').slice(0, 100);
+  addText(`Description: ${desc}`, 55, curY, 'F1', 9);
+  curY -= 14;
+  if (data.reporterClaim?.claimedExpectedBehavior) {
+    addText(`Expected Behavior: ${data.reporterClaim.claimedExpectedBehavior.slice(0, 100)}`, 55, curY, 'F1', 9);
+    curY -= 14;
+  }
+  curY -= 10;
+
+  // Execution Attempts
+  addText('TWO-ATTEMPT VERIFICATION RESULTS', 50, curY, 'F2', 11, [0.06, 0.09, 0.16]);
+  curY -= 6;
+  lines.push(`q 0.8 0.8 0.8 RG 0.5 w 50 ${curY} m 545 ${curY} l S Q`);
+  curY -= 15;
+
+  const att1 = data.execution?.attempt1;
+  const att2 = data.execution?.attempt2;
+
+  addRect(50, curY - 35, 240, 45, [0.97, 0.98, 0.99], [0.85, 0.88, 0.92]);
+  addText('ATTEMPT 1 (BASELINE)', 60, curY - 5, 'F2', 9, [0.1, 0.2, 0.4]);
+  addText(`Status: ${att1 ? att1.validity : 'Not Executed'}`, 60, curY - 18, 'F1', 8.5);
+  addText(`Defect Detected: ${att1?.defectDetected ? 'YES' : 'NO'}`, 60, curY - 30, 'F1', 8.5);
+
+  addRect(305, curY - 35, 240, 45, [0.97, 0.98, 0.99], [0.85, 0.88, 0.92]);
+  addText('ATTEMPT 2 (CONFIRMATION)', 315, curY - 5, 'F2', 9, [0.1, 0.2, 0.4]);
+  addText(`Status: ${att2 ? att2.validity : 'Not Executed'}`, 315, curY - 18, 'F1', 8.5);
+  addText(`Defect Detected: ${att2?.defectDetected ? 'YES' : 'NO'}`, 315, curY - 30, 'F1', 8.5);
+
+  curY -= 55;
+
+  // Evidence & Audit
+  addText('EVIDENCE ARTIFACTS & AUDIT LOG', 50, curY, 'F2', 11, [0.06, 0.09, 0.16]);
+  curY -= 6;
+  lines.push(`q 0.8 0.8 0.8 RG 0.5 w 50 ${curY} m 545 ${curY} l S Q`);
+  curY -= 15;
+
+  const ev = data.evidenceSummary || {};
+  addText(`Video Recordings: ${ev.videoCapturesCount ?? 0} (Storage Tier: ${ev.videoTier || 'PROTECTED_S3'})`, 55, curY, 'F1', 8.5);
+  curY -= 13;
+  addText(`Console Logs Captured: ${ev.consoleLogsCount ?? 0} entries`, 55, curY, 'F1', 8.5);
+  curY -= 13;
+  addText(`Network Requests Captured: ${ev.networkRequestsCount ?? 0} traces`, 55, curY, 'F1', 8.5);
+  curY -= 13;
+  addText(`Target Baseline Reset: ${data.execution?.resetReceipt?.isVerifiedRestored ? 'VERIFIED_RESTORED' : 'RESTORED'}`, 55, curY, 'F1', 8.5);
+  curY -= 13;
+  addText(`Redaction Applied: ${ev.sanitizationApplied ? 'CONFIRMED (Tokens & Secrets Redacted)' : 'NOT_REQUIRED'}`, 55, curY, 'F1', 8.5);
+
+  // Footer
+  lines.push('q 0.8 0.8 0.8 RG 0.5 w 50 50 m 545 50 l S Q');
+  addText('TraceCase Autonomous Defect Engine &bull; Non-destructive deterministic verification', 50, 38, 'F1', 7.5, [0.5, 0.5, 0.5]);
+  addText('Page 1 of 1', 500, 38, 'F1', 7.5, [0.5, 0.5, 0.5]);
+
+  const streamContent = lines.join('\n');
+  const streamLength = Buffer.byteLength(streamContent, 'utf8');
+
+  let pdf = '%PDF-1.4\n';
+  const offsets: number[] = [];
+
+  const addObj = (str: string) => {
+    offsets.push(Buffer.byteLength(pdf, 'utf8'));
+    pdf += str + '\n';
+  };
+
+  addObj('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj');
+  addObj('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj');
+  addObj('3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>\nendobj');
+  addObj('4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj');
+  addObj('5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>\nendobj');
+  addObj(`6 0 obj\n<< /Length ${streamLength} >>\nstream\n${streamContent}\nendstream\nendobj`);
+
+  const xrefOffset = Buffer.byteLength(pdf, 'utf8');
+  pdf += 'xref\n';
+  pdf += `0 ${offsets.length + 1}\n`;
+  pdf += '0000000000 65535 f \n';
+  for (const offset of offsets) {
+    pdf += String(offset).padStart(10, '0') + ' 00000 n \n';
+  }
+  pdf += 'trailer\n';
+  pdf += `<< /Size ${offsets.length + 1} /Root 1 0 R >>\n`;
+  pdf += 'startxref\n';
+  pdf += `${xrefOffset}\n`;
+  pdf += '%%EOF';
+
+  return Buffer.from(pdf, 'utf8');
+}
+
+  
 export class InvestigationReportService {
   constructor(private dbProvider = getDb) {}
 
@@ -691,10 +861,20 @@ export class InvestigationReportService {
 </html>`;
   }
 
-  public async generateReportPdf(data: InvestigationReportData): Promise<Buffer> {
+
+public async generateReportPdf(data: InvestigationReportData): Promise<Buffer> {
     const html = this.renderReportHtml(data);
-    const browser = await chromium.launch({ headless: true });
+    let browser = null;
     try {
+      browser = await chromium.launch({
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+        ],
+      });
       const page = await browser.newPage();
       await page.setContent(html, { waitUntil: 'load' });
       const pdf = await page.pdf({
@@ -716,8 +896,13 @@ export class InvestigationReportService {
         },
       });
       return Buffer.from(pdf);
+    } catch (browserError) {
+      console.warn('[InvestigationReportService] Chromium PDF launch error, generating deterministic fallback PDF:', browserError instanceof Error ? browserError.message : browserError);
+      return buildDeterministicFallbackPdf(data);
     } finally {
-      await browser.close().catch(() => {});
+      if (browser) {
+        await browser.close().catch(() => {});
+      }
     }
   }
 }

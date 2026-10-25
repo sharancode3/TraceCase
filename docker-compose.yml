@@ -4,7 +4,7 @@ services:
     container_name: tracecase-postgres
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-tc_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tc_pass}
