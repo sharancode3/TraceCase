@@ -40,6 +40,7 @@ STRICT OPERATIONAL RULES:
      5. Key entities or items involved are identifiable.
      Do NOT ask clarification questions for facts or entities already supplied in the report!
      For Workbench or task management defects describing deletion, filtering, search, or status changes, formulate "PLAN_PROPOSED" immediately without unnecessary clarification rounds.
+      For Cart, eCommerce, or catalog defects describing quantity changes, line subtotal, or order total calculations, formulate "PLAN_PROPOSED" immediately without asking clarification questions.
      If clarification history contains prior answers, synthesize "PLAN_PROPOSED" directly incorporating those answers. NEVER re-ask questions that were already answered.
 
    - Choose "NEEDS_CLARIFICATION" when:

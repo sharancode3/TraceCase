@@ -514,6 +514,13 @@ export function normalizeLocalModelOutput(parsedRaw: unknown): unknown {
       if (typeof nq.questionId === 'string' && !nq.questionId.startsWith('q_')) {
         nq.questionId = `q_${nq.questionId.toLowerCase().replace(/[^a-z0-9_]/g, '_')}`;
       }
+      if (Array.isArray(nq.options)) {
+        const opts = (nq.options as unknown[]).map((opt) => String(opt || 'N/A').trim()).filter((opt) => opt.length > 0);
+        while (opts.length < 2) {
+          opts.push('Other');
+        }
+        nq.options = opts;
+      }
       return nq;
     });
   }

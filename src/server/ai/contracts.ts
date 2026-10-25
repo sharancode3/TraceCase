@@ -147,7 +147,7 @@ export const ClarificationQuestionProposalSchema = z.object({
   questionText: z.string().min(10).max(250),
   whyItMatters: z.string().max(200),
   purpose: z.string().optional(),
-  options: z.array(z.string().min(2).max(100)).min(2).max(4),
+  options: z.array(z.string().min(1).max(100)).min(2).max(4),
   blocksExecution: z.boolean().default(true),
 });
 export type ClarificationQuestionProposal = z.infer<typeof ClarificationQuestionProposalSchema>;
