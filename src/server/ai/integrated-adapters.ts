@@ -121,7 +121,7 @@ function mapPlanAssertionToTypedAssertion(
   if (isCartRowQuantityCheck) {
     resolvedSelector = 'input[data-testid="item-quantity"], #qty-prod-keyboard, input.qty-val';
   } else if (isCartRowSubtotalCheck) {
-    resolvedSelector = '[data-testid="item-subtotal"], #subtotal-prod-keyboard, #subtotal-val-prod-keyboard, [data-testid="subtotal"]';
+    resolvedSelector = '#subtotal-val-prod-keyboard, #subtotal-prod-keyboard, [data-testid="item-subtotal"]';
   }
 
   // Validate and translate only combinations supported by the actual collector and evaluator

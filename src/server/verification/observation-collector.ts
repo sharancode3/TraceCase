@@ -93,6 +93,21 @@ export class ObservationCollector {
                 }
               }
 
+              if (count > 1 && assertion.subjectRef.includes(',')) {
+                const candidates = assertion.subjectRef.split(',').map((s) => s.trim()).filter(Boolean);
+                for (const cand of candidates) {
+                  try {
+                    const candLoc = page.locator(cand);
+                    const candCount = await candLoc.count();
+                    if (candCount === 1) {
+                      locator = candLoc;
+                      count = 1;
+                      break;
+                    }
+                  } catch {}
+                }
+              }
+
               if (count === 0) {
                 observations.set(assertion.id, {
                   assertionId: assertion.id,
