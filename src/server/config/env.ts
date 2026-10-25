@@ -1,9 +1,20 @@
 import { z } from 'zod';
 
+const FlexibleUrlSchema = z.preprocess((val) => {
+  if (typeof val === 'string' && val.trim().length > 0) {
+    const trimmed = val.trim();
+    if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+      return `https://${trimmed}`;
+    }
+    return trimmed;
+  }
+  return val;
+}, z.string().url());
+
 const ServerEnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.coerce.number().default(3000),
-  APP_URL: z.string().url().default('http://localhost:3000'),
+  APP_URL: FlexibleUrlSchema.default('http://localhost:3000'),
 
   // Persistence (PostgreSQL & Drizzle)
   DATABASE_URL: z.string().default('postgres://tc_user:tc_pass@localhost:5432/tracecase'),
@@ -44,14 +55,14 @@ const ServerEnvSchema = z.object({
 
   // Deployment Role & Boundary Configuration
   APP_ROLE: z.enum(['frontend', 'backend', 'worker', 'all']).default('all'),
-  BACKEND_API_URL: z.string().url().optional(),
+  BACKEND_API_URL: FlexibleUrlSchema.optional(),
 
   // Storage Driver Selection ('disk' | 's3' | 'memory')
   STORAGE_DRIVER: z.enum(['disk', 's3', 'memory']).default('disk'),
 
   // Trusted Target Services (for Cloud evaluation sandboxes)
-  WORKBENCH_TARGET_URL: z.string().url().optional(),
-  CART_TARGET_URL: z.string().url().optional(),
+  WORKBENCH_TARGET_URL: FlexibleUrlSchema.optional(),
+  CART_TARGET_URL: FlexibleUrlSchema.optional(),
   TRUSTED_TARGET_ORIGINS: z.string().optional(),
   CART_RESET_SECRET: z.string().optional(),
 
