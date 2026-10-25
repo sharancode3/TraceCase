@@ -509,23 +509,40 @@ export class IntegratedReportClarificationAgent implements ReportClarificationAg
         }
       }
 
-      const steps: PlanStep[] = normalizedPlanSteps.map((s, idx) => ({
-        stepIndex: idx,
-        semanticAction: s.intentDescription,
-        toolKind: mapActionTypeToToolKind(s.actionType, s.targetRole),
-        selector: s.targetAccessibleName || s.targetRole,
-        targetAccessibleName: s.targetAccessibleName,
-        targetRole: s.targetRole,
-        affectedDataScope: s.affectedDataScope,
-        value: s.inputValue,
-        tier: s.isDestructive
-          ? 'TIER_4_DESTRUCTIVE'
-          : s.actionType === 'NAVIGATE' || s.actionType === 'WAIT_FOR_SELECTOR'
-          ? 'TIER_1_READ_ONLY'
-          : 'TIER_2_SAFE_INTERACTION',
-        timeoutMs: 15000,
-        rationale: s.intentDescription,
-      }));
+      const steps: PlanStep[] = normalizedPlanSteps.map((s, idx) => {
+        const toolKind = mapActionTypeToToolKind(s.actionType, s.targetRole);
+        let selector = s.targetAccessibleName || s.targetRole;
+        if (!selector || selector.trim() === '') {
+          if (toolKind === 'fill_input') {
+            selector = 'input[type="number"], input[type="text"], input';
+          } else if (toolKind === 'click_button' || toolKind === 'click_link') {
+            selector = 'button, [role="button"]';
+          } else {
+            selector = 'body';
+          }
+        }
+        let val = s.inputValue;
+        if (toolKind === 'fill_input' && (!val || val.trim() === '')) {
+          val = '1';
+        }
+        return {
+          stepIndex: idx,
+          semanticAction: s.intentDescription,
+          toolKind,
+          selector,
+          targetAccessibleName: s.targetAccessibleName,
+          targetRole: s.targetRole,
+          affectedDataScope: s.affectedDataScope,
+          value: val,
+          tier: s.isDestructive
+            ? 'TIER_4_DESTRUCTIVE'
+            : s.actionType === 'NAVIGATE' || s.actionType === 'WAIT_FOR_SELECTOR'
+            ? 'TIER_1_READ_ONLY'
+            : 'TIER_2_SAFE_INTERACTION',
+          timeoutMs: 15000,
+          rationale: s.intentDescription,
+        };
+      });
 
       const assertions: TypedAssertion[] = [
         ...plan.correctBehaviorAssertions.map((a) =>

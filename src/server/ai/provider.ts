@@ -366,8 +366,10 @@ export function normalizeLocalModelOutput(parsedRaw: unknown): unknown {
         }
         if (typeof normStep.actionType === 'string') {
           const act = normStep.actionType.trim().toUpperCase();
-          if (act === 'SET_INPUT' || act === 'TYPE' || act === 'INPUT' || act === 'FILL_INPUT' || act === 'PRESS_KEY' || act === 'KEY_PRESS') {
+          if (act === 'SET_INPUT' || act === 'TYPE' || act === 'INPUT' || act === 'FILL_INPUT') {
             normStep.actionType = 'FILL';
+          } else if (act === 'PRESS_KEY' || act === 'KEY_PRESS') {
+            normStep.actionType = normStep.inputValue ? 'FILL' : 'CLICK';
           } else if (act === 'CLICK_BUTTON' || act === 'CLICK_LINK' || act === 'PRESS') {
             normStep.actionType = 'CLICK';
           } else if (act === 'GOTO' || act === 'OPEN') {
