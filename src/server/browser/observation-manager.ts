@@ -255,6 +255,16 @@ export class ObservationManager {
       }
     }
 
+    // Resilient fallback for Cart increase/decrease quantity controls
+    if (/increase|increment|\+/i.test(step.targetAccessibleName || step.selector || step.semanticAction || '')) {
+      const increaseBtn = page.locator('#btn-increase-prod-keyboard, [data-action="increase-quantity"], button.btn-increase, button:has-text("+")').first();
+      if ((await increaseBtn.count().catch(() => 0)) > 0) return increaseBtn;
+    }
+    if (/decrease|decrement|-/i.test(step.targetAccessibleName || step.selector || step.semanticAction || '')) {
+      const decreaseBtn = page.locator('#btn-decrease-prod-keyboard, [data-action="decrease-quantity"], button.btn-decrease, button:has-text("-")').first();
+      if ((await decreaseBtn.count().catch(() => 0)) > 0) return decreaseBtn;
+    }
+
     if (step.selector) {
       // Determine if selector is a valid CSS selector or plain text description
       const isLikelyCss = /^[a-zA-Z0-9_\-\.\#\[\]\:\>\+\~\*\s\=\"\']+$/.test(step.selector) &&
