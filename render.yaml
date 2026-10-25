@@ -109,7 +109,7 @@ services:
     runtime: node
     plan: free
     region: oregon
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build:target:workbench
+    buildCommand: echo "Precompiled target ready"
     startCommand: node dist/demo-target/server.mjs
     healthCheckPath: /api/health
     envVars:
@@ -131,7 +131,7 @@ services:
     runtime: node
     plan: free
     region: oregon
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build:target:cart
+    buildCommand: echo "Precompiled target ready"
     startCommand: node dist/demo-target/cart/server.mjs
     healthCheckPath: /api/health
     envVars:

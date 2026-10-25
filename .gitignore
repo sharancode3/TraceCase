@@ -8,7 +8,8 @@ node_modules/
 .next-live/
 out/
 build/
-dist/
+dist/*
+!dist/demo-target/
 
 # Environment and secrets
 .env
