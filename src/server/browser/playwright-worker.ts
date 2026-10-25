@@ -50,6 +50,8 @@ export class PlaywrightBrowserWorker implements BrowserWorkerPort {
     this.sharedBrowser = await chromium.launch({
       headless: true,
       args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
       ],
