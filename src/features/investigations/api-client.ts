@@ -38,18 +38,37 @@ export type { InvestigationSnapshot };
 import type { InvestigationProgressEvent } from '@/contracts/events';
 
 let clientAuthToken: string | null = null;
+if (typeof window !== 'undefined') {
+  try {
+    clientAuthToken = localStorage.getItem('tc_operator_token');
+  } catch {}
+}
 
 /**
  * Configures the in-memory authorization bearer token for client-side API requests.
  */
 export function setClientAuthToken(token: string | null): void {
   clientAuthToken = token;
+  if (typeof window !== 'undefined') {
+    try {
+      if (token) {
+        localStorage.setItem('tc_operator_token', token);
+      } else {
+        localStorage.removeItem('tc_operator_token');
+      }
+    } catch {}
+  }
 }
 
 /**
  * Retrieves the currently active client authorization bearer token.
  */
 export function getClientAuthToken(): string | null {
+  if (!clientAuthToken && typeof window !== 'undefined') {
+    try {
+      clientAuthToken = localStorage.getItem('tc_operator_token');
+    } catch {}
+  }
   return clientAuthToken;
 }
 
@@ -158,8 +177,16 @@ function buildRequestHeaders(customHeaders?: Record<string, string>): Record<str
     ...(customHeaders || {}),
   };
 
-  if (clientAuthToken && !headers['Authorization'] && !headers['authorization']) {
-    headers['Authorization'] = `Bearer ${clientAuthToken}`;
+  let token = clientAuthToken;
+  if (!token && typeof window !== 'undefined') {
+    try {
+      token = localStorage.getItem('tc_operator_token');
+      if (token) clientAuthToken = token;
+    } catch {}
+  }
+
+  if (token && !headers['Authorization'] && !headers['authorization']) {
+    headers['Authorization'] = `Bearer ${token}`;
   }
 
   return headers;

@@ -23,19 +23,21 @@ export function Header() {
 
   React.useEffect(() => {
     let isMounted = true;
-    fetch('/api/auth/session')
-      .then((res) => {
-        if (res.ok) return res.json();
-        return null;
-      })
+    const token = typeof window !== 'undefined' ? localStorage.getItem('tc_operator_token') : null;
+    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+
+    fetch('/api/auth/session', { headers, credentials: 'include' })
+      .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (isMounted && data?.authenticated && data?.principal?.email) {
+        if (!isMounted) return;
+        if (data?.token && typeof window !== 'undefined') {
+          localStorage.setItem('tc_operator_token', data.token);
+        }
+        if (data?.principal?.email) {
           setOperator(data.principal.email);
         }
       })
-      .catch(() => {
-        // Auth not active or offline
-      });
+      .catch(() => {});
 
     const handleAuthChange = (e: Event) => {
       const custom = e as CustomEvent<{ operator: string | null }>;
@@ -64,6 +66,9 @@ export function Header() {
       if (res.ok) {
         const json = await res.json();
         const email = json.principal?.email || 'operator@tracecase.local';
+        if (json.token && typeof window !== 'undefined') {
+          localStorage.setItem('tc_operator_token', json.token);
+        }
         setOperator(email);
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('tracecase:auth-state-change', { detail: { operator: email } }));
@@ -82,6 +87,7 @@ export function Header() {
       await fetch('/api/auth/session', { method: 'DELETE' });
       setOperator(null);
       if (typeof window !== 'undefined') {
+        localStorage.removeItem('tc_operator_token');
         window.dispatchEvent(new CustomEvent('tracecase:auth-state-change', { detail: { operator: null } }));
       }
     } catch {
@@ -168,7 +174,7 @@ export function Header() {
               className="w-full flex items-center space-x-3 px-3 py-2 rounded-control text-sm font-semibold text-cobalt-action bg-lavender-subtle hover:bg-lavender-surface border border-lavender-accent/40 transition-all cursor-pointer"
             >
               <PlayCircle className="w-4 h-4 text-cobalt-action shrink-0" />
-              <span>Take a Demo</span>
+              <span>Product Tour</span>
             </button>
           </nav>
 

@@ -32,10 +32,17 @@ export function Sidebar() {
 
   React.useEffect(() => {
     let isMounted = true;
-    fetch('/api/auth/session')
+    const token = typeof window !== 'undefined' ? localStorage.getItem('tc_operator_token') : null;
+    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+
+    fetch('/api/auth/session', { headers, credentials: 'include' })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        if (isMounted && data?.principal?.email) {
+        if (!isMounted) return;
+        if (data?.token && typeof window !== 'undefined') {
+          localStorage.setItem('tc_operator_token', data.token);
+        }
+        if (data?.principal?.email) {
           setOperator(data.principal.email);
         }
       })
@@ -66,6 +73,9 @@ export function Sidebar() {
       if (res.ok) {
         const json = await res.json();
         const email = json.principal?.email || 'operator@tracecase.local';
+        if (json.token && typeof window !== 'undefined') {
+          localStorage.setItem('tc_operator_token', json.token);
+        }
         setOperator(email);
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('tracecase:auth-state-change', { detail: { operator: email } }));
@@ -84,6 +94,7 @@ export function Sidebar() {
       await fetch('/api/auth/session', { method: 'DELETE' });
       setOperator(null);
       if (typeof window !== 'undefined') {
+        localStorage.removeItem('tc_operator_token');
         window.dispatchEvent(new CustomEvent('tracecase:auth-state-change', { detail: { operator: null } }));
       }
     } catch {
@@ -142,7 +153,7 @@ export function Sidebar() {
               className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-control text-sm font-semibold text-cobalt-action dark:text-indigo-400 bg-lavender-subtle dark:bg-indigo-950/40 hover:bg-lavender-surface dark:hover:bg-indigo-950/70 border border-lavender-accent/40 dark:border-indigo-800/50 transition-all shadow-xs cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cobalt-action"
             >
               <PlayCircle className="w-4 h-4 text-cobalt-action dark:text-indigo-400 shrink-0" />
-              <span>Take a Demo</span>
+              <span>Product Tour</span>
             </button>
           </div>
         </nav>

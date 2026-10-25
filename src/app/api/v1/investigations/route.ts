@@ -3,17 +3,21 @@ import { requireAuthenticatedPrincipal, AuthenticationError, AuthorizationError 
 import { createSafeError } from '@/contracts/errors';
 import { investigationsRepository } from '@/server/db/repositories/investigations.repository';
 import { investigationWorkflowService } from '@/server/workflow/investigation-workflow.service';
+import { ensureCuratedInvestigations } from '@/server/workflow/curated-investigations';
 
 export async function GET(req: NextRequest) {
-  
-
   try {
     const principal = await requireAuthenticatedPrincipal(req);
 
+    // Auto-sync curated 6 investigations and prune any stray queued/failed records
+    await ensureCuratedInvestigations(principal.id);
+
     const records = await investigationsRepository.listInvestigations(principal.id);
-    const investigations = await Promise.all(records.map((record) =>
-      investigationWorkflowService.getInvestigationSnapshot(record.id, principal.id)
-    ));
+    const investigations = await Promise.all(
+      records.map((record) =>
+        investigationWorkflowService.getInvestigationSnapshot(record.id, principal.id)
+      )
+    );
 
     return NextResponse.json({
       data: investigations,

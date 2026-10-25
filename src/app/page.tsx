@@ -26,6 +26,21 @@ export default function DashboardPage() {
     async function load() {
       setIsLoading(true);
       setErrorNotice(null);
+
+      // Ensure session is initialized before fetching investigations
+      let token = typeof window !== 'undefined' ? localStorage.getItem('tc_operator_token') : null;
+      if (!token) {
+        try {
+          const authRes = await fetch('/api/auth/session', { credentials: 'include' });
+          if (authRes.ok) {
+            const authData = await authRes.json();
+            if (authData?.token && typeof window !== 'undefined') {
+              localStorage.setItem('tc_operator_token', authData.token);
+            }
+          }
+        } catch {}
+      }
+
       const res = await fetchInvestigations();
       if (!isMounted) return;
 
@@ -34,7 +49,7 @@ export default function DashboardPage() {
       } else {
         setInvestigations([]);
         setErrorNotice(res.success
-          ? 'Sample mode is disabled here. Set DEV_PREVIEW_MODE=false to use real investigations.'
+          ? 'No investigations recorded yet. Submit a bug report to start an investigation.'
           : res.status === 401
             ? 'Sign in to load your investigations.'
             : `Investigations could not be loaded: ${res.error.message}`);

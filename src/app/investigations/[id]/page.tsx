@@ -136,7 +136,10 @@ const [pdfPreviewLoading, setPdfPreviewLoading] = React.useState(false);
     setPdfPreviewLoading(true);
     setPdfPreviewError(null);
     try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('tc_operator_token') : null;
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
       const res = await fetch(`/api/v1/investigations/${investigation.id}/report/pdf`, {
+        headers,
         credentials: 'include',
       });
       if (!res.ok) {
@@ -165,7 +168,10 @@ const [pdfPreviewLoading, setPdfPreviewLoading] = React.useState(false);
     setPdfError(null);
     setPdfNotice(null);
     try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('tc_operator_token') : null;
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
       const res = await fetch(`/api/v1/investigations/${investigation.id}/report/pdf?download=true`, {
+        headers,
         credentials: 'include',
       });
       if (!res.ok) {
@@ -2184,7 +2190,7 @@ const [pdfPreviewLoading, setPdfPreviewLoading] = React.useState(false);
               </div>
               <div className="flex items-center space-x-2">
                 <a
-                  href={pdfBlobUrl || `/api/v1/investigations/${investigation.id}/report/pdf`}
+                  href={pdfBlobUrl || `/api/v1/investigations/${investigation.id}/report/pdf${typeof window !== 'undefined' && localStorage.getItem('tc_operator_token') ? `?token=${encodeURIComponent(localStorage.getItem('tc_operator_token')!)}` : ''}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-xs text-cobalt-action font-semibold hover:underline px-2.5 py-1 border border-cobalt-action rounded flex items-center space-x-1"
