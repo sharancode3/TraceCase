@@ -8,7 +8,7 @@ import {
   planApprovalsTable,
 } from '@/server/db/schema';
 import type { AuthoritativeExperimentPlan } from '@/contracts/planning';
-import { projectSafeTargetProfile } from '@/contracts/targets';
+import { projectSafeTargetProfile, isTargetTrustedSandbox } from '@/contracts/targets';
 import type { BrowserWorkerPort, BrowserInvestigationAgentPort } from '@/server/services/ports';
 import { unavailableBrowserInvestigationAgent } from '@/server/services/ports';
 import { ExecutionLeaseService } from '@/server/queue/execution-lease.service';
@@ -134,6 +134,35 @@ export class TwoAttemptController {
       throw new Error(`Target '${inv.targetId}' not found.`);
     }
 
+    const isTrusted = isTargetTrustedSandbox({
+      baseUrl: target.baseUrl,
+      environment: target.environment,
+      isSandboxVerified: target.isSandboxVerified,
+    });
+    if (isTrusted) {
+      target.isSandboxVerified = true;
+      target.isSandbox = true;
+      if (!target.fixtureResetEndpoint && target.baseUrl) {
+        try {
+          target.fixtureResetEndpoint = `${new URL(target.baseUrl).origin}/api/test/reset-fixture`;
+        } catch {}
+      }
+      if (!target.fixtureResetAuthSecretRef && target.baseUrl) {
+        target.fixtureResetAuthSecretRef = /cart/i.test(target.baseUrl) ? 'env:CART_RESET_SECRET' : 'env:TARGET_RESET_SECRET';
+      }
+      await db
+        .update(targetsTable)
+        .set({
+          isSandboxVerified: true,
+          isSandbox: true,
+          fixtureResetEndpoint: target.fixtureResetEndpoint,
+          fixtureResetAuthSecretRef: target.fixtureResetAuthSecretRef,
+          updatedAt: new Date(),
+        })
+        .where(eq(targetsTable.id, target.id))
+        .catch(() => {});
+    }
+
     const safeTarget = projectSafeTargetProfile(target);
 
     // TC3 Sandbox Safety Invariant: Mutating/destructive actions (TIER_3_MUTATING_INTERACTION, TIER_4_DESTRUCTIVE)
@@ -234,11 +263,25 @@ export class TwoAttemptController {
       // Fail closed immediately if authorization, approval, or lease is invalid before touching target network
       await assertExecutionAuthorized();
 
-      const targetEndpoint = (target as Record<string, unknown>).fixtureResetEndpoint as string | undefined;
-      const targetSecretRef = (target as Record<string, unknown>).fixtureResetAuthSecretRef as string | undefined;
-      const resolvedSecret = targetSecretRef
+      const isCartTarget = /cart/i.test(safeTarget.baseUrl);
+      const targetEndpoint =
+        ((target as Record<string, unknown>).fixtureResetEndpoint as string | undefined) ||
+        (isTrusted && target.baseUrl ? `${new URL(target.baseUrl).origin}/api/test/reset-fixture` : undefined);
+      const targetSecretRef =
+        ((target as Record<string, unknown>).fixtureResetAuthSecretRef as string | undefined) ||
+        (isTrusted && target.baseUrl ? (isCartTarget ? 'env:CART_RESET_SECRET' : 'env:TARGET_RESET_SECRET') : undefined);
+      let resolvedSecret = targetSecretRef
         ? (targetSecretRef.startsWith('env:') ? process.env[targetSecretRef.slice(4)] : process.env[targetSecretRef] || targetSecretRef)
-        : (process.env.TARGET_RESET_SECRET || undefined);
+        : undefined;
+
+      if (!resolvedSecret && isTrusted) {
+        resolvedSecret = isCartTarget
+          ? (process.env.CART_RESET_SECRET || process.env.TARGET_RESET_SECRET)
+          : (process.env.TARGET_RESET_SECRET || process.env.CART_RESET_SECRET);
+      }
+      if (!resolvedSecret) {
+        resolvedSecret = process.env.TARGET_RESET_SECRET || process.env.CART_RESET_SECRET || undefined;
+      }
 
       const planBaseline = ((plan as unknown as Record<string, unknown>).expectedBaseline as Record<string, unknown>) || {};
       let baselineForComparison = { ...planBaseline };
