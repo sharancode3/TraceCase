@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 import path from 'node:path';
 import fs from 'node:fs/promises';
@@ -33,7 +34,7 @@ export class PlaywrightBrowserWorker implements BrowserWorkerPort {
   private ownsBrowser: boolean = false;
 
   constructor(options: PlaywrightBrowserWorkerOptions = {}) {
-    this.stagingRootDir = options.stagingRootDir || path.join(process.cwd(), '.tmp', 'staging');
+    this.stagingRootDir = options.stagingRootDir || process.env.STAGING_ROOT_DIR || path.join(os.tmpdir(), 'tracecase-staging');
     this.defaultActionTimeoutMs = options.defaultActionTimeoutMs || 15_000;
     this.maxAttemptDurationMs = options.maxAttemptDurationMs || 120_000;
     if (options.browserInstance) {

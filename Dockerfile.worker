@@ -66,7 +66,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Create unprivileged application user
 RUN groupadd -g 1001 tcgroup && \
-    useradd -u 1001 -g tcgroup -m -s /bin/bash tcworker
+    useradd -u 1001 -g tcgroup -m -s /bin/bash tcworker && \
+    mkdir -p /app/.tmp /tmp/tracecase-staging && \
+    chown -R tcworker:tcgroup /app /tmp/tracecase-staging
 
 # Copy artifacts, installed Playwright browser binaries, and dependencies
 COPY --from=deps /root/.cache/ms-playwright /home/tcworker/.cache/ms-playwright

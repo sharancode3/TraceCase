@@ -156,7 +156,7 @@ export async function bootstrapWorker(
       try {
         console.log(`[TraceCase Worker] Claiming investigation execution request ${job.data.executionRequestId}...`);
         const result = await claimHandler.handleInvestigationExecution(job.data, config.workerId);
-        console.log(`[TraceCase Worker] Investigation execution request outcome: ${result.status}`);
+        console.log(`[TraceCase Worker] Investigation execution request outcome: ${result.status} (reason: ${result.reason || 'none'})`);
       } catch (err) {
         console.error(`[TraceCase Worker] Failed investigation execution ${job.data.executionRequestId}:`, err);
         throw err;

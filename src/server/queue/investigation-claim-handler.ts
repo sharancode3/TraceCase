@@ -491,6 +491,7 @@ export class InvestigationClaimHandler {
           };
         } catch (err: unknown) {
           const errorMsg = err instanceof Error ? err.message : String(err);
+          console.error('[TraceCase Worker] Error executing pair in claim handler:', errorMsg, err);
 
           if (errorMsg.includes('UNCERTAIN') || errorMsg.includes('MUTATION_TIMEOUT')) {
             shouldReleaseLease = false;
