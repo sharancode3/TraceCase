@@ -100,14 +100,28 @@ function mapPlanAssertionToTypedAssertion(
     }
   }
 
-  // Priority 4: Refine Cart quantity assertions targeting broad row to exact input
+  // Priority 4: Refine Cart quantity and subtotal assertions targeting broad row
+  const isSubtotalValue = String(assertion.expectedValue).includes('$') || /subtotal|total/i.test(assertion.description || '');
+  const isCartRelated = Boolean(
+    resolvedSelector &&
+    (resolvedSelector.includes('tr:has-text') ||
+      resolvedSelector.includes('cart-row') ||
+      resolvedSelector.toLowerCase().includes('keyboard') ||
+      resolvedSelector.includes('item-quantity') ||
+      resolvedSelector.includes('qty'))
+  );
+
   const isCartRowQuantityCheck =
-    Boolean(resolvedSelector &&
-    (resolvedSelector.includes('tr:has-text') || resolvedSelector.includes('cart-row') || resolvedSelector.toLowerCase().includes('keyboard')) &&
-    (String(assertion.expectedValue) === '2' || String(assertion.expectedValue) === '1' || /quantity/i.test(assertion.description || '')));
+    isCartRelated &&
+    !isSubtotalValue &&
+    (String(assertion.expectedValue) === '2' || String(assertion.expectedValue) === '1' || /quantity/i.test(assertion.description || ''));
+
+  const isCartRowSubtotalCheck = isCartRelated && isSubtotalValue;
 
   if (isCartRowQuantityCheck) {
     resolvedSelector = 'input[data-testid="item-quantity"], #qty-prod-keyboard, input.qty-val';
+  } else if (isCartRowSubtotalCheck) {
+    resolvedSelector = '[data-testid="item-subtotal"], #subtotal-prod-keyboard, #subtotal-val-prod-keyboard, [data-testid="subtotal"]';
   }
 
   // Validate and translate only combinations supported by the actual collector and evaluator
