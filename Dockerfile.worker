@@ -24,6 +24,7 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV WORKER_PORT=3001
+ENV PLAYWRIGHT_BROWSERS_PATH=/home/tcworker/.cache/ms-playwright
 
 # Install runtime dependencies required for Playwright Chromium
 RUN apt-get update && apt-get install -y --no-install-recommends \

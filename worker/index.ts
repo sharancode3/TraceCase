@@ -20,6 +20,28 @@ import type { BrowserWorkerPort, BrowserInvestigationAgentPort } from '@/server/
 import { getServiceContainer } from '@/server/services/service-container';
 import { ensureDatabaseMigrated } from '@/server/db';
 
+const recentWorkerLogs: Array<{ time: string; level: string; msg: string }> = [];
+function logToBuffer(level: string, ...args: unknown[]) {
+  const line = args.map((a) => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ');
+  recentWorkerLogs.push({ time: new Date().toISOString(), level, msg: line });
+  if (recentWorkerLogs.length > 300) recentWorkerLogs.shift();
+}
+const origLog = console.log;
+const origError = console.error;
+const origWarn = console.warn;
+console.log = (...args: unknown[]) => {
+  origLog(...args);
+  logToBuffer('INFO', ...args);
+};
+console.error = (...args: unknown[]) => {
+  origError(...args);
+  logToBuffer('ERROR', ...args);
+};
+console.warn = (...args: unknown[]) => {
+  origWarn(...args);
+  logToBuffer('WARN', ...args);
+};
+
 export async function bootstrapWorker(
   customQueue?: QueueAdapter,
   customBrowserWorker?: BrowserWorkerPort,
@@ -66,6 +88,22 @@ export async function bootstrapWorker(
 
   // Health probe server
   const server = http.createServer((req, res) => {
+    if (req.url === '/logs' || req.url === '/diagnostics' || req.url === '/api/diagnostics') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify(
+          {
+            workerId: config.workerId,
+            activeJobs: activeJobCount,
+            logs: recentWorkerLogs,
+            timestamp: new Date().toISOString(),
+          },
+          null,
+          2
+        )
+      );
+      return;
+    }
     if (req.url === '/health' || req.url === '/api/health' || req.url === '/') {
       const isHealthy = !isShuttingDown && queue.isHealthy();
       res.writeHead(isHealthy ? 200 : 503, { 'Content-Type': 'application/json' });

@@ -47,8 +47,10 @@ export class PlaywrightBrowserWorker implements BrowserWorkerPort {
       return this.sharedBrowser;
     }
 
+    console.log('[PlaywrightWorker] Launching Chromium browser with --no-sandbox...');
     this.sharedBrowser = await chromium.launch({
       headless: true,
+      timeout: 30000,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -56,6 +58,7 @@ export class PlaywrightBrowserWorker implements BrowserWorkerPort {
         '--disable-gpu',
       ],
     });
+    console.log('[PlaywrightWorker] Chromium browser launched successfully.');
     this.ownsBrowser = true;
     return this.sharedBrowser;
   }
@@ -148,8 +151,10 @@ export class PlaywrightBrowserWorker implements BrowserWorkerPort {
 
       const steps: PlanStep[] = params.plan.steps || [];
 
+      console.log(`[PlaywrightWorker] Executing ${steps.length} steps for attempt ${params.attemptNumber} (mode: ${params.executionMode || "AI_GROUNDED"})`);
       for (let i = 0; i < steps.length; i++) {
         const step = steps[i];
+        console.log(`[PlaywrightWorker] Step ${i + 1}/${steps.length}: ${step.toolKind} on "${step.selector || step.value || step.semanticAction || ""}"`);
         // Enforce attempt-level maximum duration budget
         const elapsedMs = Date.now() - startedAtMs;
         if (elapsedMs >= this.maxAttemptDurationMs) {
