@@ -157,7 +157,7 @@ export const ProposedExperimentPlanStepSchema = z.object({
   actionType: z.preprocess((val) => {
     if (typeof val === 'string') {
       const upper = val.toUpperCase();
-      if (upper === 'SET_INPUT' || upper === 'TYPE' || upper === 'INPUT' || upper === 'FILL_INPUT') return 'FILL';
+      if (upper === 'SET_INPUT' || upper === 'TYPE' || upper === 'INPUT' || upper === 'FILL_INPUT' || upper === 'PRESS_KEY' || upper === 'KEY_PRESS') return 'FILL';
       if (upper === 'CLICK_BUTTON' || upper === 'CLICK_LINK' || upper === 'PRESS') return 'CLICK';
       if (upper === 'GOTO' || upper === 'OPEN') return 'NAVIGATE';
       if (upper === 'SELECT_OPTION') return 'SELECT';
@@ -236,7 +236,7 @@ export const BrowserAgentInputSchema = z.object({
     actionType: z.preprocess((val) => {
     if (typeof val === 'string') {
       const upper = val.toUpperCase();
-      if (upper === 'SET_INPUT' || upper === 'TYPE' || upper === 'INPUT' || upper === 'FILL_INPUT') return 'FILL';
+      if (upper === 'SET_INPUT' || upper === 'TYPE' || upper === 'INPUT' || upper === 'FILL_INPUT' || upper === 'PRESS_KEY' || upper === 'KEY_PRESS') return 'FILL';
       if (upper === 'CLICK_BUTTON' || upper === 'CLICK_LINK' || upper === 'PRESS') return 'CLICK';
       if (upper === 'GOTO' || upper === 'OPEN') return 'NAVIGATE';
       if (upper === 'SELECT_OPTION') return 'SELECT';
@@ -282,7 +282,7 @@ export const BrowserDecisionOutputSchema = z.discriminatedUnion('variant', [
       actionType: z.preprocess((val) => {
     if (typeof val === 'string') {
       const upper = val.toUpperCase();
-      if (upper === 'SET_INPUT' || upper === 'TYPE' || upper === 'INPUT' || upper === 'FILL_INPUT') return 'FILL';
+      if (upper === 'SET_INPUT' || upper === 'TYPE' || upper === 'INPUT' || upper === 'FILL_INPUT' || upper === 'PRESS_KEY' || upper === 'KEY_PRESS') return 'FILL';
       if (upper === 'CLICK_BUTTON' || upper === 'CLICK_LINK' || upper === 'PRESS') return 'CLICK';
       if (upper === 'GOTO' || upper === 'OPEN') return 'NAVIGATE';
       if (upper === 'SELECT_OPTION') return 'SELECT';

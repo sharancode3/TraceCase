@@ -91,6 +91,15 @@ CART TARGET VERIFICATION RULES:
     - Line subtotal: selector: "[data-testid=\"item-subtotal\"], [data-testid=\"subtotal\"], #subtotal-prod-keyboard", expectedCondition: "TEXT_CONTAINS", expectedValue: "$240.00" for correct behavior, "$120.00" for reported failure.
     - Order total: selector: "[data-testid=\"cart-total\"], #cart-total", expectedCondition: "TEXT_CONTAINS", expectedValue: "$240.00" for correct behavior, "$120.00" for reported failure.
 
+STRICT PERMITTED ACTION TYPES FOR PLAN STEPS:
+Every step in "steps" MUST have an "actionType" from this strict list:
+- "NAVIGATE"
+- "CLICK"
+- "FILL"
+- "SELECT"
+- "WAIT_FOR_SELECTOR"
+Do NOT use "PRESS_KEY", "KEY_PRESS", "TYPE", or "INPUT". To type text into inputs, use "FILL". To click buttons or press controls, use "CLICK".
+
 CRITICAL ASSERTION SELECTOR GROUNDING RULES:
 Only use standard valid selectors grounded in the actual web interface:
 - SELECTORS MUST BE TAG-SCOPED (never use bare ':has-text(...)' without a tag prefix):
