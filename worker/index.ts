@@ -75,7 +75,7 @@ export async function bootstrapWorker(
     undefined,
     {
       browserAgent,
-      defaultExecutionMode: (process.env.DEFAULT_EXECUTION_MODE as any) || 'AI_GROUNDED',
+      defaultExecutionMode: (process.env.DEFAULT_EXECUTION_MODE as any) || (process.env.OPENAI_API_KEY ? 'AI_GROUNDED' : 'DETERMINISTIC_FIXED_STEP'),
     }
   );
   const claimHandler = new InvestigationClaimHandler(

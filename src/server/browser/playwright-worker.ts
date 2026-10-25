@@ -416,18 +416,25 @@ export class PlaywrightBrowserWorker implements BrowserWorkerPort {
               }
             }
           } catch (agentErr) {
-            actionReceipts.push({
-              stepIndex: step.stepIndex,
-              action: step,
-              tier: step.tier,
-              status: 'FAILED',
-              durationMs: 0,
-              uncertainty: 'NONE',
-              errorDetails: `AI investigation agent error: ${agentErr instanceof Error ? agentErr.message : String(agentErr)}`,
-              dispatchedAt: new Date().toISOString(),
-              completedAt: new Date().toISOString(),
-            });
-            proposalHalted = true;
+            const errorMsg = agentErr instanceof Error ? agentErr.message : String(agentErr);
+            console.warn(`[PlaywrightWorker] AI grounding threw (${errorMsg}) for step ${step.stepIndex} (${step.toolKind}).`);
+
+            if (step.selector || step.elementRef || step.targetRole || step.targetAccessibleName) {
+              console.log(`[PlaywrightWorker] Falling back to executing approved deterministic step directly: ${step.toolKind}`);
+            } else {
+              actionReceipts.push({
+                stepIndex: step.stepIndex,
+                action: step,
+                tier: step.tier,
+                status: 'FAILED',
+                durationMs: 0,
+                uncertainty: 'NONE',
+                errorDetails: `AI investigation agent error: ${errorMsg}`,
+                dispatchedAt: new Date().toISOString(),
+                completedAt: new Date().toISOString(),
+              });
+              proposalHalted = true;
+            }
           }
 
           if (proposalHalted) {
