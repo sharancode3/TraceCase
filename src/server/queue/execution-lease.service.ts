@@ -296,8 +296,8 @@ export class ExecutionLeaseService {
         isQuarantined: false,
         quarantineClearedAt: now,
         quarantineClearedBy: params.clearedBy,
-        leaseExpiresAt: new Date(now.getTime() - 1000),
-        workerInstanceId: null,
+        leaseExpiresAt: new Date(now.getTime() - 10000),
+        workerInstanceId: 'released',
         executionRequestId: null,
         updatedAt: now,
       })
